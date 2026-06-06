@@ -21,6 +21,10 @@ pub enum DomainError {
     #[error("invalid embedding: {0}")]
     InvalidEmbedding(String),
 
+    /// A content hash string was not a valid blake3 hex digest.
+    #[error("invalid content hash: `{0}`")]
+    InvalidContentHash(String),
+
     /// A score expected in the closed range `[0, 1]` was out of range.
     #[error("value {1} for `{0}` is outside the range [0, 1]")]
     OutOfUnitRange(&'static str, f64),

@@ -1,0 +1,49 @@
+//! The typed L0 error space.
+
+use aionforge_domain::DomainError;
+use selene_core::CoreError;
+use selene_gql::ExecutorError;
+
+/// An error from the L0 storage layer.
+///
+/// Wraps the three selene-db error families (graph mutation, core value
+/// construction, GQL execution) plus the domain error space and the
+/// translation/decode failures that only L0 can surface. The selene errors carry
+/// their own [`miette`] diagnostics through transparently.
+#[derive(Debug, thiserror::Error, miette::Diagnostic)]
+#[non_exhaustive]
+pub enum StoreError {
+    /// A graph write, commit, or schema operation failed.
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    Graph(#[from] selene_graph::GraphError),
+
+    /// Constructing a selene-db value (string, vector, JSON, property map) failed.
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    Core(#[from] CoreError),
+
+    /// A parameter-bound GQL statement failed to parse, plan, or execute.
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    Gql(#[from] ExecutorError),
+
+    /// A domain value rejected a stored value on read-back (bad id, namespace, …).
+    #[error("domain value error: {0}")]
+    Domain(#[from] DomainError),
+
+    /// A JSON-typed property failed to serialize or deserialize.
+    #[error("JSON translation failed: {0}")]
+    Json(#[from] serde_json::Error),
+
+    /// Stored graph data did not match the shape a domain kind expects.
+    #[error("could not decode stored data into a domain value: {0}")]
+    Decode(String),
+}
+
+impl StoreError {
+    /// Construct a [`StoreError::Decode`] from a message.
+    pub(crate) fn decode(message: impl Into<String>) -> Self {
+        Self::Decode(message.into())
+    }
+}

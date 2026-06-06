@@ -60,6 +60,24 @@ impl ContentHash {
         Self(blake3::hash(bytes).to_hex().to_string())
     }
 
+    /// Reconstruct a content hash from a stored blake3 hex digest.
+    ///
+    /// # Errors
+    /// Returns [`DomainError::InvalidContentHash`] unless the string is exactly 64
+    /// lowercase hexadecimal characters — the form [`ContentHash::of`] produces.
+    pub fn from_hex(hex: impl Into<String>) -> Result<Self, DomainError> {
+        let hex = hex.into();
+        let well_formed = hex.len() == 64
+            && hex
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+        if well_formed {
+            Ok(Self(hex))
+        } else {
+            Err(DomainError::InvalidContentHash(hex))
+        }
+    }
+
     /// The hex string.
     #[must_use]
     pub fn as_str(&self) -> &str {

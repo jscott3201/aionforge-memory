@@ -1,8 +1,9 @@
 # cargo-deny baseline for aionforge-memory.
 #
 # Mirrors the selene-db substrate's posture (Aionforge consumes selene-db as a
-# PATH dependency and inherits its transitive tree, so the license allow-list,
-# the rustls-only bans, and the duplicate-version skips must agree):
+# git dependency tracking its `development` branch and inherits its transitive
+# tree, so the license allow-list, the rustls-only bans, and the duplicate-version
+# skips must agree):
 #   - rustls-only TLS posture (no native-tls / openssl* / schannel /
 #     security-framework) PLUS aws-lc-rs/aws-lc-sys banned so the rustls *ring*
 #     provider is the only crypto backend (musl/distroless-clean — GAP-7/deploy)
@@ -79,6 +80,7 @@ skip-tree = []
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-# If hosted CI switches selene-db from a PATH dep to a sha-pinned git dep, add
-# the selene-db repo here (git deps must be sha-pinned, never branch-floating).
-allow-git = []
+# selene-db is consumed as a git dependency tracking its `development` branch.
+# Cargo.lock pins the exact commit (reproducible; CI builds `--locked`); the branch
+# source is allow-listed here.
+allow-git = ["ssh://git@github.com/jscott3201/selene-db.git"]

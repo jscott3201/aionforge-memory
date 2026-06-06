@@ -11,6 +11,17 @@ description = "L0 storage over the selene-db SharedGraph: typed read/write, para
 
 [dependencies]
 aionforge-domain = { path = "../aionforge-domain", version = "0.1.0" }
+selene-core = { workspace = true }
+selene-graph = { workspace = true }
+selene-gql = { workspace = true }
+thiserror = { workspace = true }
+miette = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+jiff = { workspace = true }
 
 [lints]
 workspace = true

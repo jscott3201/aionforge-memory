@@ -72,16 +72,29 @@ proptest = { version = "1.11", default-features = false, features = ["std"] }
 insta = "1.47"
 rstest = "0.26"
 
-# --- selene-db substrate (path dep; tracks the `development` branch). ---
-# Declared here so aionforge-store can opt in at M0.T03. Unused workspace deps are
-# NOT built, which keeps the M0.T01 skeleton gate independent of selene-db's
-# actively-edited working tree. Paths are relative to this workspace root; selene-db
-# is checked out as a sibling directory.
-selene-core = { path = "../selene-db/crates/selene-core" }
-selene-graph = { path = "../selene-db/crates/selene-graph" }
-selene-persist = { path = "../selene-db/crates/selene-persist" }
-selene-gql = { path = "../selene-db/crates/selene-gql" }
-selene-algorithms = { path = "../selene-db/crates/selene-algorithms" }
+# --- selene-db substrate (private repo; git dep tracking the `development` branch). ---
+# selene-db is private and under active development, so we track its `development`
+# branch over SSH (not a path dep into the other agent's working tree). The source is
+# the branch, but Cargo.lock pins the exact commit — builds stay reproducible and CI
+# runs `--locked`. `cargo update` pulls newer `development` commits on demand, and the
+# nightly workflow runs that update on a schedule so we never silently fall behind.
+# `cargo build` fetches with the system git binary + your SSH key (.cargo/config.toml).
+# For tight co-development against a local checkout, use the commented `[patch]` below.
+selene-core = { git = "ssh://git@github.com/jscott3201/selene-db.git", branch = "development" }
+selene-graph = { git = "ssh://git@github.com/jscott3201/selene-db.git", branch = "development" }
+selene-persist = { git = "ssh://git@github.com/jscott3201/selene-db.git", branch = "development" }
+selene-gql = { git = "ssh://git@github.com/jscott3201/selene-db.git", branch = "development" }
+selene-algorithms = { git = "ssh://git@github.com/jscott3201/selene-db.git", branch = "development" }
+
+# Co-development escape hatch: to build against a local selene-db checkout instead of
+# the fetched branch, uncomment and point these at your sibling checkout. Do not
+# commit the uncommented form.
+# [patch."ssh://git@github.com/jscott3201/selene-db.git"]
+# selene-core = { path = "../selene-db/crates/selene-core" }
+# selene-graph = { path = "../selene-db/crates/selene-graph" }
+# selene-persist = { path = "../selene-db/crates/selene-persist" }
+# selene-gql = { path = "../selene-db/crates/selene-gql" }
+# selene-algorithms = { path = "../selene-db/crates/selene-algorithms" }
 
 # Heavier frameworks (tokio, reqwest, rustls, rmcp, axum, ed25519-dalek, ratatui,
 # clap, figment, secrecy, tracing-subscriber, dev-deps) are added to this floor at
