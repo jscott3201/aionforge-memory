@@ -10,6 +10,7 @@ resolver = "3"
 members = [
     "crates/aionforge-domain",       # L1 — memory-kind types + contract traits (no I/O)
     "crates/aionforge-store",        # L0 — selene-db SharedGraph + persistence (only crate naming selene-db)
+    "crates/aionforge-config",       # layered configuration (file + env + flags); produces StoreConfig
     "crates/aionforge-embed",        # L2 — OpenAI-compatible embedding/chat/rerank client
     "crates/aionforge-capture",      # L2 — fast capture path
     "crates/aionforge-retrieval",    # L2 — hybrid retrieval + fusion + router + recall bundle
@@ -66,6 +67,10 @@ metrics = "0.24"
 
 # --- New top-level pins (selene-db has none of these). ---
 ulid = "1.2"
+# Layered configuration (file + environment + flags) with documented precedence, and
+# secret values that redact in logs and zeroize on drop. Introduced at M0.T07.
+figment = { version = "0.10", features = ["toml", "env"] }
+secrecy = "0.10"
 
 # --- Test / dev dependencies (versions match selene-db). ---
 proptest = { version = "1.11", default-features = false, features = ["std"] }
@@ -97,9 +102,9 @@ selene-algorithms = { git = "ssh://git@github.com/jscott3201/selene-db.git", bra
 # selene-algorithms = { path = "../selene-db/crates/selene-algorithms" }
 
 # Heavier frameworks (tokio, reqwest, rustls, rmcp, axum, ed25519-dalek, ratatui,
-# clap, figment, secrecy, tracing-subscriber, dev-deps) are added to this floor at
-# the task that first introduces them (M0.T03/T07/T08 and M1+), per the M0 plan,
-# to keep the skeleton dep tree minimal.
+# clap, tracing-subscriber, dev-deps) are added to this floor at the task that first
+# introduces them (M0.T08 and M1+), per the M0 plan, to keep the skeleton dep tree
+# minimal.
 
 [profile.release]
 opt-level = 3
