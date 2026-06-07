@@ -16,7 +16,7 @@ use aionforge_domain::ids::{ContentHash, Id};
 use aionforge_domain::namespace::Namespace;
 use aionforge_domain::nodes::episodic::{ConsolidationState, Episode, Role};
 use aionforge_domain::time::Timestamp;
-use aionforge_store::{NodeId, Store, StoreConfig};
+use aionforge_store::{BoundQuery, NodeId, QueryResult, Store, StoreConfig, Value};
 use async_trait::async_trait;
 
 fn ts(text: &str) -> Timestamp {
@@ -555,6 +555,98 @@ async fn transient_failures_escalate_to_fatal_after_max_retries() {
     assert_eq!(report.failed, 1);
     assert_eq!(episode_state(&store, node), ConsolidationState::Failed);
     assert_eq!(store.consolidation_lag().expect("lag").episodes_failed, 1);
+}
+
+#[tokio::test]
+async fn transient_failure_attempts_persist_across_restart_and_escalate() {
+    // The retry budget is the durable audit trail, not RAM: a poison-pill episode that exhausts
+    // its retries across a restart still escalates to fatal, instead of getting a fresh budget
+    // each time the process comes back (which an in-memory counter would hand it, looping forever).
+    let dir = temp_dir("attempts-persist");
+    let migrate_at = ts("2026-01-01T00:00:00-06:00[America/Chicago]");
+
+    {
+        let store = Arc::new(
+            Store::open_persistent_migrated(&dir, store_config(), &migrate_at).expect("open"),
+        );
+        let node = insert_episode(&store, "doomed", 1);
+        let mut consolidator = Consolidator::with_clock(
+            store.clone(),
+            ConsolidationConfig {
+                max_retries: 2,
+                ..config()
+            },
+            fixed_clock(),
+        );
+        consolidator.register(Box::new(AlwaysFailPass { fatal: false }));
+        // Two transient attempts before the simulated crash; the episode stays raw.
+        for _ in 0..2 {
+            let report = consolidator.tick_once().await.expect("tick");
+            assert_eq!(report.retried, 1);
+            assert_eq!(episode_state(&store, node), ConsolidationState::Raw);
+        }
+        drop(consolidator);
+        drop(store);
+    }
+
+    // Recover from the WAL alone: the two prior failure audits are durable.
+    let store = Arc::new(Store::recover(&dir, store_config()).expect("recover"));
+    let mut consolidator = Consolidator::with_clock(
+        store.clone(),
+        ConsolidationConfig {
+            max_retries: 2,
+            ..config()
+        },
+        fixed_clock(),
+    );
+    consolidator.register(Box::new(AlwaysFailPass { fatal: false }));
+    // A fresh consolidator's in-memory counter would start at zero; the persisted count is 2,
+    // so this third attempt exceeds max_retries and escalates to fatal on the first tick back.
+    let report = consolidator.tick_once().await.expect("tick");
+    assert_eq!(
+        report.failed, 1,
+        "the persisted attempt count escalates after a restart"
+    );
+    let lag = store.consolidation_lag().expect("lag");
+    assert_eq!(lag.episodes_failed, 1, "the episode is marked failed");
+    assert_eq!(lag.episodes_pending, 0, "and is no longer pending");
+    drop(consolidator);
+    drop(store);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn failure_audit_actor_id_is_deterministic_across_construction() {
+    // The scheduler's audit actor id is content-derived from the enabled passes' versions, not a
+    // per-process random value, so two freshly-built consolidators over the same configuration
+    // stamp the same actor id — forensic attribution survives a restart.
+    async fn actor_for_a_run() -> String {
+        let store = in_memory();
+        insert_episode(&store, "broken", 1);
+        let mut consolidator = Consolidator::with_clock(store.clone(), config(), fixed_clock());
+        consolidator.register(Box::new(AlwaysFailPass { fatal: true }));
+        consolidator.tick_once().await.expect("tick");
+        let query = BoundQuery::new(
+            "MATCH (a:AuditEvent) WHERE a.kind = $k RETURN a.actor_id AS actor LIMIT 1",
+        )
+        .bind_str("k", "consolidation_failed")
+        .expect("bind kind");
+        let QueryResult::Rows(rows) = store.execute(&query).expect("actor query") else {
+            panic!("expected rows");
+        };
+        match rows.value(0, 0) {
+            Some(Value::String(actor)) => actor.as_str().to_string(),
+            other => panic!("expected an actor id string, got {other:?}"),
+        }
+    }
+
+    let first = actor_for_a_run().await;
+    let second = actor_for_a_run().await;
+    assert!(!first.is_empty(), "the failure audit records an actor id");
+    assert_eq!(
+        first, second,
+        "the same pass configuration stamps the same scheduler actor id across constructions"
+    );
 }
 
 #[tokio::test]

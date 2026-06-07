@@ -21,7 +21,7 @@ use aionforge_domain::edges::Audit;
 use aionforge_domain::ids::Id;
 use aionforge_domain::namespace::Namespace;
 use aionforge_domain::nodes::episodic::{ConsolidationState, Episode};
-use aionforge_domain::nodes::forensic::AuditEvent;
+use aionforge_domain::nodes::forensic::{AuditEvent, AuditKind};
 use aionforge_domain::time::Timestamp;
 use selene_core::{
     DbString, LabelDiff, LabelSet, NodeId, PropertyDiff, PropertyMap, Value, db_string,
@@ -35,7 +35,7 @@ use crate::convert::{
 };
 use crate::error::StoreError;
 use crate::gql::{BoundQuery, QueryResult};
-use crate::materialize::{ConsolidationArtifacts, materialize_into};
+use crate::materialize::{ConsolidationArtifacts, ensure_edge, materialize_into};
 use crate::store::Store;
 use crate::{audit, episode};
 
@@ -345,15 +345,23 @@ impl Store {
         audit_event: &AuditEvent,
         mark_failed: bool,
     ) -> Result<(), StoreError> {
-        let (audit_labels, audit_props) = audit::to_node(audit_event)?;
-        let audit_edge = db_string(Audit::LABEL)?;
         let mut txn = self.graph().begin_write();
         {
             let mut mutator = txn.mutator();
-            let audit_id = mutator.create_node(audit_labels, audit_props)?;
-            mutator.create_edge(
-                audit_edge,
-                audit_id,
+            // The audit id is content-derived (keyed on episode + attempt), and `AuditEvent.id`
+            // is UNIQUE, so the write must dedup: a re-recorded attempt reuses the node and
+            // edge rather than colliding on the constraint (mirrors the materialize audit path).
+            let audit_node = match audit::find_existing(mutator.read(), &audit_event.identity.id)? {
+                Some(node) => node,
+                None => {
+                    let (audit_labels, audit_props) = audit::to_node(audit_event)?;
+                    mutator.create_node(audit_labels, audit_props)?
+                }
+            };
+            ensure_edge(
+                &mut mutator,
+                Audit::LABEL,
+                audit_node,
                 episode_node_id,
                 PropertyMap::from_pairs(Vec::new())?,
             )?;
@@ -373,6 +381,37 @@ impl Store {
         }
         txn.commit()?;
         Ok(())
+    }
+
+    /// How many `consolidation_failed` audit events this episode has accrued — the persistent,
+    /// crash-surviving retry count the scheduler reads to decide retry vs. fatal.
+    ///
+    /// An in-memory counter resets every restart, so a poison-pill episode would get a fresh
+    /// retry budget after each crash and never escalate; deriving the count from the durable
+    /// audit trail makes the budget survive restarts. `AuditEvent.subject_id` and `kind` are
+    /// both indexed, so this is a bounded probe over just this episode's failure audits.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the query fails or the count cannot be decoded.
+    pub fn count_consolidation_failures(&self, episode_id: &Id) -> Result<u32, StoreError> {
+        let query = BoundQuery::new(
+            "MATCH (a:AuditEvent) WHERE a.subject_id = $sid AND a.kind = $kind \
+             RETURN count(a) AS n",
+        )
+        .bind("sid", id_value(episode_id)?)?
+        .bind("kind", enum_value(&AuditKind::ConsolidationFailed)?)?;
+        match self.execute(&query)? {
+            QueryResult::Rows(rows) => match rows.value(0, 0) {
+                Some(Value::Uint(n)) => Ok(u32::try_from(*n).unwrap_or(u32::MAX)),
+                Some(Value::Int(n)) => Ok(u32::try_from(*n).unwrap_or(0)),
+                other => Err(StoreError::decode(format!(
+                    "consolidation failure count returned a non-integer: {other:?}"
+                ))),
+            },
+            other => Err(StoreError::decode(format!(
+                "consolidation failure count returned a non-row result: {other:?}"
+            ))),
+        }
     }
 
     /// Snapshot the consolidation backlog for the lag metric (write-and-consolidation §3).

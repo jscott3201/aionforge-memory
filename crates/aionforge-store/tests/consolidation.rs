@@ -384,6 +384,53 @@ fn failure_records_an_audit_without_advancing_the_cursor() {
     );
 }
 
+#[test]
+fn recording_the_same_failure_attempt_twice_is_idempotent() {
+    // The scheduler's failure-audit id is content-derived from (episode, attempt), and
+    // `AuditEvent.id` is UNIQUE — so a re-record of the same attempt (a retried tick, a partial
+    // crash) must reuse the existing node rather than collide. `record_consolidation_failure`
+    // is dedup-aware, so the second call is a no-op, not a UNIQUE violation or a double-count.
+    let store = store();
+    let (node_id, episode) = insert_episode(
+        &store,
+        "doomed",
+        "2026-06-06T09:00:00-05:00[America/Chicago]",
+        "2026-06-06T09:00:00-05:00[America/Chicago]",
+    );
+    let audit = AuditEvent {
+        identity: Identity {
+            id: Id::from_content_hash(b"consolidation_failed|fixed-episode|1"),
+            ingested_at: now(),
+            namespace: Namespace::System,
+            expired_at: None,
+        },
+        kind: AuditKind::ConsolidationFailed,
+        subject_id: episode.identity.id.clone(),
+        actor_id: Id::from_content_hash(b"scheduler"),
+        payload: json!({ "pass": "noop", "reason": "boom", "attempts": 1 }),
+        signature: String::new(),
+        occurred_at: now(),
+    };
+    store
+        .record_consolidation_failure(node_id, &audit, false)
+        .expect("first record");
+    store
+        .record_consolidation_failure(node_id, &audit, false)
+        .expect("re-record must reuse the node, not collide on the UNIQUE id");
+    assert_eq!(
+        consolidation_failed_count(&store),
+        1,
+        "re-recording the same attempt reuses the audit node — no duplicate, no UNIQUE violation"
+    );
+    assert_eq!(
+        store
+            .count_consolidation_failures(&episode.identity.id)
+            .expect("count"),
+        1,
+        "the persistent attempt count is not double-counted on a re-record"
+    );
+}
+
 /// A fresh `consolidation_failed` audit event about `subject` (each gets a unique id).
 fn failure_audit(subject: &Id) -> AuditEvent {
     AuditEvent {
