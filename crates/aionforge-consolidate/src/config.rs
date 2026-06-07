@@ -1,6 +1,9 @@
 //! Scheduler tuning (write-and-consolidation §3).
 
+use std::collections::BTreeMap;
 use std::time::Duration;
+
+use aionforge_domain::value::ObjectValue;
 
 /// How the background consolidator paces and bounds itself.
 ///
@@ -54,4 +57,77 @@ impl Default for ResolutionConfig {
             merge_threshold: 0.12,
         }
     }
+}
+
+/// How one predicate behaves under supersession and contradiction (write-and-consolidation
+/// §2).
+///
+/// A predicate is **multi-valued by default** (the conservative choice — a wrong
+/// "functional" silently retires additive facts by status). A functional predicate holds
+/// at most one current object per subject, so a newer different object supersedes the
+/// prior. `contradicts` declares object-value pairs that are mutually exclusive for this
+/// predicate, on top of the always-on boolean inversion rule.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct PredicateRule {
+    /// Whether `(subject, predicate)` holds at most one current object (newer supersedes).
+    pub functional: bool,
+    /// Mutually-exclusive object-value pairs for this predicate (order-insensitive).
+    pub contradicts: Vec<(ObjectValue, ObjectValue)>,
+}
+
+/// How the supersession/contradiction detector decides (write-and-consolidation §2).
+///
+/// Conservative by construction: predicates are multi-valued unless the registry marks
+/// them functional, and only a genuinely high-trust incumbent (`>= high_trust_threshold`)
+/// causes a contradicting new fact to be quarantined rather than just recorded.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DetectionConfig {
+    /// Per-predicate behavior; a predicate absent from the map is multi-valued, no antonyms.
+    pub predicates: BTreeMap<String, PredicateRule>,
+    /// The incumbent trust at or above which a contradicting new fact is quarantined.
+    pub high_trust_threshold: f64,
+    /// Whether detection runs at all (off → extraction-only, the T04a behavior).
+    pub enabled: bool,
+}
+
+impl DetectionConfig {
+    /// A small, conservative default ruleset (`based_in`/`located_in` functional; boolean
+    /// inversion is always on regardless of the registry).
+    #[must_use]
+    pub fn with_default_rules() -> Self {
+        let functional = |contradicts| PredicateRule {
+            functional: true,
+            contradicts,
+        };
+        let mut predicates = BTreeMap::new();
+        predicates.insert("based_in".to_string(), functional(Vec::new()));
+        predicates.insert("located_in".to_string(), functional(Vec::new()));
+        Self {
+            predicates,
+            high_trust_threshold: 0.7,
+            enabled: true,
+        }
+    }
+
+    /// The rule for `predicate` (the conservative default when unregistered).
+    #[must_use]
+    pub fn rule(&self, predicate: &str) -> PredicateRule {
+        self.predicates.get(predicate).cloned().unwrap_or_default()
+    }
+}
+
+impl Default for DetectionConfig {
+    fn default() -> Self {
+        Self::with_default_rules()
+    }
+}
+
+/// The tuning the fact-extraction pass needs: entity resolution plus supersession
+/// detection. Bundled so the facade and the pass take one config, not a widening list.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct PassConfig {
+    /// Entity-resolution tuning.
+    pub resolution: ResolutionConfig,
+    /// Supersession/contradiction detection tuning.
+    pub detection: DetectionConfig,
 }

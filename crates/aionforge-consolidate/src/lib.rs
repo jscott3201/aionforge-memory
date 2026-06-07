@@ -20,6 +20,7 @@
 
 mod clock;
 mod config;
+mod detect;
 mod error;
 mod fact_extraction;
 mod lag;
@@ -29,7 +30,9 @@ mod rule_extractor;
 mod scheduler;
 
 pub use clock::{Clock, SystemClock};
-pub use config::{ConsolidationConfig, ResolutionConfig};
+pub use config::{
+    ConsolidationConfig, DetectionConfig, PassConfig, PredicateRule, ResolutionConfig,
+};
 pub use error::ConsolidationError;
 pub use fact_extraction::FactExtractionPass;
 pub use lag::ConsolidationLag;

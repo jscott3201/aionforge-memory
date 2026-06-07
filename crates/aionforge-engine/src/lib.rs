@@ -25,7 +25,8 @@ pub use aionforge_capture::{
     CaptureConfig, CaptureReceipt, CaptureRequest, CaptureVerdict, EmbeddingOutcome, WriterContext,
 };
 pub use aionforge_consolidate::{
-    ConsolidationConfig, ConsolidationHandle, ObjectRule, ResolutionConfig, Rule, RuleExtractor,
+    ConsolidationConfig, ConsolidationHandle, DetectionConfig, ObjectRule, PassConfig,
+    PredicateRule, ResolutionConfig, Rule, RuleExtractor,
 };
 pub use aionforge_retrieval::{
     QueryClass, RecallBundle, RecallExplanation, RecallOptions, RecallQuery, RetrieverConfig,
@@ -141,13 +142,13 @@ impl<E: Embedder + 'static> Memory<E> {
         &self,
         extractor: X,
         config: ConsolidationConfig,
-        resolution: ResolutionConfig,
+        pass_config: PassConfig,
     ) -> ConsolidationHandle
     where
         X: FactExtractor + 'static,
     {
         let pass =
-            FactExtractionPass::new(Arc::new(extractor), Arc::clone(&self.embedder), resolution);
+            FactExtractionPass::new(Arc::new(extractor), Arc::clone(&self.embedder), pass_config);
         let mut consolidator = Consolidator::new(Arc::clone(&self.store), config);
         consolidator.register(Box::new(pass));
         consolidator.start()

@@ -14,7 +14,7 @@ use aionforge_domain::ids::Id;
 use aionforge_domain::nodes::episodic::Role;
 use aionforge_domain::time::Timestamp;
 use aionforge_engine::{
-    CaptureRequest, CaptureVerdict, ConsolidationConfig, Memory, MemoryConfig, ResolutionConfig,
+    CaptureRequest, CaptureVerdict, ConsolidationConfig, Memory, MemoryConfig, PassConfig,
     RuleExtractor, WriterContext,
 };
 use aionforge_store::{BoundQuery, QueryResult};
@@ -122,7 +122,7 @@ async fn capture_then_start_consolidation_derives_a_fact() {
             tick_interval: Duration::from_millis(25),
             ..ConsolidationConfig::default()
         },
-        ResolutionConfig::default(),
+        PassConfig::default(),
     );
 
     // Poll until the background loop derives the fact, bounded so a regression fails fast.

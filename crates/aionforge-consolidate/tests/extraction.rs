@@ -11,7 +11,7 @@ use std::future::Future;
 use std::sync::Arc;
 
 use aionforge_consolidate::{
-    ConsolidationConfig, Consolidator, FactExtractionPass, ResolutionConfig, RuleExtractor,
+    ConsolidationConfig, Consolidator, FactExtractionPass, PassConfig, RuleExtractor,
 };
 use aionforge_domain::blocks::{Identity, Stats};
 use aionforge_domain::contracts::Embedder;
@@ -232,7 +232,7 @@ async fn extraction_resolves_surfaces_records_provenance_and_is_idempotent() {
     consolidator.register(Box::new(FactExtractionPass::new(
         Arc::new(RuleExtractor::with_default_rules()),
         Arc::new(ClusterEmbedder::new()),
-        ResolutionConfig::default(),
+        PassConfig::default(),
     )));
 
     drain(&consolidator).await;
