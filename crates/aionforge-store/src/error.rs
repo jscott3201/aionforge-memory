@@ -50,6 +50,12 @@ pub enum StoreError {
     /// text search on a kind that maintains no text index.
     #[error("search error: {0}")]
     Search(String),
+
+    /// A write was rejected at the boundary because it would violate a domain
+    /// invariant — for instance a bi-temporal window whose bounds are out of order.
+    /// The write funnel fails closed rather than persist inconsistent state.
+    #[error("invariant violation: {0}")]
+    Invariant(String),
 }
 
 impl StoreError {
@@ -66,5 +72,10 @@ impl StoreError {
     /// Construct a [`StoreError::Search`] from a message.
     pub(crate) fn search(message: impl Into<String>) -> Self {
         Self::Search(message.into())
+    }
+
+    /// Construct a [`StoreError::Invariant`] from a message.
+    pub(crate) fn invariant(message: impl Into<String>) -> Self {
+        Self::Invariant(message.into())
     }
 }

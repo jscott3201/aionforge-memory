@@ -330,6 +330,249 @@ fn contradiction_preserves_both_facts_and_quarantines_the_source() {
     );
 }
 
+#[test]
+fn assert_fact_rejects_an_unordered_window() {
+    let store = store();
+    let subject = entity("thing");
+    let subject_node = store.insert_entity(&subject).expect("insert entity");
+    let f = fact(
+        subject.identity.id.clone(),
+        "is",
+        ObjectValue::Bool(true),
+        "backwards",
+    );
+    let backwards = About {
+        temporal: BiTemporal {
+            valid_from: ts("2026-06-06T12:00:00Z[UTC]"),
+            valid_to: Some(ts("2026-06-06T06:00:00Z[UTC]")), // before valid_from
+            ingested_at: ts("2026-06-06T12:00:00Z[UTC]"),
+            expired_at: None,
+        },
+    };
+    let err = store
+        .assert_fact(&f, subject_node, &backwards)
+        .expect_err("an unordered window must be rejected");
+    assert!(
+        matches!(err, aionforge_store::StoreError::Invariant(_)),
+        "{err}"
+    );
+}
+
+#[test]
+fn supersession_before_the_facts_valid_from_is_rejected() {
+    let store = store();
+    let subject = entity("subj");
+    let subject_node = store.insert_entity(&subject).expect("insert entity");
+    let old = fact(
+        subject.identity.id.clone(),
+        "p",
+        ObjectValue::Number(1.0),
+        "old",
+    );
+    let new = fact(
+        subject.identity.id.clone(),
+        "p",
+        ObjectValue::Number(2.0),
+        "new",
+    );
+    let old_node = store
+        .assert_fact(
+            &old,
+            subject_node,
+            &open_window("2026-06-06T12:00:00Z[UTC]"),
+        )
+        .expect("assert old");
+    let new_node = store
+        .assert_fact(
+            &new,
+            subject_node,
+            &open_window("2026-06-06T12:00:00Z[UTC]"),
+        )
+        .expect("assert new");
+
+    // Supersession instant BEFORE the old fact's valid_from would close it backwards.
+    let backwards = SupersededBy {
+        reason: "too early".to_string(),
+        temporal: BiTemporal {
+            valid_from: ts("2026-06-06T06:00:00Z[UTC]"),
+            valid_to: None,
+            ingested_at: ts("2026-06-06T12:00:00Z[UTC]"),
+            expired_at: None,
+        },
+    };
+    let err = store
+        .supersede_fact(old_node, new_node, &backwards)
+        .expect_err("a backwards supersession must be rejected");
+    assert!(
+        matches!(err, aionforge_store::StoreError::Invariant(_)),
+        "{err}"
+    );
+    // Fail-closed: the rejected write published nothing — the old fact stays current.
+    let about = store.fact_about(old_node).expect("about").expect("present");
+    assert!(
+        about.temporal.is_current(),
+        "rejected supersession left the window open"
+    );
+    assert_eq!(
+        store
+            .fact_by_node_id(old_node)
+            .expect("read")
+            .expect("present")
+            .status,
+        FactStatus::Active,
+    );
+}
+
+#[test]
+fn superseding_a_fact_with_no_about_edge_errors() {
+    let store = store();
+    // insert_fact bypasses assert_fact, so this fact has no ABOUT edge.
+    let old = fact(Id::generate(), "p", ObjectValue::Number(1.0), "old");
+    let new = fact(Id::generate(), "p", ObjectValue::Number(2.0), "new");
+    let old_node = store.insert_fact(&old).expect("insert old");
+    let new_node = store.insert_fact(&new).expect("insert new");
+    let supersede = SupersededBy {
+        reason: "r".to_string(),
+        temporal: BiTemporal {
+            valid_from: ts("2026-06-06T12:00:00Z[UTC]"),
+            valid_to: None,
+            ingested_at: ts("2026-06-06T12:00:00Z[UTC]"),
+            expired_at: None,
+        },
+    };
+    let err = store
+        .supersede_fact(old_node, new_node, &supersede)
+        .expect_err("a fact with no ABOUT edge cannot be superseded");
+    assert!(
+        matches!(err, aionforge_store::StoreError::Decode(_)),
+        "{err}"
+    );
+}
+
+#[test]
+fn contradiction_without_quarantine_keeps_the_source_active() {
+    let store = store();
+    let subject = entity("subj");
+    let subject_node = store.insert_entity(&subject).expect("insert entity");
+    let a = fact(
+        subject.identity.id.clone(),
+        "is",
+        ObjectValue::Text("x".into()),
+        "a",
+    );
+    let b = fact(
+        subject.identity.id.clone(),
+        "is",
+        ObjectValue::Text("y".into()),
+        "b",
+    );
+    let a_node = store
+        .assert_fact(&a, subject_node, &open_window("2026-06-06T00:00:00Z[UTC]"))
+        .expect("assert a");
+    let b_node = store
+        .assert_fact(&b, subject_node, &open_window("2026-06-06T00:00:00Z[UTC]"))
+        .expect("assert b");
+    let contradicts = Contradicts {
+        detected_by: "d".to_string(),
+        temporal: BiTemporal {
+            valid_from: ts("2026-06-06T01:00:00Z[UTC]"),
+            valid_to: None,
+            ingested_at: ts("2026-06-06T01:00:00Z[UTC]"),
+            expired_at: None,
+        },
+    };
+    store
+        .contradict_fact(a_node, b_node, &contradicts, false)
+        .expect("contradict");
+    // The negative edge exists but neither fact's status changed.
+    assert_eq!(
+        edge_count(&store, "CONTRADICTS", &a.identity.id, &b.identity.id),
+        1
+    );
+    assert_eq!(
+        store
+            .fact_by_node_id(a_node)
+            .expect("read")
+            .expect("present")
+            .status,
+        FactStatus::Active,
+    );
+}
+
+#[test]
+fn a_supersession_chain_closes_each_window_in_order() {
+    let store = store();
+    let subject = entity("capital");
+    let subject_node = store.insert_entity(&subject).expect("insert entity");
+    let t0 = "1900-01-01T00:00:00Z[UTC]";
+    let t1 = "1949-09-07T00:00:00Z[UTC]";
+    let t2 = "1990-10-03T00:00:00Z[UTC]";
+
+    let a = fact(
+        subject.identity.id.clone(),
+        "c",
+        ObjectValue::Text("A".into()),
+        "A",
+    );
+    let b = fact(
+        subject.identity.id.clone(),
+        "c",
+        ObjectValue::Text("B".into()),
+        "B",
+    );
+    let c = fact(
+        subject.identity.id.clone(),
+        "c",
+        ObjectValue::Text("C".into()),
+        "C",
+    );
+    let a_node = store
+        .assert_fact(&a, subject_node, &open_window(t0))
+        .expect("a");
+    let b_node = store
+        .assert_fact(&b, subject_node, &open_window(t1))
+        .expect("b");
+    let c_node = store
+        .assert_fact(&c, subject_node, &open_window(t2))
+        .expect("c");
+
+    let sup = |from: &str| SupersededBy {
+        reason: "moved".to_string(),
+        temporal: BiTemporal {
+            valid_from: ts(from),
+            valid_to: None,
+            ingested_at: ts("2026-06-06T12:00:00Z[UTC]"),
+            expired_at: None,
+        },
+    };
+    store
+        .supersede_fact(a_node, b_node, &sup(t1))
+        .expect("a->b");
+    store
+        .supersede_fact(b_node, c_node, &sup(t2))
+        .expect("b->c");
+
+    // Each prior window closes to its successor's start; all stay ordered; all preserved.
+    let a_about = store.fact_about(a_node).expect("about").expect("a present");
+    let b_about = store.fact_about(b_node).expect("about").expect("b present");
+    let c_about = store.fact_about(c_node).expect("about").expect("c present");
+    assert_eq!(a_about.temporal.valid_to, Some(ts(t1)));
+    assert_eq!(b_about.temporal.valid_to, Some(ts(t2)));
+    assert!(a_about.temporal.windows_ordered() && b_about.temporal.windows_ordered());
+    assert!(
+        c_about.temporal.is_current(),
+        "the head of the chain stays current"
+    );
+    assert_eq!(
+        edge_count(&store, "SUPERSEDED_BY", &a.identity.id, &b.identity.id),
+        1
+    );
+    assert_eq!(
+        edge_count(&store, "SUPERSEDED_BY", &b.identity.id, &c.identity.id),
+        1
+    );
+}
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(48))]
 

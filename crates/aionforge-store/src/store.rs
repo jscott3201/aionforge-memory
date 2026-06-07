@@ -401,14 +401,21 @@ impl Store {
     /// graph validates the `ABOUT` endpoint is an `:Entity`). Returns the fact's id.
     ///
     /// # Errors
-    /// Returns [`StoreError`] if translation, a mutation, or the commit fails; nothing
-    /// is published if any step fails.
+    /// Returns [`StoreError::Invariant`] if the `ABOUT` window's bounds are out of
+    /// order, or [`StoreError`] if translation, a mutation, or the commit fails;
+    /// nothing is published if any step fails.
     pub fn assert_fact(
         &self,
         fact: &Fact,
         subject: NodeId,
         about: &About,
     ) -> Result<NodeId, StoreError> {
+        // Fail closed: never persist a window whose bounds are out of order (02 §5).
+        if !about.temporal.windows_ordered() {
+            return Err(StoreError::invariant(
+                "ABOUT validity window bounds are out of order".to_string(),
+            ));
+        }
         let (labels, props) = fact::to_node(fact)?;
         let about_label = db_string(About::LABEL)?;
         let about_props = fact::about_props(about)?;
@@ -429,17 +436,27 @@ impl Store {
     /// `ABOUT` event-time window (`valid_to` <- the supersession `valid_from`), writes
     /// `old -SUPERSEDED_BY-> new`, and mirrors `old.status = superseded`. The old fact
     /// node and its data remain, so an "as of" query before the supersession instant
-    /// still sees it as current (02 §4.2).
+    /// still sees it as current (02 §4.2). The transaction-time window
+    /// (`ingested_at`/`expired_at`) is deliberately left untouched: the substrate still
+    /// holds and believes the record, it is simply no longer event-current.
     ///
     /// # Errors
-    /// Returns [`StoreError`] if `old` has no `ABOUT` edge, or if a mutation or the
-    /// commit fails.
+    /// Returns [`StoreError::Invariant`] if the supersession edge's window is out of
+    /// order or its instant precedes the prior fact's `valid_from` (which would close
+    /// the window backwards); [`StoreError`] if `old` has no `ABOUT` edge, or if a
+    /// mutation or the commit fails. Nothing is published if any check or step fails.
     pub fn supersede_fact(
         &self,
         old: NodeId,
         new: NodeId,
         edge: &SupersededBy,
     ) -> Result<(), StoreError> {
+        // Fail closed: the supersession edge's own window must be ordered.
+        if !edge.temporal.windows_ordered() {
+            return Err(StoreError::invariant(
+                "SUPERSEDED_BY window bounds are out of order".to_string(),
+            ));
+        }
         let about_label = db_string(About::LABEL)?;
         let superseded_by_label = db_string(SupersededBy::LABEL)?;
         let edge_props = fact::superseded_by_props(edge)?;
@@ -457,6 +474,19 @@ impl Store {
                 .ok_or_else(|| {
                     StoreError::decode("superseded fact has no ABOUT edge".to_string())
                 })?;
+            // The closed window must stay ordered: the supersession instant cannot
+            // precede the fact's `valid_from`. Read the prior window and check before
+            // any mutation (so the txn rolls back cleanly on violation).
+            let prior = fact::about_from_properties(
+                mutator.read().edge_properties(about_edge).ok_or_else(|| {
+                    StoreError::decode("ABOUT edge has no properties".to_string())
+                })?,
+            )?;
+            if edge.temporal.valid_from < prior.temporal.valid_from {
+                return Err(StoreError::invariant(
+                    "supersession instant precedes the fact's valid_from".to_string(),
+                ));
+            }
             // Close the event-time window on the prior fact (non-destructive).
             mutator.update_edge(
                 about_edge,
@@ -487,7 +517,8 @@ impl Store {
     /// from default current retrieval but retained and auditable (04 §2).
     ///
     /// # Errors
-    /// Returns [`StoreError`] if a mutation or the commit fails.
+    /// Returns [`StoreError::Invariant`] if the contradiction edge's window is out of
+    /// order, or [`StoreError`] if a mutation or the commit fails.
     pub fn contradict_fact(
         &self,
         source: NodeId,
@@ -495,6 +526,12 @@ impl Store {
         edge: &Contradicts,
         quarantine_source: bool,
     ) -> Result<(), StoreError> {
+        // Fail closed: never persist a window whose bounds are out of order (02 §5).
+        if !edge.temporal.windows_ordered() {
+            return Err(StoreError::invariant(
+                "CONTRADICTS window bounds are out of order".to_string(),
+            ));
+        }
         let contradicts_label = db_string(Contradicts::LABEL)?;
         let edge_props = fact::contradicts_props(edge)?;
         let mut txn = self.graph.begin_write();
