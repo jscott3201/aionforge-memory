@@ -25,10 +25,11 @@ use aionforge_domain::nodes::forensic::{AuditEvent, AuditKind};
 use aionforge_domain::nodes::semantic::{Entity, Extraction, Fact, FactStatus};
 use aionforge_domain::time::{BiTemporal, Timestamp};
 use aionforge_domain::value::ObjectValue;
-use aionforge_store::MaterializedFact;
+use aionforge_store::{CandidateSet, FactKey, MaterializedFact};
 use serde_json::json;
 
-use crate::config::ResolutionConfig;
+use crate::config::{DetectionConfig, PassConfig};
+use crate::detect::{CurrentFact, detect};
 use crate::pass::{ConsolidationPass, PassContext, PassError, PassOutput};
 use crate::resolve::{CorefTable, Resolution, resolve_surface};
 
@@ -40,8 +41,9 @@ use crate::resolve::{CorefTable, Resolution, resolve_surface};
 pub struct FactExtractionPass<X, E> {
     extractor: Arc<X>,
     embedder: Arc<E>,
-    config: ResolutionConfig,
-    /// The substrate actor id stamped on this pass's `canonicalize` audit events.
+    resolution: crate::config::ResolutionConfig,
+    detection: DetectionConfig,
+    /// The substrate actor id stamped on this pass's audit events.
     actor_id: Id,
 }
 
@@ -52,11 +54,12 @@ where
 {
     /// Build the pass over a shared extractor and embedder.
     #[must_use]
-    pub fn new(extractor: Arc<X>, embedder: Arc<E>, config: ResolutionConfig) -> Self {
+    pub fn new(extractor: Arc<X>, embedder: Arc<E>, config: PassConfig) -> Self {
         Self {
             extractor,
             embedder,
-            config,
+            resolution: config.resolution,
+            detection: config.detection,
             actor_id: Id::generate(),
         }
     }
@@ -85,7 +88,8 @@ where
     }
 
     fn version(&self) -> u32 {
-        1
+        // 2: M2.T05b added supersession/contradiction detection to this pass's output.
+        2
     }
 
     async fn apply(&self, cx: &PassContext<'_>) -> Result<PassOutput, PassError> {
@@ -130,7 +134,7 @@ where
                 .ok_or_else(|| PassError::Fatal("surface embedding missing".to_string()))?;
             let resolution = resolve_surface(
                 store,
-                &self.config,
+                &self.resolution,
                 namespace,
                 surface,
                 embedding,
@@ -223,11 +227,22 @@ where
             materialized.fact.embedding = Some(embedding);
         }
 
+        // Detect supersession/contradiction of the new facts against the committed current
+        // set (read-only); the store materializes the resulting edges in the flip txn.
+        let detection = self.detect_conflicts(store, &facts, namespace, episode, &cx.now)?;
+
+        // The canonicalize decisions (one per resolved surface) plus the quarantine
+        // reconcile signals from detection.
+        audit_events.extend(detection.audits);
+
         let mut out = PassOutput::default();
         out.new_entities = new_entities;
         out.facts = facts;
         out.mentioned_entities = mentioned;
+        out.supersessions = detection.supersessions;
+        out.contradictions = detection.contradictions;
         out.audit_events = audit_events;
+        emit_detection_metrics(&out);
         Ok(out)
     }
 }
@@ -263,6 +278,92 @@ impl<X, E> FactExtractionPass<X, E> {
             }),
             signature: String::new(),
             occurred_at: now.clone(),
+        }
+    }
+
+    /// Detect supersession/contradiction of the new facts against the committed current
+    /// set (read-only). Reads `current_support_facts`, scopes it to the `(subject,
+    /// predicate)` pairs the new facts touch, then runs the pure [`detect`] decision.
+    fn detect_conflicts(
+        &self,
+        store: &aionforge_store::Store,
+        facts: &[MaterializedFact],
+        namespace: &Namespace,
+        episode: &Episode,
+        now: &Timestamp,
+    ) -> Result<crate::detect::DetectionOutput, PassError> {
+        if !self.detection.enabled || facts.is_empty() {
+            return Ok(crate::detect::DetectionOutput::default());
+        }
+        let touched: HashSet<(String, String)> = facts
+            .iter()
+            .map(|m| {
+                (
+                    m.fact.subject_id.as_str().to_string(),
+                    m.fact.predicate.clone(),
+                )
+            })
+            .collect();
+        let members = store
+            .candidate_state_members(CandidateSet::CurrentSupportFacts)
+            .map_err(|error| {
+                PassError::Transient(format!("current-support read failed: {error}"))
+            })?;
+        let mut current = Vec::new();
+        for node in members {
+            let Some(fact) = store
+                .fact_by_node_id(node)
+                .map_err(|error| PassError::Transient(format!("fact read failed: {error}")))?
+            else {
+                continue;
+            };
+            if !touched.contains(&(fact.subject_id.as_str().to_string(), fact.predicate.clone())) {
+                continue;
+            }
+            let Some(about) = store.fact_about(node).map_err(|error| {
+                PassError::Transient(format!("fact window read failed: {error}"))
+            })?
+            else {
+                continue;
+            };
+            current.push(CurrentFact {
+                key: FactKey {
+                    subject_id: fact.subject_id,
+                    predicate: fact.predicate,
+                    object: fact.object,
+                },
+                valid_from: about.temporal.valid_from,
+                trust: fact.stats.trust,
+            });
+        }
+        Ok(detect(
+            &current,
+            facts,
+            &self.detection,
+            namespace,
+            &episode.captured_at,
+            now,
+            &self.actor_id,
+        ))
+    }
+}
+
+/// Emit per-tick detection counters so supersession/quarantine rates are observable.
+fn emit_detection_metrics(out: &PassOutput) {
+    if !out.supersessions.is_empty() {
+        metrics::counter!("consolidation_supersessions_total")
+            .increment(out.supersessions.len() as u64);
+    }
+    if !out.contradictions.is_empty() {
+        metrics::counter!("consolidation_contradictions_total")
+            .increment(out.contradictions.len() as u64);
+        let quarantines = out
+            .contradictions
+            .iter()
+            .filter(|c| c.quarantine_source)
+            .count() as u64;
+        if quarantines > 0 {
+            metrics::counter!("consolidation_quarantines_total").increment(quarantines);
         }
     }
 }
