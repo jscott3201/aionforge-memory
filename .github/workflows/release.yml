@@ -1,10 +1,9 @@
 # Release gate for aionforge-memory — runs on PRs into `main` (development -> main).
 #
-# Everyday work merges into `development` behind the cheap ci.yml gate + local
-# hooks. A release batches `development` into a single PR against `main`; THIS
-# workflow is the comprehensive pre-merge gate: full build, lint, tests,
-# doctests across ubuntu + macOS (spec scopes Linux + macOS only — no Windows),
-# dependency audit, and the Docker image build once a Dockerfile exists.
+# Everyday work merges into `development` behind ci.yml + local hooks. A release
+# batches `development` into a single PR against `main`; this workflow runs the
+# comprehensive pre-merge gate defined once in release-gate.yml. The same gate runs
+# again at tag time (release-publish.yml), so a published release is always gated.
 #
 # Security: no `${{ github.event.* }}` in any `run:` (confined to if:/with:/env:).
 
@@ -20,202 +19,13 @@ concurrency:
   group: release-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  CARGO_TERM_COLOR: always
-  RUST_BACKTRACE: short
-  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
-
 permissions:
   contents: read
 
 jobs:
-  fmt:
-    name: fmt
+  gate:
+    name: gate
+    # Skip drafts; full gate runs once the PR is ready (or on manual dispatch).
     if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.95.0
-        with:
-          components: rustfmt
-      - run: cargo fmt --all --check
-
-  clippy:
-    name: clippy (${{ matrix.os }})
-    if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
-      - name: authenticate to the selene-db substrate
-        uses: webfactory/ssh-agent@v0.9.1
-        with:
-          ssh-private-key: ${{ secrets.SELENE_DB_DEPLOY_KEY }}
-      - uses: dtolnay/rust-toolchain@1.95.0
-        with:
-          components: clippy
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-
-  test:
-    name: test (${{ matrix.os }})
-    if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
-    env:
-      # Strip DWARF from the test build graph to keep ubuntu `ld` under the
-      # runner mmap cap (mirrors selene-db's CARGO_PROFILE_TEST_DEBUG=0 posture).
-      CARGO_PROFILE_TEST_DEBUG: 0
-    steps:
-      - uses: actions/checkout@v4
-      - name: authenticate to the selene-db substrate
-        uses: webfactory/ssh-agent@v0.9.1
-        with:
-          ssh-private-key: ${{ secrets.SELENE_DB_DEPLOY_KEY }}
-      - uses: dtolnay/rust-toolchain@1.95.0
-      - uses: Swatinem/rust-cache@v2
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: nextest
-      - name: cargo nextest + doctests
-        run: |
-          cargo nextest run --workspace --locked --all-features --profile ci
-          cargo test --workspace --locked --all-features --doc
-
-  deny:
-    name: cargo-deny
-    if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      # Run cargo-deny on the host (not the container action) so its `cargo metadata`
-      # can reach the SSH agent to fetch the selene-db git dependency.
-      - name: authenticate to the selene-db substrate
-        uses: webfactory/ssh-agent@v0.9.1
-        with:
-          ssh-private-key: ${{ secrets.SELENE_DB_DEPLOY_KEY }}
-      - uses: dtolnay/rust-toolchain@1.95.0
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-deny
-      - run: cargo deny check bans licenses sources
-
-  audit:
-    name: cargo-audit
-    if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: authenticate to the selene-db substrate
-        uses: webfactory/ssh-agent@v0.9.1
-        with:
-          ssh-private-key: ${{ secrets.SELENE_DB_DEPLOY_KEY }}
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-audit
-      - uses: actions/cache@v4
-        with:
-          path: ~/.cargo/advisory-db
-          key: advisory-db-${{ runner.os }}-${{ github.run_id }}
-          restore-keys: advisory-db-${{ runner.os }}-
-      - run: cargo audit --color always
-
-  thirdparty-current:
-    name: third-party attribution current
-    if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: authenticate to the selene-db substrate
-        uses: webfactory/ssh-agent@v0.9.1
-        with:
-          ssh-private-key: ${{ secrets.SELENE_DB_DEPLOY_KEY }}
-      - uses: dtolnay/rust-toolchain@1.95.0
-      - uses: Swatinem/rust-cache@v2
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-about
-      - run: bash .github/scripts/check-thirdparty-current.sh
-
-  file-size-cap:
-    name: file-size cap (700 LOC)
-    if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: bash .github/scripts/check-file-size.sh
-
-  no-secret-scan:
-    name: no-secret scan
-    if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: bash .github/scripts/check-no-secrets.sh
-
-  gql-binding-gate:
-    name: GQL parameter-binding gate
-    if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: bash .github/scripts/check-no-gql-interpolation.sh
-
-  store-only-selene-gate:
-    name: store-only-selene gate
-    if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: bash .github/scripts/check-store-only-selene.sh
-
-  detect:
-    name: detect optional files
-    if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    outputs:
-      dockerfile: ${{ steps.check.outputs.dockerfile }}
-    steps:
-      - uses: actions/checkout@v4
-      - id: check
-        # hashFiles is not allowed in a job-level `if:`, so the Dockerfile-existence
-        # check lives here as a step output that docker-build gates on.
-        run: |
-          if [ -f Dockerfile ]; then
-            echo "dockerfile=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "dockerfile=false" >> "$GITHUB_OUTPUT"
-          fi
-
-  docker-build:
-    name: docker image build + hadolint
-    # Wired but inert until a Dockerfile exists (lands with the Alpine deployment work).
-    needs: detect
-    if: |
-      (github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch')
-      && needs.detect.outputs.dockerfile == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      # The Dockerfile (when it lands) must fetch the selene-db git dependency with a
-      # BuildKit SSH mount (docker build --ssh); this loads the deploy key for that.
-      - name: authenticate to the selene-db substrate
-        uses: webfactory/ssh-agent@v0.9.1
-        with:
-          ssh-private-key: ${{ secrets.SELENE_DB_DEPLOY_KEY }}
-      - uses: hadolint/hadolint-action@v3.1.0
-        with:
-          dockerfile: Dockerfile
-      - uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: false
-
-  # M6 red-team probe gate and M7 benchmark gates are added to this workflow as
-  # those milestones land (see _spec/plan.md). They are not yet present.
+    uses: ./.github/workflows/release-gate.yml
+    secrets: inherit

@@ -1,0 +1,207 @@
+# Reusable comprehensive release gate for aionforge-memory.
+#
+# The single source of truth for the heavyweight checks: full build, lint, tests,
+# doctests across ubuntu + macOS (spec scopes Linux + macOS only — no Windows),
+# dependency audit + license/source checks, third-party attribution currency, the
+# repository gates, and the Docker image build once a Dockerfile exists.
+#
+# Called by:
+#   - release.yml          on PRs into `main` (development -> main), as the pre-merge gate
+#   - release-publish.yml  on a version tag, as the pre-publish gate
+# Callers decide WHETHER to run it (e.g. skip drafts); this workflow has no
+# event-specific `if:` so every job runs whenever it is called. Callers pass
+# `secrets: inherit` so the selene-db deploy key is available.
+#
+# Security: no `${{ github.event.* }}` in any `run:` (confined to if:/with:/env:).
+
+name: release-gate
+
+on:
+  workflow_call:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: short
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+
+permissions:
+  contents: read
+
+jobs:
+  fmt:
+    name: fmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          components: rustfmt
+      - run: cargo fmt --all --check
+
+  clippy:
+    name: clippy (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: authenticate to the selene-db substrate
+        uses: webfactory/ssh-agent@v0.9.1
+        with:
+          ssh-private-key: ${{ secrets.SELENE_DB_DEPLOY_KEY }}
+      - uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+
+  test:
+    name: test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      # Strip DWARF from the test build graph to keep ubuntu `ld` under the
+      # runner mmap cap (mirrors selene-db's CARGO_PROFILE_TEST_DEBUG=0 posture).
+      CARGO_PROFILE_TEST_DEBUG: 0
+    steps:
+      - uses: actions/checkout@v4
+      - name: authenticate to the selene-db substrate
+        uses: webfactory/ssh-agent@v0.9.1
+        with:
+          ssh-private-key: ${{ secrets.SELENE_DB_DEPLOY_KEY }}
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest
+      - name: cargo nextest + doctests
+        run: |
+          cargo nextest run --workspace --locked --all-features --profile ci
+          cargo test --workspace --locked --all-features --doc
+
+  deny:
+    name: cargo-deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Run cargo-deny on the host (not the container action) so its `cargo metadata`
+      # can reach the SSH agent to fetch the selene-db git dependency.
+      - name: authenticate to the selene-db substrate
+        uses: webfactory/ssh-agent@v0.9.1
+        with:
+          ssh-private-key: ${{ secrets.SELENE_DB_DEPLOY_KEY }}
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+      - run: cargo deny check bans licenses sources
+
+  audit:
+    name: cargo-audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: authenticate to the selene-db substrate
+        uses: webfactory/ssh-agent@v0.9.1
+        with:
+          ssh-private-key: ${{ secrets.SELENE_DB_DEPLOY_KEY }}
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cargo/advisory-db
+          key: advisory-db-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: advisory-db-${{ runner.os }}-
+      - run: cargo audit --color always
+
+  thirdparty-current:
+    name: third-party attribution current
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: authenticate to the selene-db substrate
+        uses: webfactory/ssh-agent@v0.9.1
+        with:
+          ssh-private-key: ${{ secrets.SELENE_DB_DEPLOY_KEY }}
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-about
+      - run: bash .github/scripts/check-thirdparty-current.sh
+
+  file-size-cap:
+    name: file-size cap (700 LOC)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash .github/scripts/check-file-size.sh
+
+  no-secret-scan:
+    name: no-secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash .github/scripts/check-no-secrets.sh
+
+  gql-binding-gate:
+    name: GQL parameter-binding gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash .github/scripts/check-no-gql-interpolation.sh
+
+  store-only-selene-gate:
+    name: store-only-selene gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash .github/scripts/check-store-only-selene.sh
+
+  detect:
+    name: detect optional files
+    runs-on: ubuntu-latest
+    outputs:
+      dockerfile: ${{ steps.check.outputs.dockerfile }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: check
+        # hashFiles is not allowed in a job-level `if:`, so the Dockerfile-existence
+        # check lives here as a step output that docker-build gates on.
+        run: |
+          if [ -f Dockerfile ]; then
+            echo "dockerfile=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "dockerfile=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  docker-build:
+    name: docker image build + hadolint
+    # Wired but inert until a Dockerfile exists (lands with the Alpine deployment work).
+    needs: detect
+    if: needs.detect.outputs.dockerfile == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The Dockerfile (when it lands) must fetch the selene-db git dependency with a
+      # BuildKit SSH mount (docker build --ssh); this loads the deploy key for that.
+      - name: authenticate to the selene-db substrate
+        uses: webfactory/ssh-agent@v0.9.1
+        with:
+          ssh-private-key: ${{ secrets.SELENE_DB_DEPLOY_KEY }}
+      - uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+
+  # M6 red-team probe gate and M7 benchmark gates are added to this workflow as
+  # those milestones land (see _spec/plan.md). They are not yet present.

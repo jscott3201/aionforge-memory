@@ -1,0 +1,77 @@
+# Tag-driven, gated release publishing for aionforge-memory.
+#
+# Releases are cut by pushing a SemVer tag (e.g. `v1.0.0`) onto `main`. This
+# workflow re-runs the full comprehensive gate (release-gate.yml) against the
+# tagged commit and, only if every check passes, publishes the GitHub Release.
+# A release therefore can never ship code that has not passed the gate.
+#
+# The artifact payload (static linux-musl + macOS binaries, and the Alpine Docker
+# image) lands with the deployment work in M8.T04 — see the publish job's
+# TODO(M8) markers. Until then a tag produces a gated, notes-generated GitHub
+# Release with no attached binaries.
+#
+# workflow_dispatch runs the gate only (a dry run); publishing requires a tag push.
+#
+# Security: no `${{ github.event.* }}` in any `run:` (confined to if:/with:/env:).
+
+name: release-publish
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+concurrency:
+  group: release-publish-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    name: gate
+    uses: ./.github/workflows/release-gate.yml
+    secrets: inherit
+
+  publish:
+    name: publish github release
+    needs: gate
+    # Publish only on an actual tag push; a manual dispatch is a gate-only dry run.
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history so the tag-on-main ancestry check below can resolve.
+          fetch-depth: 0
+      - name: verify the tag is on main
+        env:
+          # The tag ref name; confined to env per the no-event-data-in-run rule.
+          TAG: ${{ github.ref_name }}
+        run: |
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$TAG" FETCH_HEAD; then
+            echo "::error::tag $TAG does not point at a commit on main; cut releases from main only" >&2
+            exit 1
+          fi
+          echo "tag $TAG is on main"
+      - name: create the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$TAG" \
+            --generate-notes \
+            --verify-tag
+      # TODO(M8.T04): build and attach release artifacts and the container image:
+      #   - static binaries: x86_64- and aarch64-unknown-linux-musl (Alpine target)
+      #     plus macOS, built --locked, attached with `gh release upload "$TAG" ...`
+      #   - the Alpine runtime image, built with a BuildKit SSH mount for the
+      #     selene-db git dependency, tagged and pushed to the registry
+      # See _spec/08-platform.md §4 and plan.md M8.T04.
