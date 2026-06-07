@@ -331,12 +331,21 @@ pub(crate) fn materialize_into(
     //      step lives in `note.rs` with the note translation it depends on.
     note::materialize_notes(mutator, &artifacts.notes, &fact_nodes, &canonical_id, now)?;
 
-    // 4. Audit the pass's decisions (forensic, append-only): node + AUDIT edge to episode.
+    // 4. Audit the pass's decisions (forensic): node + AUDIT edge to episode. Audit ids are
+    //    content-derived (consolidate `audit` module), so this is deduped by id — a replay of
+    //    the same episode reuses the existing audit node and `ensure_edge` adds no second edge,
+    //    making the whole audit set idempotent like the facts and notes (04 §3).
     for event in &artifacts.audit_events {
-        let (labels, props) = audit::to_node(event)?;
-        let audit_node = mutator.create_node(labels, props)?;
-        mutator.create_edge(
-            db_string(Audit::LABEL)?,
+        let audit_node = match audit::find_existing(mutator.read(), &event.identity.id)? {
+            Some(node) => node,
+            None => {
+                let (labels, props) = audit::to_node(event)?;
+                mutator.create_node(labels, props)?
+            }
+        };
+        ensure_edge(
+            mutator,
+            Audit::LABEL,
             audit_node,
             episode_node_id,
             PropertyMap::from_pairs(Vec::new())?,

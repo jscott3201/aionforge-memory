@@ -305,6 +305,15 @@ async fn extraction_resolves_surfaces_records_provenance_and_is_idempotent() {
         "five distinct entities: Alice, Aionforge, Rust, Bob, Helios"
     );
 
+    // Audit events are content-addressed too (consolidate `audit` module), so a replay must
+    // reuse them rather than write second copies — the same idempotency the fact and entity
+    // ids give. (With the old random audit ids this count would double on replay; and without
+    // the dedup-aware audit write the replay below would fail the AuditEvent UNIQUE constraint.)
+    let audits_before = count(
+        &store,
+        BoundQuery::new("MATCH (a:AuditEvent) RETURN a.id AS id"),
+    );
+
     // 3. Extraction is idempotent per cursor position: replay every episode and assert
     // nothing new is written (content-derived ids plus value dedup make it a no-op).
     reset_to_raw(&store);
@@ -321,5 +330,113 @@ async fn extraction_resolves_surfaces_records_provenance_and_is_idempotent() {
         ),
         entities_before,
         "re-extraction adds no entities"
+    );
+    assert_eq!(
+        count(
+            &store,
+            BoundQuery::new("MATCH (a:AuditEvent) RETURN a.id AS id")
+        ),
+        audits_before,
+        "re-extraction writes no duplicate audit events (content-derived ids + dedup-aware write)"
+    );
+}
+
+#[tokio::test]
+async fn audit_actor_id_is_stable_across_pass_construction() {
+    // The pass's audit actor id is content-derived from its configuration, not a per-process
+    // random value, so two freshly-built passes over the same configuration stamp the same
+    // actor id — forensic attribution survives a restart.
+    async fn actor_for_a_run() -> String {
+        let store = store();
+        let namespace = Namespace::Agent("alice".to_string());
+        insert_raw_episode(&store, "Alice prefers Rust.", &namespace, 0);
+        let mut consolidator =
+            Consolidator::new(Arc::clone(&store), ConsolidationConfig::default());
+        consolidator.register(Box::new(FactExtractionPass::new(
+            Arc::new(RuleExtractor::with_default_rules()),
+            Arc::new(ClusterEmbedder::new()),
+            Arc::new(RuleSummarizer::with_default_rules()),
+            PassConfig::default(),
+        )));
+        drain(&consolidator).await;
+        let query = BoundQuery::new(
+            "MATCH (a:AuditEvent) WHERE a.kind = $k RETURN a.actor_id AS actor LIMIT 1",
+        )
+        .bind_str("k", "canonicalize")
+        .expect("bind kind");
+        let QueryResult::Rows(rows) = store.execute(&query).expect("actor query") else {
+            panic!("expected rows");
+        };
+        match rows.value(0, 0) {
+            Some(Value::String(actor)) => actor.as_str().to_string(),
+            other => panic!("expected an actor id string, got {other:?}"),
+        }
+    }
+
+    let first = actor_for_a_run().await;
+    let second = actor_for_a_run().await;
+    assert!(!first.is_empty(), "the audit records a non-empty actor id");
+    assert_eq!(
+        first, second,
+        "the same pass configuration stamps the same actor id across separate constructions"
+    );
+}
+
+#[tokio::test]
+async fn consolidation_keeps_namespaces_isolated() {
+    let store = store();
+    let alice = Namespace::Agent("alice".to_string());
+    let bob = Namespace::Agent("bob".to_string());
+    // The same subject surface in two namespaces, with conflicting objects. Entity (subject)
+    // ids are namespace-scoped and the summarize/detect reads are explicitly filtered to the
+    // episode's namespace, so the two "Alice" facts stay distinct: consolidation must not merge
+    // them, roll one namespace's facts into the other's summary, or bridge them with a
+    // supersession/contradiction edge.
+    insert_raw_episode(&store, "Alice prefers Rust.", &alice, 0);
+    insert_raw_episode(&store, "Alice prefers Go.", &bob, 1);
+
+    let mut consolidator = Consolidator::new(Arc::clone(&store), ConsolidationConfig::default());
+    consolidator.register(Box::new(FactExtractionPass::new(
+        Arc::new(RuleExtractor::with_default_rules()),
+        Arc::new(ClusterEmbedder::new()),
+        Arc::new(RuleSummarizer::with_default_rules()),
+        PassConfig::default(),
+    )));
+    drain(&consolidator).await;
+
+    // Two independent facts, one per namespace — never merged across the boundary.
+    assert_eq!(
+        count(&store, BoundQuery::new("MATCH (f:Fact) RETURN f.id AS id")),
+        2,
+        "each namespace keeps its own fact; namespace-scoped ids prevent a cross-namespace merge"
+    );
+    let alice_facts = count(
+        &store,
+        BoundQuery::new("MATCH (f:Fact) WHERE f.namespace = $n RETURN f.id AS id")
+            .bind_str("n", "agent:alice")
+            .expect("bind namespace"),
+    );
+    assert_eq!(
+        alice_facts, 1,
+        "alice's namespace holds exactly its own fact"
+    );
+
+    // No detection edge bridges the namespaces: a foreign-namespace fact is never a detection
+    // candidate, so the cross-namespace "prefers" objects neither supersede nor contradict.
+    assert_eq!(
+        count(
+            &store,
+            BoundQuery::new("MATCH (a:Fact)-[:SUPERSEDED_BY]->(b:Fact) RETURN a.id AS id"),
+        ),
+        0,
+        "no supersession edge crosses a namespace"
+    );
+    assert_eq!(
+        count(
+            &store,
+            BoundQuery::new("MATCH (a:Fact)-[:CONTRADICTS]->(b:Fact) RETURN a.id AS id"),
+        ),
+        0,
+        "no contradiction edge crosses a namespace"
     );
 }

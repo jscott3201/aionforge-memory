@@ -5,8 +5,10 @@
 //! value; `kind` serializes to its `snake_case` spec string.
 
 use aionforge_domain::blocks::Identity;
+use aionforge_domain::ids::Id;
 use aionforge_domain::nodes::forensic::AuditEvent;
-use selene_core::{DbString, LabelSet, PropertyMap, Value, db_string};
+use selene_core::{DbString, LabelSet, NodeId, PropertyMap, Value, db_string};
+use selene_graph::{RowIndex, SeleneGraph};
 
 use crate::convert::{
     as_id, as_namespace, as_str, as_timestamp, enum_from_value, enum_value, id_value,
@@ -75,4 +77,20 @@ pub(crate) fn from_properties(props: &PropertyMap) -> Result<AuditEvent, StoreEr
         signature: as_str(require(SIGNATURE)?)?.to_string(),
         occurred_at: as_timestamp(require(OCCURRED_AT)?)?,
     })
+}
+
+/// Find an audit event already written with this content-addressed id, returning its node.
+/// `AuditEvent.id` is `UNIQUE`, so this is a probe — the dedup that makes a replay of the same
+/// episode write no second copy of an audit it already produced (04 §3), mirroring the fact
+/// and note paths.
+pub(crate) fn find_existing(snapshot: &SeleneGraph, id: &Id) -> Result<Option<NodeId>, StoreError> {
+    let label = db_string(AuditEvent::LABEL)?;
+    let prop = db_string(ID)?;
+    let value = id_value(id)?;
+    let Some(rows) = snapshot.nodes_with_property_eq(&label, &prop, &value) else {
+        return Ok(None);
+    };
+    Ok(rows
+        .iter()
+        .find_map(|row| snapshot.node_id_for_row(RowIndex::new(row))))
 }

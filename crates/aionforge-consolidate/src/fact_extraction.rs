@@ -25,18 +25,17 @@ use aionforge_domain::ids::Id;
 use aionforge_domain::namespace::Namespace;
 use aionforge_domain::nodes::associative::Note;
 use aionforge_domain::nodes::episodic::Episode;
-use aionforge_domain::nodes::forensic::{AuditEvent, AuditKind};
+use aionforge_domain::nodes::forensic::AuditEvent;
 use aionforge_domain::nodes::semantic::{Entity, Extraction, Fact, FactStatus};
 use aionforge_domain::time::{BiTemporal, Timestamp};
 use aionforge_domain::value::ObjectValue;
 use aionforge_store::{CandidateSet, FactKey, MaterializedFact, MaterializedNote};
-use serde_json::json;
 
 use crate::config::{DetectionConfig, PassConfig, SummarizationConfig};
 use crate::detect::{CurrentFact, detect};
 use crate::pass::{ConsolidationPass, PassContext, PassError, PassOutput};
 use crate::resolve::{CorefTable, Resolution, resolve_surface};
-use crate::summarize::{RetentionOutcome, build_clusters, check_detail_retention, note_id};
+use crate::summarize::{build_clusters, check_detail_retention, note_id};
 
 /// The fact-extraction pass: extract triples, resolve entities, derive facts, then detect
 /// supersession/contradiction and summarize the touched subjects' facts into notes.
@@ -70,6 +69,13 @@ where
         summarizer: Arc<S>,
         config: PassConfig,
     ) -> Self {
+        // A stable, content-derived actor id over the pass configuration, so the pass's audit
+        // events attribute to the same actor across process restarts (see [`crate::audit`]).
+        let actor_id = crate::audit::actor_id(
+            extractor.identity(),
+            embedder.model(),
+            summarizer.identity(),
+        );
         Self {
             extractor,
             embedder,
@@ -77,7 +83,7 @@ where
             resolution: config.resolution,
             detection: config.detection,
             summarization: config.summarization,
-            actor_id: Id::generate(),
+            actor_id,
         }
     }
 
@@ -136,6 +142,14 @@ where
             else {
                 continue;
             };
+            // Stay within the episode's namespace. Subject ids are already namespace-scoped
+            // (`resolve::new_entity_id` folds the namespace into the hash), so a foreign-
+            // namespace fact can never match `touched` — but this explicit guard makes that
+            // isolation a property of the loop rather than an emergent one, and drops foreign
+            // facts before the subject probe (02 §11, 06 §1, 07 §9).
+            if fact.identity.namespace != *namespace {
+                continue;
+            }
             if touched.contains(fact.subject_id.as_str())
                 && seen.insert(fact.identity.id.as_str().to_string())
             {
@@ -164,11 +178,13 @@ where
                 continue; // the summarizer conservatively declined this cluster
             };
             let retention = check_detail_retention(&cluster, &output, &self.summarization);
-            audits.push(self.summarize_audit(
+            audits.push(crate::audit::summarize_audit(
+                &self.actor_id,
+                &episode.identity.id,
                 &cluster,
+                &rule_version,
                 namespace,
                 now,
-                retention.passed,
                 &retention,
             ));
             if !retention.passed {
@@ -252,38 +268,6 @@ where
         }
         Ok(name_of)
     }
-
-    /// The `summarize` audit event recording one cluster's outcome (written or skipped).
-    fn summarize_audit(
-        &self,
-        cluster: &SummarizationCluster,
-        namespace: &Namespace,
-        now: &Timestamp,
-        written: bool,
-        retention: &RetentionOutcome,
-    ) -> AuditEvent {
-        AuditEvent {
-            identity: Identity {
-                id: Id::generate(),
-                ingested_at: now.clone(),
-                namespace: namespace.clone(),
-                expired_at: None,
-            },
-            kind: AuditKind::Summarize,
-            subject_id: cluster.subject_id.clone(),
-            actor_id: self.actor_id.clone(),
-            payload: json!({
-                "outcome": if written { "written" } else { "skipped_low_retention" },
-                "source_fact_count": cluster.facts.len(),
-                "entity_count": cluster.entity_names.len(),
-                "entity_retention": retention.entity_retention,
-                "mean_confidence": retention.mean_confidence,
-                "rule_version": self.summarizer.identity().rule_version,
-            }),
-            signature: String::new(),
-            occurred_at: now.clone(),
-        }
-    }
 }
 
 #[async_trait::async_trait]
@@ -351,7 +335,14 @@ where
                 &mut coref,
             )
             .map_err(|error| PassError::Transient(format!("entity resolution failed: {error}")))?;
-            audit_events.push(self.canonicalize_audit(surface, &resolution, namespace, &cx.now));
+            audit_events.push(crate::audit::canonicalize_audit(
+                &self.actor_id,
+                &episode.identity.id,
+                surface,
+                &resolution,
+                namespace,
+                &cx.now,
+            ));
             resolutions.insert(surface_key(surface), resolution);
         }
 
@@ -468,39 +459,6 @@ where
 }
 
 impl<X, E, S> FactExtractionPass<X, E, S> {
-    /// Build the `canonicalize` audit event recording one resolution decision.
-    fn canonicalize_audit(
-        &self,
-        surface: &EntitySurface,
-        resolution: &Resolution,
-        namespace: &Namespace,
-        now: &Timestamp,
-    ) -> AuditEvent {
-        AuditEvent {
-            identity: Identity {
-                id: Id::generate(),
-                ingested_at: now.clone(),
-                namespace: namespace.clone(),
-                expired_at: None,
-            },
-            kind: AuditKind::Canonicalize,
-            subject_id: resolution.id.clone(),
-            actor_id: self.actor_id.clone(),
-            payload: json!({
-                "surface": surface.surface,
-                "type": surface.entity_type,
-                "resolved_to": resolution.id.as_str(),
-                "canonical_name": resolution.canonical_name,
-                "method": resolution.method.as_str(),
-                "is_new": resolution.is_new,
-                "confidence": resolution.confidence,
-                "candidates": resolution.candidates,
-            }),
-            signature: String::new(),
-            occurred_at: now.clone(),
-        }
-    }
-
     /// Detect supersession/contradiction of the new facts against the committed current
     /// set (read-only). Reads `current_support_facts`, scopes it to the `(subject,
     /// predicate)` pairs the new facts touch, then runs the pure [`detect`] decision.
@@ -537,6 +495,14 @@ impl<X, E, S> FactExtractionPass<X, E, S> {
             else {
                 continue;
             };
+            // Detection only ever compares facts within the episode's namespace, so a
+            // supersession/contradiction edge can never bridge namespaces. Subject ids are
+            // namespace-scoped (`resolve::new_entity_id`), so a foreign fact cannot match
+            // `touched`; this explicit guard makes that boundary local rather than emergent
+            // (02 §11, 06 §1, 07 §9).
+            if fact.identity.namespace != *namespace {
+                continue;
+            }
             if !touched.contains(&(fact.subject_id.as_str().to_string(), fact.predicate.clone())) {
                 continue;
             }

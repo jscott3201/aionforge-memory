@@ -18,6 +18,7 @@
 //! [`Consolidator::tick_once`] is the deterministic unit of work; [`Consolidator::start`]
 //! runs it on a timer and hands back a [`ConsolidationHandle`] for shutdown.
 
+mod audit;
 mod clock;
 mod config;
 mod detect;

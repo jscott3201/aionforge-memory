@@ -223,9 +223,18 @@ fn quarantine_audit(
     now: &Timestamp,
     actor_id: &Id,
 ) -> AuditEvent {
+    // Keyed on the contradicting fact (content-derived, namespace-scoped id) AND the incumbent
+    // it contradicts: one new fact can contradict several incumbents in a single episode, so
+    // the incumbent object keeps each reconcile signal distinct, while a replay still reproduces
+    // every id exactly and the dedup-aware write makes the whole set a no-op (04 §3).
+    let incumbent_object = serde_json::to_string(&incumbent.key.object).unwrap_or_default();
     AuditEvent {
         identity: Identity {
-            id: Id::generate(),
+            id: crate::audit::audit_id(
+                "quarantine",
+                namespace,
+                &[new_fact.identity.id.as_str(), &incumbent_object],
+            ),
             ingested_at: now.clone(),
             namespace: namespace.clone(),
             expired_at: None,
