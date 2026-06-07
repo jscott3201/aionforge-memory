@@ -143,6 +143,46 @@ impl SetOp {
     }
 }
 
+/// A graph edge type a candidate expansion may walk (03 §1 support expansion). A closed,
+/// trusted set, so the label is a safe static identifier in a `CALL` source.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExpandEdge {
+    /// `Fact|Episode -SUPPORTS-> Fact`: a fact's supporting evidence.
+    Supports,
+}
+
+impl ExpandEdge {
+    /// The selene-db edge label.
+    fn as_label(self) -> &'static str {
+        match self {
+            ExpandEdge::Supports => "SUPPORTS",
+        }
+    }
+}
+
+/// Which way a candidate expansion walks an edge. For `SUPPORTS` (`evidence -> fact`),
+/// `Incoming` gathers the evidence that supports the root facts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExpandDirection {
+    /// Follow edges pointing *into* the roots (a root fact's supporting evidence).
+    Incoming,
+    /// Follow edges pointing *out of* the roots.
+    Outgoing,
+    /// Follow edges in either direction.
+    Both,
+}
+
+impl ExpandDirection {
+    /// The direction name the engine procedure expects.
+    fn as_name(self) -> &'static str {
+        match self {
+            ExpandDirection::Incoming => "incoming",
+            ExpandDirection::Outgoing => "outgoing",
+            ExpandDirection::Both => "both",
+        }
+    }
+}
+
 impl Store {
     /// Approximate nearest-neighbor vector search over the HNSW index (03 §1 dense).
     ///
@@ -263,6 +303,52 @@ impl Store {
         let query = BoundQuery::new(source)
             .bind("query", embedding_value(query)?)?
             .bind("nodes", node_list_value(candidates))?
+            .bind("k", k_value(k))?;
+        extract_hits(self.execute(&query)?, "distance")
+    }
+
+    /// Expand `roots` one hop over `edge`, compose with a maintained candidate-state set,
+    /// then exact-vector-rerank the composed set (03 §1 support expansion, §4).
+    ///
+    /// The roots are preserved and graph-expanded one labelled hop in `direction`; the
+    /// resulting set (`roots ∪ neighbors`) is composed with `set` via `op`, and the
+    /// composition is scored by cosine distance to `query` over `kind`'s vector property —
+    /// all under one statement snapshot. With `set = current_support_facts` and `op =
+    /// Intersection` the scored set is current-scoped natively, so support-derived evidence
+    /// facts a plain ANN pass misses surface while non-current facts are filtered out. Empty
+    /// `roots` yields an empty ranking (no expansion root, no global scan).
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the set is unknown, the provider is stale, or the query
+    /// vector, the binds, or execution fails.
+    #[allow(clippy::too_many_arguments)]
+    pub fn vector_score_state_expanded(
+        &self,
+        kind: SearchKind,
+        query: &Embedding,
+        set: CandidateSet,
+        roots: &[NodeId],
+        edge: ExpandEdge,
+        direction: ExpandDirection,
+        op: SetOp,
+        k: usize,
+    ) -> Result<Vec<SearchHit>, StoreError> {
+        if roots.is_empty() {
+            return Ok(Vec::new());
+        }
+        let prop = kind.vector_property();
+        let (name, op, label, dir) = (
+            set.as_name(),
+            op.as_name(),
+            edge.as_label(),
+            direction.as_name(),
+        );
+        let source = format!(
+            "CALL selene.vector_score_candidate_state_expanded('{prop}', $query, '{name}', $roots, '{label}', $k, '{op}', '{dir}', 'cosine') YIELD node_id, distance"
+        ); // gql-ident-ok
+        let query = BoundQuery::new(source)
+            .bind("query", embedding_value(query)?)?
+            .bind("roots", node_list_value(roots))?
             .bind("k", k_value(k))?;
         extract_hits(self.execute(&query)?, "distance")
     }
