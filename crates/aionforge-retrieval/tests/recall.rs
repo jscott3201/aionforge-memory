@@ -667,6 +667,41 @@ async fn compact_view_is_score_ordered_with_verbose_detail() {
     );
 }
 
+#[tokio::test]
+async fn compact_verbose_escapes_a_hostile_namespace() {
+    let store = store();
+    // An agent id is a plain string with no character constraints, so a hostile one could
+    // carry an attribute-breaking quote. The verbose compact view renders the namespace as
+    // an attribute, so it must be escaped just like the fact predicate (07 §4).
+    let hostile = Namespace::Agent("x\" onload=\"evil".to_string());
+    seed(
+        &store,
+        "ordinary content",
+        hostile.clone(),
+        None,
+        Role::User,
+        [1.0, 0.0, 0.0, 0.0],
+        false,
+    );
+    let r = retriever(store, embedder_to("content", [1.0, 0.0, 0.0, 0.0]));
+
+    let bundle = r
+        .recall(RecallQuery::new("content", hostile, 10))
+        .await
+        .expect("recall");
+    let compact = bundle.render_compact(true);
+
+    // The quote inside the agent id is escaped, so it cannot open a forged attribute.
+    assert!(
+        compact.contains("ns=\"agent:x&quot; onload=&quot;evil\""),
+        "the namespace attribute must be escaped: {compact}"
+    );
+    assert!(
+        !compact.contains("onload=\"evil\""),
+        "no attribute injection survives: {compact}"
+    );
+}
+
 /// Count the episodes in the store, to prove a hostile query did not mutate the graph.
 fn episode_count(store: &Store) -> usize {
     match store

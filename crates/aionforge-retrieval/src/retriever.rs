@@ -109,9 +109,22 @@ impl<E: Embedder> HybridRetriever<E> {
             None
         };
 
+        // In Current mode the fact searches are scoped to the live current-support set.
+        // Resolve its membership once: an empty set short-circuits both fact searches, and
+        // the non-empty list scopes the lexical BM25 search (there is no
+        // `text_score_candidate_state` primitive, so it passes the explicit node list).
+        // `None` in any other temporal mode means "search all facts" (03 §5).
+        let current_facts: Option<Vec<NodeId>> = match query.options.temporal {
+            TemporalMode::Current => Some(
+                self.store
+                    .candidate_state_members(CandidateSet::CurrentSupportFacts)?,
+            ),
+            _ => None,
+        };
+
         if profile.weights.lexical > 0.0 {
             let episodes = lexical_ranking(&self.store, SearchKind::Episode, &query.text, fanout)?;
-            let facts = self.fact_lexical_ranking(&query, fanout)?;
+            let facts = self.fact_lexical_ranking(&query, current_facts.as_deref(), fanout)?;
             fact_nodes.extend(facts.candidates.iter().map(|c| c.node));
             rankings.push(WeightedRanking::new(profile.weights.lexical, episodes));
             rankings.push(WeightedRanking::new(profile.weights.lexical, facts));
@@ -127,7 +140,12 @@ impl<E: Embedder> HybridRetriever<E> {
                 fanout,
                 profile.exact_rerank,
             )?;
-            let facts = self.fact_dense_ranking(&query, embedding, fanout, profile.exact_rerank)?;
+            let facts = self.fact_dense_ranking(
+                current_facts.as_deref(),
+                embedding,
+                fanout,
+                profile.exact_rerank,
+            )?;
             fact_nodes.extend(facts.candidates.iter().map(|c| c.node));
             rankings.push(WeightedRanking::new(profile.weights.dense, episodes));
             rankings.push(WeightedRanking::new(profile.weights.dense, facts));
@@ -245,50 +263,49 @@ impl<E: Embedder> HybridRetriever<E> {
         })
     }
 
-    /// The lexical fact ranking for this query's temporal mode (03 §1, §5).
+    /// The lexical fact ranking, scoped by `current` (03 §1, §5).
     ///
-    /// In [`TemporalMode::Current`] the search is scoped *up front* to the
-    /// `current_support_facts` provider membership — BM25 over exactly that node list —
-    /// so a current fact ranked past the fan-out can never be lost to a fuse-then-filter
-    /// intersection. Every other mode searches all facts and the temporal window is
-    /// applied per candidate in [`Self::resolve_fact`].
+    /// `Some(members)` is the live `current_support_facts` set (Current mode): BM25 runs
+    /// over exactly that node list, so a current fact ranked past the fan-out can never be
+    /// lost to a fuse-then-filter intersection; an empty set short-circuits the search.
+    /// `None` searches all facts and the temporal window is applied per candidate in
+    /// [`Self::resolve_fact`].
     fn fact_lexical_ranking(
         &self,
         query: &RecallQuery,
+        current: Option<&[NodeId]>,
         k: usize,
     ) -> Result<SignalRanking, RetrievalError> {
-        let hits = match query.options.temporal {
-            TemporalMode::Current => {
-                let members = self
-                    .store
-                    .candidate_state_members(CandidateSet::CurrentSupportFacts)?;
-                if members.is_empty() {
-                    Vec::new()
-                } else {
-                    self.store
-                        .text_score_nodes(SearchKind::Fact, &query.text, &members, k)?
-                }
+        let hits = match current {
+            Some([]) => Vec::new(),
+            Some(members) => {
+                self.store
+                    .text_score_nodes(SearchKind::Fact, &query.text, members, k)?
             }
-            _ => self.store.text_search(SearchKind::Fact, &query.text, k)?,
+            None => self.store.text_search(SearchKind::Fact, &query.text, k)?,
         };
         Ok(ranking_from_hits(Signal::Lexical, hits))
     }
 
-    /// The dense fact ranking for this query's temporal mode (03 §1, §4, §5).
+    /// The dense fact ranking, scoped by `current` (03 §1, §4, §5).
     ///
-    /// [`TemporalMode::Current`] vector-scores the `current_support_facts` set directly
-    /// (full precision over the bounded current set, no ANN recall loss and no
-    /// fuse-then-filter gap); every other mode runs the standard ANN-then-rerank path
-    /// over all facts, temporally filtered per candidate later.
+    /// `Some(members)` is the live `current_support_facts` set (Current mode): an empty
+    /// set short-circuits the search, and a non-empty one is scored through
+    /// `vector_score_candidate_state`, the atomic provider-scoped primitive — it resolves
+    /// the set and scores it in a single snapshot, so the score cannot drift from a set
+    /// that changed between resolving membership and scoring (full precision over the
+    /// bounded current set, no ANN recall loss and no fuse-then-filter gap). `None` runs
+    /// the standard ANN-then-rerank path over all facts, temporally filtered later.
     fn fact_dense_ranking(
         &self,
-        query: &RecallQuery,
+        current: Option<&[NodeId]>,
         embedding: &Embedding,
         k: usize,
         exact_rerank: bool,
     ) -> Result<SignalRanking, RetrievalError> {
-        match query.options.temporal {
-            TemporalMode::Current => {
+        match current {
+            Some([]) => Ok(ranking_from_hits(Signal::Dense, Vec::new())),
+            Some(_) => {
                 let hits = self.store.vector_score_state(
                     SearchKind::Fact,
                     embedding,
@@ -297,7 +314,7 @@ impl<E: Embedder> HybridRetriever<E> {
                 )?;
                 Ok(ranking_from_hits(Signal::Dense, hits))
             }
-            _ => dense_ranking_for(&self.store, SearchKind::Fact, embedding, k, exact_rerank),
+            None => dense_ranking_for(&self.store, SearchKind::Fact, embedding, k, exact_rerank),
         }
     }
 

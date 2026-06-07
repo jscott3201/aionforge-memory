@@ -255,20 +255,20 @@ impl RecallBundle {
             let sid = entry.serialization_id();
             // The kind-specific head: an episode carries its role, a fact its predicate
             // and lifecycle status. The predicate is `attr_escape`d so an extracted
-            // value cannot break out of its attribute quotes (07 §4).
+            // value cannot break out of its attribute quotes (07 §4). The fused score is
+            // common to both kinds, so it is read through the accessor and appended once.
             match entry {
                 StructuredEntry::Episode(e) => out.push_str(&format!(
-                    "<memory id=\"{sid}\" kind=\"episode\" role=\"{role}\" score=\"{score:.4}\"",
+                    "<memory id=\"{sid}\" kind=\"episode\" role=\"{role}\"",
                     role = role_tag(e.role),
-                    score = e.score,
                 )),
                 StructuredEntry::Fact(f) => out.push_str(&format!(
-                    "<memory id=\"{sid}\" kind=\"fact\" predicate=\"{predicate}\" status=\"{status}\" score=\"{score:.4}\"",
+                    "<memory id=\"{sid}\" kind=\"fact\" predicate=\"{predicate}\" status=\"{status}\"",
                     predicate = attr_escape(&f.predicate),
                     status = status_tag(f.status),
-                    score = f.score,
                 )),
             }
+            out.push_str(&format!(" score=\"{:.4}\"", entry.score()));
             if verbose {
                 let via = entry
                     .contributions()
@@ -276,9 +276,11 @@ impl RecallBundle {
                     .map(|c| format!("{}#{}", signal_tag(c.signal), c.rank))
                     .collect::<Vec<_>>()
                     .join(" ");
+                // The namespace is `attr_escape`d like the predicate: an agent/team id is
+                // a plain string, so a hostile id cannot break out of the attribute (07 §4).
                 out.push_str(&format!(
                     " ns=\"{ns}\" trust=\"{trust:.2}\" via=\"{via}\"",
-                    ns = entry.namespace(),
+                    ns = attr_escape(&entry.namespace().to_string()),
                     trust = entry.trust(),
                 ));
             }

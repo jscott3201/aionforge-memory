@@ -44,8 +44,9 @@
 
 pub use aionforge_engine::{
     CaptureConfig, CaptureReceipt, CaptureRequest, CaptureVerdict, EmbeddingOutcome, EngineError,
-    Memory, MemoryConfig, QueryClass, RecallBundle, RecallExplanation, RecallOptions, RecallQuery,
-    RetrieverConfig, Signal, SignalWeights, Store, StoreConfig, StructuredEntry, WriterContext,
+    EpisodeEntry, FactEntry, Memory, MemoryConfig, QueryClass, RecallBundle, RecallExplanation,
+    RecallOptions, RecallQuery, RetrieverConfig, Signal, SignalWeights, Store, StoreConfig,
+    StructuredEntry, TemporalMode, WriterContext,
 };
 
 pub use aionforge_domain::DomainError;
