@@ -19,7 +19,7 @@ use crate::embedding::{EmbedderModel, Embedding};
 use crate::ids::Id;
 use crate::nodes::episodic::{Episode, Redaction};
 use crate::nodes::procedural::Skill;
-use crate::nodes::semantic::SourceSpan;
+use crate::nodes::semantic::{Fact, SourceSpan};
 use crate::value::ObjectValue;
 
 /// The fast, ADD-oriented capture path (04 §1). Implemented in M1.
@@ -273,6 +273,90 @@ impl<X: FactExtractor + ?Sized> FactExtractor for std::sync::Arc<X> {
     }
 
     fn identity(&self) -> &ExtractorIdentity {
+        (**self).identity()
+    }
+}
+
+/// The identity of the summarizer that produced a note (04 §2, M2.T06).
+///
+/// Mirrors [`ExtractorIdentity`]: recorded so a later cross-family guard can tell which
+/// model family (or rule set) condensed a cluster, and so re-running the same rule version
+/// reproduces the same content-addressed note id.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SummarizerIdentity {
+    /// Summarizer model family, if model-backed (`None` for a pure rule summarizer).
+    pub model_family: Option<String>,
+    /// Summarizer model version, if model-backed.
+    pub model_version: Option<String>,
+    /// Version of the summarization rule set that produced the note.
+    pub rule_version: String,
+}
+
+/// A cluster of facts about one subject, handed to the [`Summarizer`] to condense (M2.T06).
+///
+/// The consolidation pass builds the cluster (which subject, which facts, over what window);
+/// the summarizer only turns it into prose. The note's content-addressed id is derived by
+/// the pass from the source fact set, not here, so the summarizer stays free of id policy.
+#[derive(Debug, Clone)]
+pub struct SummarizationCluster {
+    /// The subject entity every fact in the cluster is about.
+    pub subject_id: Id,
+    /// The subject's canonical name, for readable prose and keywords.
+    pub subject_name: String,
+    /// The facts to summarize (all share `subject_id`).
+    pub facts: Vec<Fact>,
+    /// Distinct entity names referenced across the facts (the subject plus entity-typed
+    /// objects), the surface the detail-retention guard checks the summary preserves.
+    pub entity_names: Vec<String>,
+}
+
+/// What a [`Summarizer`] produced for one cluster: a note body and its recall surface.
+///
+/// The pass attaches lineage (the source facts) and the content-addressed id; the
+/// summarizer returns only the prose, keywords, and optional context.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SummaryOutput {
+    /// The note body.
+    pub content: String,
+    /// Keywords for lexical recall and the detail-retention surface.
+    pub keywords: Vec<String>,
+    /// Optional surrounding context that situates the summary.
+    pub context: Option<String>,
+}
+
+/// The summarization seam (04 §2): condense a cluster of facts into a higher-level note.
+///
+/// Conservative by contract: `summarize` returns `None` to skip a cluster it cannot
+/// condense safely (too small, too thin), so a thin cluster yields no lossy artifact. The
+/// production implementation is model-backed (deferred to M4); M2 ships a deterministic
+/// rule summarizer so consolidation tests stay hermetic and the note id stays reproducible.
+pub trait Summarizer: Send + Sync {
+    /// The typed error this seam surfaces.
+    type Error: std::error::Error + Send + Sync + 'static;
+
+    /// Condense a cluster into a candidate note, or `None` to conservatively skip it.
+    fn summarize(
+        &self,
+        cluster: &SummarizationCluster,
+    ) -> impl Future<Output = Result<Option<SummaryOutput>, Self::Error>> + Send;
+
+    /// The identity recorded into every produced note's provenance.
+    fn identity(&self) -> &SummarizerIdentity;
+}
+
+/// A shared summarizer is itself a summarizer (mirrors the [`FactExtractor`] forwarding),
+/// so one instance can back the consolidation pass without being cloned.
+impl<S: Summarizer + ?Sized> Summarizer for std::sync::Arc<S> {
+    type Error = S::Error;
+
+    fn summarize(
+        &self,
+        cluster: &SummarizationCluster,
+    ) -> impl Future<Output = Result<Option<SummaryOutput>, Self::Error>> + Send {
+        (**self).summarize(cluster)
+    }
+
+    fn identity(&self) -> &SummarizerIdentity {
         (**self).identity()
     }
 }

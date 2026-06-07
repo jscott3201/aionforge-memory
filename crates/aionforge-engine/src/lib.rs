@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use aionforge_capture::Capturer;
 use aionforge_consolidate::{Consolidator, FactExtractionPass};
-use aionforge_domain::contracts::{Capture, Embedder, FactExtractor, Retriever};
+use aionforge_domain::contracts::{Capture, Embedder, FactExtractor, Retriever, Summarizer};
 use aionforge_domain::time::Timestamp;
 use aionforge_retrieval::HybridRetriever;
 use aionforge_security::{CaptureFilter, SecurityError};
@@ -26,7 +26,7 @@ pub use aionforge_capture::{
 };
 pub use aionforge_consolidate::{
     ConsolidationConfig, ConsolidationHandle, DetectionConfig, ObjectRule, PassConfig,
-    PredicateRule, ResolutionConfig, Rule, RuleExtractor,
+    PredicateRule, ResolutionConfig, Rule, RuleExtractor, RuleSummarizer, SummarizationConfig,
 };
 pub use aionforge_retrieval::{
     QueryClass, RecallBundle, RecallExplanation, RecallOptions, RecallQuery, RetrieverConfig,
@@ -134,21 +134,27 @@ impl<E: Embedder + 'static> Memory<E> {
     /// This is opt-in and explicit so `Memory::new` stays synchronous and runtime-free:
     /// a host that wants slow consolidation calls this from inside a Tokio runtime and
     /// holds the returned [`ConsolidationHandle`] for the process lifetime, shutting it
-    /// down on exit. The pass shares this memory's embedder, so derived entities and
-    /// facts are embedded with the same model as capture and retrieval. The injected
-    /// [`FactExtractor`] is the deterministic [`RuleExtractor`] in tests and the
-    /// model-backed client in production (M4).
-    pub fn start_consolidation<X>(
+    /// down on exit. The pass shares this memory's embedder, so derived entities, facts,
+    /// and notes are embedded with the same model as capture and retrieval. The injected
+    /// [`FactExtractor`] and [`Summarizer`] are the deterministic [`RuleExtractor`] /
+    /// [`RuleSummarizer`] in tests and the model-backed clients in production (M4).
+    pub fn start_consolidation<X, Sz>(
         &self,
         extractor: X,
+        summarizer: Sz,
         config: ConsolidationConfig,
         pass_config: PassConfig,
     ) -> ConsolidationHandle
     where
         X: FactExtractor + 'static,
+        Sz: Summarizer + 'static,
     {
-        let pass =
-            FactExtractionPass::new(Arc::new(extractor), Arc::clone(&self.embedder), pass_config);
+        let pass = FactExtractionPass::new(
+            Arc::new(extractor),
+            Arc::clone(&self.embedder),
+            Arc::new(summarizer),
+            pass_config,
+        );
         let mut consolidator = Consolidator::new(Arc::clone(&self.store), config);
         consolidator.register(Box::new(pass));
         consolidator.start()

@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use aionforge_consolidate::{
     ConsolidationConfig, Consolidator, DetectionConfig, FactExtractionPass, ObjectRule, PassConfig,
-    PredicateRule, ResolutionConfig, Rule, RuleExtractor,
+    PredicateRule, ResolutionConfig, Rule, RuleExtractor, RuleSummarizer, SummarizationConfig,
 };
 use aionforge_domain::blocks::{Identity, Stats};
 use aionforge_domain::contracts::Embedder;
@@ -285,6 +285,7 @@ fn status_extractor_and_config() -> (RuleExtractor, PassConfig) {
         PassConfig {
             resolution: ResolutionConfig::default(),
             detection,
+            summarization: SummarizationConfig::default(),
         },
     )
 }
@@ -303,6 +304,7 @@ async fn a_functional_predicate_supersedes_across_episodes() {
     consolidator.register(Box::new(FactExtractionPass::new(
         Arc::new(RuleExtractor::with_default_rules()),
         Arc::new(AxisEmbedder::new()),
+        Arc::new(RuleSummarizer::with_default_rules()),
         PassConfig::default(),
     )));
 
@@ -356,6 +358,7 @@ async fn a_high_trust_contradiction_quarantines_the_new_fact() {
     consolidator.register(Box::new(FactExtractionPass::new(
         Arc::new(extractor),
         Arc::new(AxisEmbedder::new()),
+        Arc::new(RuleSummarizer::with_default_rules()),
         pass_config,
     )));
 
@@ -414,6 +417,7 @@ async fn multiple_new_values_for_one_functional_predicate_route_to_one_survivor(
     consolidator.register(Box::new(FactExtractionPass::new(
         Arc::new(RuleExtractor::with_default_rules()),
         Arc::new(AxisEmbedder::new()),
+        Arc::new(RuleSummarizer::with_default_rules()),
         PassConfig::default(),
     )));
 
@@ -457,6 +461,7 @@ async fn replaying_an_episode_re_applies_no_detection() {
     consolidator.register(Box::new(FactExtractionPass::new(
         Arc::new(RuleExtractor::with_default_rules()),
         Arc::new(AxisEmbedder::new()),
+        Arc::new(RuleSummarizer::with_default_rules()),
         PassConfig::default(),
     )));
 
@@ -512,6 +517,7 @@ async fn a_low_trust_contradiction_is_recorded_without_quarantine() {
     consolidator.register(Box::new(FactExtractionPass::new(
         Arc::new(extractor),
         Arc::new(AxisEmbedder::new()),
+        Arc::new(RuleSummarizer::with_default_rules()),
         pass_config,
     )));
 
@@ -555,6 +561,7 @@ async fn a_multi_valued_predicate_keeps_every_value() {
     consolidator.register(Box::new(FactExtractionPass::new(
         Arc::new(RuleExtractor::with_default_rules()),
         Arc::new(AxisEmbedder::new()),
+        Arc::new(RuleSummarizer::with_default_rules()),
         PassConfig::default(),
     )));
 

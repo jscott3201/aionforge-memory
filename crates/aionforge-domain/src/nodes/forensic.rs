@@ -76,6 +76,9 @@ pub enum AuditKind {
     SkillVersionDiff,
     /// Entities/facts were canonicalized.
     Canonicalize,
+    /// An episode cluster was summarized into a note (or a summary was skipped to bound
+    /// lost detail; the payload's outcome distinguishes the two).
+    Summarize,
     /// Note links were evolved.
     LinkEvolve,
     /// A skill was induced from experience.

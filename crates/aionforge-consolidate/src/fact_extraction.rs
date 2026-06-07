@@ -12,54 +12,71 @@
 //! `canonicalize` audit event. The pass embeds entity names and fact statements through
 //! the injected [`Embedder`] so the derived nodes are immediately retrievable.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 use aionforge_domain::blocks::{Identity, Stats};
-use aionforge_domain::contracts::{Embedder, EntitySurface, ExtractedObject, FactExtractor};
+use aionforge_domain::contracts::{
+    Embedder, EntitySurface, ExtractedObject, FactExtractor, SummarizationCluster, Summarizer,
+    SummaryOutput,
+};
 use aionforge_domain::embedding::Embedding;
 use aionforge_domain::ids::Id;
 use aionforge_domain::namespace::Namespace;
+use aionforge_domain::nodes::associative::Note;
 use aionforge_domain::nodes::episodic::Episode;
 use aionforge_domain::nodes::forensic::{AuditEvent, AuditKind};
 use aionforge_domain::nodes::semantic::{Entity, Extraction, Fact, FactStatus};
 use aionforge_domain::time::{BiTemporal, Timestamp};
 use aionforge_domain::value::ObjectValue;
-use aionforge_store::{CandidateSet, FactKey, MaterializedFact};
+use aionforge_store::{CandidateSet, FactKey, MaterializedFact, MaterializedNote};
 use serde_json::json;
 
-use crate::config::{DetectionConfig, PassConfig};
+use crate::config::{DetectionConfig, PassConfig, SummarizationConfig};
 use crate::detect::{CurrentFact, detect};
 use crate::pass::{ConsolidationPass, PassContext, PassError, PassOutput};
 use crate::resolve::{CorefTable, Resolution, resolve_surface};
+use crate::summarize::{RetentionOutcome, build_clusters, check_detail_retention, note_id};
 
-/// The fact-extraction pass: extract triples, resolve entities, derive facts.
+/// The fact-extraction pass: extract triples, resolve entities, derive facts, then detect
+/// supersession/contradiction and summarize the touched subjects' facts into notes.
 ///
 /// Generic over the [`FactExtractor`] (a deterministic rule extractor in M2, the
-/// model-backed client in M4) and the [`Embedder`] (the real client in production, a
-/// fake in tests); both are shared so one instance backs the whole consolidator.
-pub struct FactExtractionPass<X, E> {
+/// model-backed client in M4), the [`Embedder`] (the real client in production, a fake in
+/// tests), and the [`Summarizer`] (the deterministic rule summarizer in M2, model-backed in
+/// M4); all three are shared so one instance backs the whole consolidator.
+pub struct FactExtractionPass<X, E, S> {
     extractor: Arc<X>,
     embedder: Arc<E>,
+    summarizer: Arc<S>,
     resolution: crate::config::ResolutionConfig,
     detection: DetectionConfig,
+    summarization: SummarizationConfig,
     /// The substrate actor id stamped on this pass's audit events.
     actor_id: Id,
 }
 
-impl<X, E> FactExtractionPass<X, E>
+impl<X, E, S> FactExtractionPass<X, E, S>
 where
     X: FactExtractor + 'static,
     E: Embedder + 'static,
+    S: Summarizer + 'static,
 {
-    /// Build the pass over a shared extractor and embedder.
+    /// Build the pass over a shared extractor, embedder, and summarizer.
     #[must_use]
-    pub fn new(extractor: Arc<X>, embedder: Arc<E>, config: PassConfig) -> Self {
+    pub fn new(
+        extractor: Arc<X>,
+        embedder: Arc<E>,
+        summarizer: Arc<S>,
+        config: PassConfig,
+    ) -> Self {
         Self {
             extractor,
             embedder,
+            summarizer,
             resolution: config.resolution,
             detection: config.detection,
+            summarization: config.summarization,
             actor_id: Id::generate(),
         }
     }
@@ -75,21 +92,214 @@ where
             .await
             .map_err(|error| PassError::Transient(format!("embedder failed: {error}")))
     }
+
+    /// Summarize the subjects this episode touched: cluster each touched subject's facts
+    /// (the just-extracted ones plus the committed current support), condense via the
+    /// summarizer, gate on the detail-retention guard, and emit a note per surviving
+    /// cluster with `DERIVED_FROM` lineage to its source facts. Returns the notes and the
+    /// `summarize` audit events (one per cluster, written-or-skipped).
+    async fn summarize_subjects(
+        &self,
+        store: &aionforge_store::Store,
+        new_facts: &[MaterializedFact],
+        resolutions: &HashMap<(String, String), Resolution>,
+        namespace: &Namespace,
+        episode: &Episode,
+        now: &Timestamp,
+    ) -> Result<(Vec<MaterializedNote>, Vec<AuditEvent>), PassError> {
+        if !self.summarization.enabled || new_facts.is_empty() {
+            return Ok((Vec::new(), Vec::new()));
+        }
+
+        // Subjects this episode touched, and every fact about them: the just-extracted ones
+        // plus the committed current-support facts (so a note rolls up accumulated, not just
+        // this-episode, knowledge). Dedup by fact id — a re-extracted fact equals its
+        // committed self, so a replay clusters the same set.
+        let touched: HashSet<String> = new_facts
+            .iter()
+            .map(|m| m.fact.subject_id.as_str().to_string())
+            .collect();
+        let mut facts: Vec<Fact> = new_facts.iter().map(|m| m.fact.clone()).collect();
+        let mut seen: HashSet<String> = facts
+            .iter()
+            .map(|f| f.identity.id.as_str().to_string())
+            .collect();
+        let members = store
+            .candidate_state_members(CandidateSet::CurrentSupportFacts)
+            .map_err(|error| {
+                PassError::Transient(format!("current-support read failed: {error}"))
+            })?;
+        for node in members {
+            let Some(fact) = store
+                .fact_by_node_id(node)
+                .map_err(|error| PassError::Transient(format!("fact read failed: {error}")))?
+            else {
+                continue;
+            };
+            if touched.contains(fact.subject_id.as_str())
+                && seen.insert(fact.identity.id.as_str().to_string())
+            {
+                facts.push(fact);
+            }
+        }
+
+        let name_of = self.name_entities(store, &facts, resolutions)?;
+        let clusters = build_clusters(&facts, &name_of, &self.summarization);
+        if clusters.is_empty() {
+            return Ok((Vec::new(), Vec::new()));
+        }
+
+        let rule_version = self.summarizer.identity().rule_version.clone();
+        let model = self.embedder.model().clone();
+        let mut audits = Vec::new();
+        let mut pending: Vec<(SummarizationCluster, SummaryOutput, Id)> = Vec::new();
+        let mut contents: Vec<String> = Vec::new();
+        for cluster in clusters {
+            let Some(output) = self
+                .summarizer
+                .summarize(&cluster)
+                .await
+                .map_err(|error| PassError::Transient(format!("summarizer failed: {error}")))?
+            else {
+                continue; // the summarizer conservatively declined this cluster
+            };
+            let retention = check_detail_retention(&cluster, &output, &self.summarization);
+            audits.push(self.summarize_audit(
+                &cluster,
+                namespace,
+                now,
+                retention.passed,
+                &retention,
+            ));
+            if !retention.passed {
+                continue; // over-summarized — skip the note, keep the raw facts
+            }
+            let id = note_id(namespace, &cluster, &rule_version);
+            contents.push(output.content.clone());
+            pending.push((cluster, output, id));
+        }
+
+        // Embed note bodies in one batch so the notes are immediately vector-searchable.
+        let embeddings = self.embed(contents).await?;
+        let mut notes = Vec::with_capacity(pending.len());
+        for ((cluster, output, id), embedding) in pending.into_iter().zip(embeddings) {
+            let source_facts = cluster
+                .facts
+                .iter()
+                .map(|f| FactKey {
+                    subject_id: f.subject_id.clone(),
+                    predicate: f.predicate.clone(),
+                    object: f.object.clone(),
+                })
+                .collect();
+            notes.push(MaterializedNote {
+                note: Note {
+                    identity: identity(id, namespace, now),
+                    stats: derived_stats(episode, now),
+                    content: output.content,
+                    context: output.context,
+                    keywords: output.keywords,
+                    embedding: Some(embedding),
+                    embedder_model: Some(model.clone()),
+                    derived_from_episode: Some(episode.identity.id.clone()),
+                },
+                source_facts,
+            });
+        }
+        Ok((notes, audits))
+    }
+
+    /// Name every entity the cluster facts reference (subjects and entity-typed objects):
+    /// from this episode's resolutions first, then the committed `Entity.id` index.
+    fn name_entities(
+        &self,
+        store: &aionforge_store::Store,
+        facts: &[Fact],
+        resolutions: &HashMap<(String, String), Resolution>,
+    ) -> Result<BTreeMap<Id, String>, PassError> {
+        let mut name_of: BTreeMap<Id, String> = BTreeMap::new();
+        for resolution in resolutions.values() {
+            name_of
+                .entry(resolution.id.clone())
+                .or_insert_with(|| resolution.canonical_name.clone());
+        }
+        let mut needed: Vec<Id> = Vec::new();
+        for fact in facts {
+            if !name_of.contains_key(&fact.subject_id) {
+                needed.push(fact.subject_id.clone());
+            }
+            if let ObjectValue::Entity(id) = &fact.object
+                && !name_of.contains_key(id)
+            {
+                needed.push(id.clone());
+            }
+        }
+        needed.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+        needed.dedup();
+        for id in needed {
+            // Resolve the name from the committed index, falling back to the id string when
+            // the entity is absent. The fallback is made explicit here — not deferred to a
+            // reader — so `name_of` is complete and every cluster sees the exact entity names
+            // the detail-retention guard will check the summary against.
+            let name = match store
+                .entity_by_id(&id)
+                .map_err(|error| PassError::Transient(format!("entity read failed: {error}")))?
+            {
+                Some(entity) => entity.canonical_name,
+                None => id.as_str().to_string(),
+            };
+            name_of.insert(id, name);
+        }
+        Ok(name_of)
+    }
+
+    /// The `summarize` audit event recording one cluster's outcome (written or skipped).
+    fn summarize_audit(
+        &self,
+        cluster: &SummarizationCluster,
+        namespace: &Namespace,
+        now: &Timestamp,
+        written: bool,
+        retention: &RetentionOutcome,
+    ) -> AuditEvent {
+        AuditEvent {
+            identity: Identity {
+                id: Id::generate(),
+                ingested_at: now.clone(),
+                namespace: namespace.clone(),
+                expired_at: None,
+            },
+            kind: AuditKind::Summarize,
+            subject_id: cluster.subject_id.clone(),
+            actor_id: self.actor_id.clone(),
+            payload: json!({
+                "outcome": if written { "written" } else { "skipped_low_retention" },
+                "source_fact_count": cluster.facts.len(),
+                "entity_count": cluster.entity_names.len(),
+                "entity_retention": retention.entity_retention,
+                "mean_confidence": retention.mean_confidence,
+                "rule_version": self.summarizer.identity().rule_version,
+            }),
+            signature: String::new(),
+            occurred_at: now.clone(),
+        }
+    }
 }
 
 #[async_trait::async_trait]
-impl<X, E> ConsolidationPass for FactExtractionPass<X, E>
+impl<X, E, S> ConsolidationPass for FactExtractionPass<X, E, S>
 where
     X: FactExtractor + 'static,
     E: Embedder + 'static,
+    S: Summarizer + 'static,
 {
     fn name(&self) -> &'static str {
         "extract_facts"
     }
 
     fn version(&self) -> u32 {
-        // 2: M2.T05b added supersession/contradiction detection to this pass's output.
-        2
+        // 3: M2.T06b added conservative summary-note output to this pass.
+        3
     }
 
     async fn apply(&self, cx: &PassContext<'_>) -> Result<PassOutput, PassError> {
@@ -235,19 +445,29 @@ where
         // reconcile signals from detection.
         audit_events.extend(detection.audits);
 
+        // Summarize the touched subjects' facts (committed current plus the just-extracted
+        // ones) into conservative notes; the detail-retention guard skips any summary that
+        // would drop too much specificity. Raw facts are untouched (non-lossy).
+        let (notes, summary_audits) = self
+            .summarize_subjects(store, &facts, &resolutions, namespace, episode, &cx.now)
+            .await?;
+        audit_events.extend(summary_audits);
+
         let mut out = PassOutput::default();
         out.new_entities = new_entities;
         out.facts = facts;
         out.mentioned_entities = mentioned;
         out.supersessions = detection.supersessions;
         out.contradictions = detection.contradictions;
+        out.notes = notes;
         out.audit_events = audit_events;
         emit_detection_metrics(&out);
+        emit_summarization_metrics(&out);
         Ok(out)
     }
 }
 
-impl<X, E> FactExtractionPass<X, E> {
+impl<X, E, S> FactExtractionPass<X, E, S> {
     /// Build the `canonicalize` audit event recording one resolution decision.
     fn canonicalize_audit(
         &self,
@@ -365,6 +585,14 @@ fn emit_detection_metrics(out: &PassOutput) {
         if quarantines > 0 {
             metrics::counter!("consolidation_quarantines_total").increment(quarantines);
         }
+    }
+}
+
+/// Emit a per-tick counter of summary notes written, so the summarization rate is
+/// observable (skips are surfaced as `summarize` audit events, not a counter).
+fn emit_summarization_metrics(out: &PassOutput) {
+    if !out.notes.is_empty() {
+        metrics::counter!("consolidation_summaries_total").increment(out.notes.len() as u64);
     }
 }
 
