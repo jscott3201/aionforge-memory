@@ -107,7 +107,7 @@ pub enum CandidateSet {
 
 impl CandidateSet {
     /// The stable provider name the engine knows this set by (data-model §9).
-    fn as_name(self) -> &'static str {
+    pub(crate) fn as_name(self) -> &'static str {
         match self {
             CandidateSet::CurrentSupportFacts => "current_support_facts",
             CandidateSet::ProvenanceCurrentSupportFacts => "provenance_current_support_facts",

@@ -10,12 +10,13 @@
 
 use std::sync::Arc;
 
-use selene_core::db_string;
+use selene_core::{NodeId, db_string};
 use selene_graph::{
     CandidateStateSpec, GraphError, IndexProvider, MaintainedCandidateStateProvider,
 };
 
 use crate::error::StoreError;
+use crate::search::CandidateSet;
 use crate::store::Store;
 
 /// The five candidate-state specs (data-model §9), built fresh each call.
@@ -77,10 +78,18 @@ pub struct CandidateStateInfo {
     pub name: String,
     /// How many nodes are currently in the set.
     pub candidate_count: usize,
+    /// The graph generation this membership is proven current through. The engine
+    /// only returns these infos after the provider has applied every mutation up to
+    /// this generation, so a returned value is a live watermark, never stale.
+    pub generation: u64,
 }
 
 impl Store {
     /// The current candidate-state sets and their sizes (data-model §9 introspection).
+    ///
+    /// The infos are generation-checked: the engine returns them only when the
+    /// provider has applied every commit through the current graph generation, so a
+    /// successful call is itself the proof that no set is stale.
     ///
     /// # Errors
     /// Returns [`StoreError`] if the provider cannot prove it is current with the graph.
@@ -94,7 +103,36 @@ impl Store {
             .map(|info| CandidateStateInfo {
                 name: info.name.as_str().to_owned(),
                 candidate_count: info.candidate_count,
+                generation: info.generation,
             })
             .collect())
+    }
+
+    /// The current membership of one maintained candidate-state set (data-model §9).
+    ///
+    /// Resolves the named provider set against the *current* graph snapshot and
+    /// returns its members as engine node ids, sorted and de-duplicated by the engine.
+    /// The lookup is generation-checked end to end: the engine binds the set to the
+    /// same immutable snapshot whose generation it validates the provider against, so
+    /// the returned membership can never lag the committed graph — a stale provider
+    /// surfaces as an error rather than an out-of-date set. This is the typed read the
+    /// high-precision retrieval path (M2.T07/T08) composes; the `status = 'active'`
+    /// half of `current_support_facts` (§9) remains a query-time scalar filter the
+    /// caller layers on top, since a provider rule cannot express a scalar predicate.
+    ///
+    /// An empty vector means the set has no current members (the provider is always
+    /// attached, so a known [`CandidateSet`] always resolves).
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the provider cannot prove it is current with the graph.
+    pub fn candidate_state_members(&self, set: CandidateSet) -> Result<Vec<NodeId>, StoreError> {
+        let name = db_string(set.as_name())?;
+        let resolved = self
+            .graph()
+            .vector_candidate_set(&name)
+            .map_err(GraphError::Provider)?;
+        Ok(resolved
+            .map(|members| members.as_nodes().to_vec())
+            .unwrap_or_default())
     }
 }
