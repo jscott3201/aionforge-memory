@@ -1,13 +1,15 @@
-//! Optional Model Context Protocol server surface (Tools, Resources, Prompts) for Aionforge Memory.
+//! Optional Model Context Protocol server surface for Aionforge Memory.
 //!
-//! The M1 smoke exposes two tools over stdio — `capture` and `search` — backed by the
+//! The M1 smoke exposes two Tools over stdio — `capture` and `search` — backed by the
 //! [`Memory`] facade. Output is compact by default to keep an agent's context small,
 //! captures are confined to the writer's private namespace, and searches are
 //! authorized against a caller-supplied viewer namespace. The server is a pure tool
-//! provider: it never requests sampling from the caller's model.
+//! provider: it never requests sampling from the caller's model. Resources and Prompts
+//! round out the surface in a later milestone.
 //!
-//! The tool logic lives in [`tools`] so it can be tested without the transport; this
-//! module is the rmcp wiring on top.
+//! The tool logic lives in a private module, exposed as [`capture_tool`] and
+//! [`search_tool`] so it can be tested without the transport; this module is the rmcp
+//! wiring on top.
 
 mod tools;
 

@@ -1,11 +1,14 @@
 //! The capture and search tool logic, free of the MCP transport so it can be tested
 //! directly (04 §1, 03 §6).
 //!
-//! Output is compact by default — a one-line receipt for a capture, and one line per
-//! hit (serialization id, score, snippet) for a search — to keep an agent's context
-//! small; `verbose` opts into per-hit detail. Captures arrive untrusted, so they are
-//! confined to the writer's private namespace, and a search is authorized against the
-//! caller-supplied viewer namespace.
+//! Output is compact by default — a one-line receipt for a capture, and a one-line
+//! summary plus one short line per memory for a search — to keep an agent's context
+//! small; `verbose` opts into per-memory detail. The search rendering is delegated to
+//! [`RecallBundle::render_compact`](aionforge_engine::RecallBundle::render_compact) so the
+//! recall security contract (the `recalled-memory-context` wrapper and `tag_escape` on
+//! every snippet, 07 §4) is applied in one place and never re-derived here. Captures
+//! arrive untrusted, so they are confined to the writer's private namespace, and a
+//! search is authorized against the caller-supplied viewer namespace.
 
 use aionforge_domain::contracts::Embedder;
 use aionforge_domain::ids::Id;
@@ -13,8 +16,8 @@ use aionforge_domain::namespace::Namespace;
 use aionforge_domain::nodes::episodic::Role;
 use aionforge_domain::time::Timestamp;
 use aionforge_engine::{
-    CaptureReceipt, CaptureRequest, CaptureVerdict, EmbeddingOutcome, Memory, QueryClass,
-    RecallBundle, RecallQuery, Signal, WriterContext,
+    CaptureReceipt, CaptureRequest, CaptureVerdict, EmbeddingOutcome, Memory, RecallQuery,
+    WriterContext,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -23,8 +26,6 @@ use serde::Deserialize;
 const DEFAULT_LIMIT: usize = 10;
 /// The most hits a single search will return, so a response stays small.
 const MAX_LIMIT: usize = 100;
-/// The longest snippet (in characters) shown per hit in the compact view.
-const SNIPPET_CHARS: usize = 160;
 
 /// Parameters for the `capture` tool.
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -140,7 +141,10 @@ pub async fn search_tool<E: Embedder>(
         .search(RecallQuery::new(params.query, viewer, limit))
         .await
         .map_err(|error| format!("ERR_SEARCH: {error}"))?;
-    Ok(format_bundle(&bundle, verbose))
+    // The compact rendering lives next to the full rendered view in the retrieval crate
+    // so both share one `tag_escape` and the same third-party-data wrapper; the MCP
+    // surface never re-derives recall text and so cannot drop the security tagging (07 §4).
+    Ok(bundle.render_compact(verbose))
 }
 
 /// Parse the optional role string, defaulting to `user`.
@@ -176,84 +180,4 @@ fn format_receipt(receipt: &CaptureReceipt) -> String {
         flags = receipt.injection_flags.len(),
         ns = receipt.namespace,
     )
-}
-
-/// The compact (or verbose) rendering of a recall bundle.
-fn format_bundle(bundle: &RecallBundle, verbose: bool) -> String {
-    let explanation = &bundle.explanation;
-    let more = explanation
-        .candidates_considered
-        .saturating_sub(explanation.returned);
-
-    let mut out = format!(
-        "hits: {returned} of {considered} considered | class={class} | embedder={embedder}",
-        returned = explanation.returned,
-        considered = explanation.candidates_considered,
-        class = class_tag(explanation.class),
-        embedder = if explanation.embedder_available {
-            "up"
-        } else {
-            "down"
-        },
-    );
-    if more > 0 {
-        out.push_str(&format!(" | +{more} more"));
-    }
-    out.push('\n');
-
-    for entry in &bundle.structured {
-        out.push_str(&format!(
-            "{sid}  {score:.4}  {snippet}\n",
-            sid = entry.serialization_id,
-            score = entry.score,
-            snippet = snippet(&entry.content, SNIPPET_CHARS),
-        ));
-        if verbose {
-            let via = entry
-                .contributions
-                .iter()
-                .map(|c| format!("{}#{}", signal_tag(c.signal), c.rank))
-                .collect::<Vec<_>>()
-                .join(" ");
-            out.push_str(&format!(
-                "    ns={ns} trust={trust:.2} via=[{via}]\n",
-                ns = entry.namespace,
-                trust = entry.trust,
-            ));
-        }
-    }
-    out
-}
-
-/// A whitespace-collapsed, length-capped snippet of content.
-fn snippet(content: &str, max: usize) -> String {
-    let collapsed = content.split_whitespace().collect::<Vec<_>>().join(" ");
-    if collapsed.chars().count() <= max {
-        collapsed
-    } else {
-        let head: String = collapsed.chars().take(max).collect();
-        format!("{head}…")
-    }
-}
-
-/// The compact tag for a query class.
-fn class_tag(class: QueryClass) -> &'static str {
-    match class {
-        QueryClass::SingleHopFactual => "single_hop_factual",
-        QueryClass::MultiHop => "multi_hop",
-        QueryClass::Temporal => "temporal",
-        QueryClass::Entity => "entity",
-        QueryClass::Quote => "quote",
-    }
-}
-
-/// The compact tag for a signal.
-fn signal_tag(signal: Signal) -> &'static str {
-    match signal {
-        Signal::Lexical => "lexical",
-        Signal::Dense => "dense",
-        Signal::Graph => "graph",
-        Signal::Recency => "recency",
-        Signal::Trust => "trust",
-    }
 }
