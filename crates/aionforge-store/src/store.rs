@@ -4,23 +4,24 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use aionforge_domain::edges::{Audit, HasProvenance};
+use aionforge_domain::edges::{About, Audit, Contradicts, HasProvenance, SupersededBy};
 use aionforge_domain::embedding::Embedding;
 use aionforge_domain::ids::{ContentHash, Id};
 use aionforge_domain::nodes::episodic::Episode;
 use aionforge_domain::nodes::forensic::{AuditEvent, ProvenanceRecord};
+use aionforge_domain::nodes::semantic::{Entity, Fact, FactStatus};
 use aionforge_domain::time::Timestamp;
-use selene_core::{GraphId, NodeId, PropertyMap, db_string};
+use selene_core::{EdgeId, GraphId, LabelDiff, NodeId, PropertyDiff, PropertyMap, db_string};
 use selene_gql::{BindingTable, BuiltinProcedureRegistry, Session, StatementOutput};
 use selene_graph::{DEFAULT_WAL_FILE_NAME, GraphTypeDef, SeleneGraph, SharedGraph, WalConfig};
 
 use crate::config::StoreConfig;
-use crate::convert::as_id;
+use crate::convert::{as_id, enum_value, timestamp_value};
 use crate::error::StoreError;
 use crate::gql::{BoundQuery, QueryResult, Rows};
 use crate::providers::candidate_state_provider;
 use crate::search::SearchKind;
-use crate::{audit, episode, provenance};
+use crate::{audit, entity, episode, fact, provenance};
 
 /// The storage layer over a selene-db `SharedGraph`.
 ///
@@ -310,6 +311,246 @@ impl Store {
             }
         }
         Ok(None)
+    }
+
+    // --- Semantic tier: facts and entities (02 §4.2, §4.3; M2.T01) -----------------
+
+    /// Commit an entity node through the single write funnel, returning its node id.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if translation, the mutation, or the commit fails.
+    pub fn insert_entity(&self, entity: &Entity) -> Result<NodeId, StoreError> {
+        let (labels, props) = entity::to_node(entity)?;
+        let mut txn = self.graph.begin_write();
+        let node_id = {
+            let mut mutator = txn.mutator();
+            mutator.create_node(labels, props)?
+        };
+        txn.commit()?;
+        Ok(node_id)
+    }
+
+    /// Read an entity back by its node id from a fresh snapshot.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the stored data cannot be decoded into an [`Entity`].
+    pub fn entity_by_node_id(&self, id: NodeId) -> Result<Option<Entity>, StoreError> {
+        let snapshot = self.graph.read();
+        match snapshot.node_properties(id) {
+            Some(props) => Ok(Some(entity::from_properties(props)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Commit a fact node through the single write funnel, returning its node id.
+    ///
+    /// Writes only the node; [`Store::assert_fact`] additionally wires the `ABOUT`
+    /// edge that carries the fact's bi-temporal validity window.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if translation, the mutation, or the commit fails.
+    pub fn insert_fact(&self, fact: &Fact) -> Result<NodeId, StoreError> {
+        let (labels, props) = fact::to_node(fact)?;
+        let mut txn = self.graph.begin_write();
+        let node_id = {
+            let mut mutator = txn.mutator();
+            mutator.create_node(labels, props)?
+        };
+        txn.commit()?;
+        Ok(node_id)
+    }
+
+    /// Read a fact back by its node id from a fresh snapshot.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the stored data cannot be decoded into a [`Fact`].
+    pub fn fact_by_node_id(&self, id: NodeId) -> Result<Option<Fact>, StoreError> {
+        let snapshot = self.graph.read();
+        match snapshot.node_properties(id) {
+            Some(props) => Ok(Some(fact::from_properties(props)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Read the `ABOUT` validity window of a fact node, if it has one.
+    ///
+    /// The four-timestamp window lives on the edge, not the node (02 §4.2), so this is
+    /// how a caller inspects a fact's bi-temporal validity.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the edge cannot be decoded into [`About`].
+    pub fn fact_about(&self, fact: NodeId) -> Result<Option<About>, StoreError> {
+        let snapshot = self.graph.read();
+        let about_label = db_string(About::LABEL)?;
+        let Some(adjacency) = snapshot.outgoing_edges(fact) else {
+            return Ok(None);
+        };
+        match adjacency.iter_label(&about_label).next() {
+            Some(edge) => match snapshot.edge_properties(edge.edge_id) {
+                Some(props) => Ok(Some(fact::about_from_properties(props)?)),
+                None => Ok(None),
+            },
+            None => Ok(None),
+        }
+    }
+
+    /// Assert a fact and wire its `ABOUT` edge to the subject entity (04 §4).
+    ///
+    /// One atomic commit: the `Fact` node plus `Fact -ABOUT-> Entity` carrying the
+    /// bi-temporal validity window. The subject entity must already exist (the closed
+    /// graph validates the `ABOUT` endpoint is an `:Entity`). Returns the fact's id.
+    ///
+    /// # Errors
+    /// Returns [`StoreError::Invariant`] if the `ABOUT` window's bounds are out of
+    /// order, or [`StoreError`] if translation, a mutation, or the commit fails;
+    /// nothing is published if any step fails.
+    pub fn assert_fact(
+        &self,
+        fact: &Fact,
+        subject: NodeId,
+        about: &About,
+    ) -> Result<NodeId, StoreError> {
+        // Fail closed: never persist a window whose bounds are out of order (02 §5).
+        if !about.temporal.windows_ordered() {
+            return Err(StoreError::invariant(
+                "ABOUT validity window bounds are out of order".to_string(),
+            ));
+        }
+        let (labels, props) = fact::to_node(fact)?;
+        let about_label = db_string(About::LABEL)?;
+        let about_props = fact::about_props(about)?;
+        let mut txn = self.graph.begin_write();
+        let fact_id = {
+            let mut mutator = txn.mutator();
+            let fact_id = mutator.create_node(labels, props)?;
+            mutator.create_edge(about_label, fact_id, subject, about_props)?;
+            fact_id
+        };
+        txn.commit()?;
+        Ok(fact_id)
+    }
+
+    /// Supersede `old` by `new`, non-destructively (04 §2–§4).
+    ///
+    /// One atomic commit that preserves the prior fact: it closes the old fact's
+    /// `ABOUT` event-time window (`valid_to` <- the supersession `valid_from`), writes
+    /// `old -SUPERSEDED_BY-> new`, and mirrors `old.status = superseded`. The old fact
+    /// node and its data remain, so an "as of" query before the supersession instant
+    /// still sees it as current (02 §4.2). The transaction-time window
+    /// (`ingested_at`/`expired_at`) is deliberately left untouched: the substrate still
+    /// holds and believes the record, it is simply no longer event-current.
+    ///
+    /// # Errors
+    /// Returns [`StoreError::Invariant`] if the supersession edge's window is out of
+    /// order or its instant precedes the prior fact's `valid_from` (which would close
+    /// the window backwards); [`StoreError`] if `old` has no `ABOUT` edge, or if a
+    /// mutation or the commit fails. Nothing is published if any check or step fails.
+    pub fn supersede_fact(
+        &self,
+        old: NodeId,
+        new: NodeId,
+        edge: &SupersededBy,
+    ) -> Result<(), StoreError> {
+        // Fail closed: the supersession edge's own window must be ordered.
+        if !edge.temporal.windows_ordered() {
+            return Err(StoreError::invariant(
+                "SUPERSEDED_BY window bounds are out of order".to_string(),
+            ));
+        }
+        let about_label = db_string(About::LABEL)?;
+        let superseded_by_label = db_string(SupersededBy::LABEL)?;
+        let edge_props = fact::superseded_by_props(edge)?;
+        let valid_to = timestamp_value(&edge.temporal.valid_from);
+
+        let mut txn = self.graph.begin_write();
+        {
+            let mut mutator = txn.mutator();
+            // Find the old fact's ABOUT out-edge. `edge_id` is `Copy`, so the read
+            // borrow of the working graph ends before the mutation below.
+            let about_edge: EdgeId = mutator
+                .read()
+                .outgoing_edges(old)
+                .and_then(|adjacency| adjacency.iter_label(&about_label).next().map(|e| e.edge_id))
+                .ok_or_else(|| {
+                    StoreError::decode("superseded fact has no ABOUT edge".to_string())
+                })?;
+            // The closed window must stay ordered: the supersession instant cannot
+            // precede the fact's `valid_from`. Read the prior window and check before
+            // any mutation (so the txn rolls back cleanly on violation).
+            let prior = fact::about_from_properties(
+                mutator.read().edge_properties(about_edge).ok_or_else(|| {
+                    StoreError::decode("ABOUT edge has no properties".to_string())
+                })?,
+            )?;
+            if edge.temporal.valid_from < prior.temporal.valid_from {
+                return Err(StoreError::invariant(
+                    "supersession instant precedes the fact's valid_from".to_string(),
+                ));
+            }
+            // Close the event-time window on the prior fact (non-destructive).
+            mutator.update_edge(
+                about_edge,
+                PropertyDiff::new([(db_string("valid_to")?, valid_to)], [])?,
+            )?;
+            // Record the supersession edge.
+            mutator.create_edge(superseded_by_label, old, new, edge_props)?;
+            // Mirror the scalar status (the source of truth is edge presence; GAP-4).
+            mutator.update_node(
+                old,
+                LabelDiff::new([], [])?,
+                PropertyDiff::new(
+                    [(db_string("status")?, enum_value(&FactStatus::Superseded)?)],
+                    [],
+                )?,
+            )?;
+        }
+        txn.commit()?;
+        Ok(())
+    }
+
+    /// Record that `source` contradicts `target`, non-destructively (04 §2).
+    ///
+    /// One atomic commit: writes `source -CONTRADICTS-> target` and, when
+    /// `quarantine_source` is set, mirrors `source.status = quarantined`. Both facts
+    /// and their data remain; a live `CONTRADICTS` edge removes the source from the
+    /// current-support set via the provider (02 §9), and quarantined facts are excluded
+    /// from default current retrieval but retained and auditable (04 §2).
+    ///
+    /// # Errors
+    /// Returns [`StoreError::Invariant`] if the contradiction edge's window is out of
+    /// order, or [`StoreError`] if a mutation or the commit fails.
+    pub fn contradict_fact(
+        &self,
+        source: NodeId,
+        target: NodeId,
+        edge: &Contradicts,
+        quarantine_source: bool,
+    ) -> Result<(), StoreError> {
+        // Fail closed: never persist a window whose bounds are out of order (02 §5).
+        if !edge.temporal.windows_ordered() {
+            return Err(StoreError::invariant(
+                "CONTRADICTS window bounds are out of order".to_string(),
+            ));
+        }
+        let contradicts_label = db_string(Contradicts::LABEL)?;
+        let edge_props = fact::contradicts_props(edge)?;
+        let mut txn = self.graph.begin_write();
+        {
+            let mut mutator = txn.mutator();
+            mutator.create_edge(contradicts_label, source, target, edge_props)?;
+            if quarantine_source {
+                mutator.update_node(
+                    source,
+                    LabelDiff::new([], [])?,
+                    PropertyDiff::new(
+                        [(db_string("status")?, enum_value(&FactStatus::Quarantined)?)],
+                        [],
+                    )?,
+                )?;
+            }
+        }
+        txn.commit()?;
+        Ok(())
     }
 
     /// Commit a capture bundle through the single mutation funnel (04 §1).
