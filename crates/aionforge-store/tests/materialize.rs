@@ -187,6 +187,22 @@ fn reset_to_raw(store: &Store) {
     store.execute(&query).expect("reset episode to raw");
 }
 
+/// Total count of `(:Fact)-[:label]->(:Fact)` edges in the graph.
+fn total_edges(store: &Store, label: &str) -> u64 {
+    // gql-ident-ok: `label` is a trusted static relationship name.
+    let query = BoundQuery::new(format!(
+        "MATCH (:Fact)-[r:{label}]->(:Fact) RETURN count(r) AS n"
+    ));
+    match store.execute(&query).expect("count edges") {
+        QueryResult::Rows(rows) => match rows.value(0, 0) {
+            Some(Value::Uint(n)) => *n,
+            Some(Value::Int(n)) => u64::try_from(*n).unwrap_or(0),
+            _ => 0,
+        },
+        _ => 0,
+    }
+}
+
 #[test]
 fn materialize_supersession_closes_window_and_is_idempotent() {
     let store = store();
@@ -305,6 +321,66 @@ fn materialize_supersession_closes_window_and_is_idempotent() {
         fact_count_by_id(&store, &new.identity.id),
         1,
         "replay adds no duplicate fact"
+    );
+}
+
+#[test]
+fn materialize_skips_an_unresolvable_supersession_without_failing_the_commit() {
+    // A pass that emits an instruction referencing a fact that is neither in this txn nor
+    // in the committed graph is a pass bug; materialization degrades gracefully — it drops
+    // just that instruction (logged) so one bad key cannot wedge the whole flip — and the
+    // rest of the consolidation still commits.
+    let store = store();
+    let (subject_id, _subject_node) = insert_entity(&store, "Eve");
+    let (ep_node, episode) = insert_episode(&store);
+
+    let new = fact(
+        &subject_id,
+        "based_in",
+        ObjectValue::Text("SF".to_string()),
+        "Eve is based in SF",
+    );
+    let mut artifacts = ConsolidationArtifacts::default();
+    artifacts.facts.push(MaterializedFact {
+        fact: new.clone(),
+        about: open_window("2026-06-06T11:00:00Z[UTC]"),
+    });
+    // `old_fact` names a fact that was never asserted — it resolves to nothing.
+    artifacts.supersessions.push(Supersession {
+        old_fact: FactKey {
+            subject_id: Id::generate(),
+            predicate: "based_in".to_string(),
+            object: ObjectValue::Text("Nowhere".to_string()),
+        },
+        new_fact: FactKey {
+            subject_id: subject_id.clone(),
+            predicate: "based_in".to_string(),
+            object: ObjectValue::Text("SF".to_string()),
+        },
+        reason: "orphan".to_string(),
+        valid_from: ts("2026-06-06T11:00:00Z[UTC]"),
+    });
+
+    store
+        .commit_consolidation_episode(
+            ep_node,
+            ConsolidationState::Raw,
+            ConsolidationState::Consolidated,
+            &cursor_at(&episode),
+            &now(),
+            &artifacts,
+        )
+        .expect("commit succeeds despite the orphan instruction");
+
+    assert_eq!(
+        fact_count_by_id(&store, &new.identity.id),
+        1,
+        "the well-formed fact is still written"
+    );
+    assert_eq!(
+        total_edges(&store, "SUPERSEDED_BY"),
+        0,
+        "the unresolvable supersession wrote no edge"
     );
 }
 

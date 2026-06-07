@@ -249,8 +249,17 @@ pub(crate) fn materialize_into(
             &canonical_id,
             &supersession.new_fact,
         )?;
+        // A correctly-built pass always references resolvable facts (the new side from
+        // this txn, the prior side from the committed graph). An unresolved endpoint is a
+        // pass bug; degrade gracefully — drop just this instruction so one bad key can't
+        // wedge the whole pipeline — but name the missing side so the bug is diagnosable.
         let (Some(old), Some(new)) = (old, new) else {
-            tracing::warn!(reason = %supersession.reason, "consolidation: supersession endpoint unresolved; skipping");
+            tracing::warn!(
+                reason = %supersession.reason,
+                old_resolved = old.is_some(),
+                new_resolved = new.is_some(),
+                "consolidation: supersession endpoint unresolved; skipping instruction"
+            );
             continue;
         };
         let edge = SupersededBy {
@@ -273,7 +282,12 @@ pub(crate) fn materialize_into(
             &contradiction.target_fact,
         )?;
         let (Some(source), Some(target)) = (source, target) else {
-            tracing::warn!(detected_by = %contradiction.detected_by, "consolidation: contradiction endpoint unresolved; skipping");
+            tracing::warn!(
+                detected_by = %contradiction.detected_by,
+                source_resolved = source.is_some(),
+                target_resolved = target.is_some(),
+                "consolidation: contradiction endpoint unresolved; skipping instruction"
+            );
             continue;
         };
         let edge = Contradicts {
@@ -387,8 +401,11 @@ pub(crate) fn apply_supersession(
             .edge_properties(about_edge)
             .ok_or_else(|| StoreError::decode("ABOUT edge has no properties".to_string()))?,
     )?;
-    // Idempotency: an already-closed window means this supersession was applied before.
-    if prior.temporal.valid_to.is_some() {
+    // Idempotency: a replay finds the window already closed at exactly this instant — a
+    // no-op. Any OTHER already-closed state (a different instant) falls through to the
+    // ordering check below, so a genuine backward supersession on the direct-write path
+    // still errors rather than being silently swallowed by the replay guard.
+    if prior.temporal.valid_to.as_ref() == Some(&edge.temporal.valid_from) {
         return Ok(());
     }
     // The closed window must stay ordered: the supersession instant cannot precede the
@@ -448,6 +465,10 @@ pub(crate) fn apply_contradiction(
             "CONTRADICTS window bounds are out of order".to_string(),
         ));
     }
+    // No read-guard is needed here (unlike `apply_supersession`, which must read the prior
+    // window to avoid re-closing it): `ensure_edge` makes the CONTRADICTS write once-only,
+    // and re-setting `status` to the same value is itself idempotent. So a replay is a
+    // no-op without reading state first.
     ensure_edge(
         mutator,
         Contradicts::LABEL,

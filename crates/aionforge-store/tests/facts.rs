@@ -268,6 +268,85 @@ fn supersession_preserves_the_prior_fact_and_closes_its_window() {
 }
 
 #[test]
+fn re_superseding_is_idempotent_but_still_rejects_a_backward_instant() {
+    // Direct-write path: a replay (same instant) is a no-op, but a later call with an
+    // earlier instant must still error — the idempotency guard must not swallow the
+    // backward-supersession invariant once the window is closed.
+    let store = store();
+    let subject = entity("capital");
+    let subject_node = store.insert_entity(&subject).expect("insert entity");
+
+    let old = fact(
+        subject.identity.id.clone(),
+        "capital_of",
+        ObjectValue::Text("Bonn".to_string()),
+        "the capital is Bonn",
+    );
+    let new = fact(
+        subject.identity.id.clone(),
+        "capital_of",
+        ObjectValue::Text("Berlin".to_string()),
+        "the capital is Berlin",
+    );
+    let old_node = store
+        .assert_fact(
+            &old,
+            subject_node,
+            &open_window("1949-09-07T00:00:00Z[UTC]"),
+        )
+        .expect("assert old");
+    let new_node = store
+        .assert_fact(
+            &new,
+            subject_node,
+            &open_window("1990-10-03T00:00:00Z[UTC]"),
+        )
+        .expect("assert new");
+
+    let supersede = |at: &str| SupersededBy {
+        reason: "capital moved".to_string(),
+        temporal: BiTemporal {
+            valid_from: ts(at),
+            valid_to: None,
+            ingested_at: ts("2026-06-06T09:30:00-05:00[America/Chicago]"),
+            expired_at: None,
+        },
+    };
+
+    store
+        .supersede_fact(old_node, new_node, &supersede("1990-10-03T00:00:00Z[UTC]"))
+        .expect("first supersession");
+
+    // Exact replay: a no-op — no second edge, the window stays closed at the same instant.
+    store
+        .supersede_fact(old_node, new_node, &supersede("1990-10-03T00:00:00Z[UTC]"))
+        .expect("replay is idempotent");
+    assert_eq!(
+        edge_count(&store, "SUPERSEDED_BY", &old.identity.id, &new.identity.id),
+        1,
+        "replay adds no second SUPERSEDED_BY edge"
+    );
+    assert_eq!(
+        store
+            .fact_about(old_node)
+            .expect("about")
+            .expect("has about")
+            .temporal
+            .valid_to,
+        Some(ts("1990-10-03T00:00:00Z[UTC]")),
+        "replay does not move the closed window"
+    );
+
+    // A backward instant on the already-closed fact still violates the ordering invariant.
+    let backward =
+        store.supersede_fact(old_node, new_node, &supersede("1900-01-01T00:00:00Z[UTC]"));
+    assert!(
+        backward.is_err(),
+        "a backward supersession is rejected even after the window is closed"
+    );
+}
+
+#[test]
 fn contradiction_preserves_both_facts_and_quarantines_the_source() {
     let store = store();
     let subject = entity("temperature");
