@@ -25,7 +25,7 @@ use aionforge_domain::nodes::episodic::{ConsolidationState, Episode, Role};
 use aionforge_domain::time::Timestamp;
 use aionforge_store::{BoundQuery, QueryResult, Store, StoreConfig, Value};
 
-const DIM: usize = 8;
+const DIM: usize = 16;
 
 #[derive(Clone)]
 struct AxisEmbedder {
@@ -50,7 +50,12 @@ fn axis(text: &str) -> usize {
         "aionforge" => 1,
         "nyc" => 2,
         "rust" => 3,
-        other => 4 + (other.bytes().map(usize::from).sum::<usize>() % (DIM - 4)),
+        "helios" => 4,
+        "selene" => 5,
+        "bob" => 6,
+        "seattle" => 7,
+        "go" => 8,
+        other => 9 + (other.bytes().map(usize::from).sum::<usize>() % (DIM - 9)),
     }
 }
 
@@ -267,6 +272,94 @@ async fn summarization_writes_a_note_with_lineage_and_is_idempotent() {
         note_lineage_edges(&store),
         3,
         "replay adds no duplicate lineage edge"
+    );
+    assert_eq!(
+        node_count(&store, "Fact"),
+        3,
+        "replay preserves all raw facts (non-lossy)"
+    );
+}
+
+#[tokio::test]
+async fn a_later_episode_grows_the_cluster_into_a_new_note_keeping_the_old() {
+    let store = store();
+    let namespace = Namespace::Agent("alice".to_string());
+
+    let mut consolidator = Consolidator::new(Arc::clone(&store), ConsolidationConfig::default());
+    consolidator.register(Box::new(FactExtractionPass::new(
+        Arc::new(RuleExtractor::with_default_rules()),
+        Arc::new(AxisEmbedder::new()),
+        Arc::new(RuleSummarizer::with_default_rules()),
+        PassConfig::default(),
+    )));
+
+    // E1: three facts about Alice -> one note over that three-fact set.
+    insert_raw_episode(&store, ALICE_EPISODE, &namespace, 0);
+    drain(&consolidator).await;
+    assert_eq!(node_count(&store, "Note"), 1, "E1 writes the first note");
+    assert_eq!(node_count(&store, "Fact"), 3);
+
+    // E2: two more facts about Alice. The cluster now spans the committed three plus the two
+    // new facts — a different source set, so a new note id; the old note is kept (non-lossy).
+    insert_raw_episode(
+        &store,
+        "Alice uses Helios. Alice works on Selene.",
+        &namespace,
+        5,
+    );
+    drain(&consolidator).await;
+    assert_eq!(
+        node_count(&store, "Note"),
+        2,
+        "the grown cluster writes a second, distinct note; the first remains"
+    );
+    assert_eq!(node_count(&store, "Fact"), 5, "all five raw facts coexist");
+
+    // Replaying every episode regenerates the same five-fact cluster id, so no third note is
+    // written — cross-episode summarization is idempotent.
+    reset_to_raw(&store);
+    drain(&consolidator).await;
+    assert_eq!(
+        node_count(&store, "Note"),
+        2,
+        "replay adds no third note across episodes"
+    );
+    assert_eq!(node_count(&store, "Fact"), 5, "replay preserves every fact");
+}
+
+#[tokio::test]
+async fn a_multi_subject_episode_summarizes_each_subject_separately() {
+    let store = store();
+    let namespace = Namespace::Agent("team".to_string());
+    insert_raw_episode(
+        &store,
+        "Alice works on Aionforge. Alice is based in NYC. Alice prefers Rust. \
+         Bob works on Aionforge. Bob is based in Seattle. Bob prefers Go.",
+        &namespace,
+        0,
+    );
+
+    let mut consolidator = Consolidator::new(Arc::clone(&store), ConsolidationConfig::default());
+    consolidator.register(Box::new(FactExtractionPass::new(
+        Arc::new(RuleExtractor::with_default_rules()),
+        Arc::new(AxisEmbedder::new()),
+        Arc::new(RuleSummarizer::with_default_rules()),
+        PassConfig::default(),
+    )));
+
+    drain(&consolidator).await;
+
+    // One note per subject (Alice and Bob each clear the size gates), each deriving from its
+    // own three facts — the touched-subject scoping keeps the clusters separate.
+    assert_eq!(
+        node_count(&store, "Note"),
+        2,
+        "each subject is summarized into its own note"
+    );
+    assert_eq!(
+        note_lineage_edges(&store),
+        6,
+        "three lineage edges per subject note"
     );
 }
 

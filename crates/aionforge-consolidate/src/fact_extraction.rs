@@ -237,12 +237,18 @@ where
         needed.sort_by(|a, b| a.as_str().cmp(b.as_str()));
         needed.dedup();
         for id in needed {
-            if let Some(entity) = store
+            // Resolve the name from the committed index, falling back to the id string when
+            // the entity is absent. The fallback is made explicit here — not deferred to a
+            // reader — so `name_of` is complete and every cluster sees the exact entity names
+            // the detail-retention guard will check the summary against.
+            let name = match store
                 .entity_by_id(&id)
                 .map_err(|error| PassError::Transient(format!("entity read failed: {error}")))?
             {
-                name_of.insert(id, entity.canonical_name);
-            }
+                Some(entity) => entity.canonical_name,
+                None => id.as_str().to_string(),
+            };
+            name_of.insert(id, name);
         }
         Ok(name_of)
     }
