@@ -12,8 +12,15 @@ description = "Fast ADD-oriented capture path: deduplication, provenance, single
 [dependencies]
 aionforge-domain = { path = "../aionforge-domain", version = "0.1.0" }
 aionforge-store = { path = "../aionforge-store", version = "0.1.0" }
-aionforge-embed = { path = "../aionforge-embed", version = "0.1.0" }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+miette = { workspace = true }
+
+[dev-dependencies]
+aionforge-domain = { path = "../aionforge-domain", version = "0.1.0" }
+aionforge-store = { path = "../aionforge-store", version = "0.1.0" }
 aionforge-security = { path = "../aionforge-security", version = "0.1.0" }
+tokio = { workspace = true }
 
 [lints]
 workspace = true

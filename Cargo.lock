@@ -35,9 +35,12 @@ name = "aionforge-capture"
 version = "0.1.0"
 dependencies = [
  "aionforge-domain",
- "aionforge-embed",
  "aionforge-security",
  "aionforge-store",
+ "miette",
+ "serde_json",
+ "thiserror",
+ "tokio",
 ]
 
 [[package]]
