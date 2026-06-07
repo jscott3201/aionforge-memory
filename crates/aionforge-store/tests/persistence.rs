@@ -146,7 +146,7 @@ fn persistence_round_trips_schema_data_indexes_and_providers() {
         assert_eq!(store.schema_version().expect("schema version"), 1);
         assert_eq!(store.vector_indexes().len(), 7);
         assert_eq!(store.text_indexes().len(), 5);
-        assert_eq!(store.property_indexes().len(), 41);
+        assert_eq!(store.property_indexes().len(), 42);
         assert_eq!(store.composite_indexes().len(), 3);
         assert_eq!(fact_count(&store), 2);
         assert_eq!(provider_count(&store, "current_support_facts"), 1);
@@ -169,7 +169,7 @@ fn persistence_round_trips_schema_data_indexes_and_providers() {
     assert_eq!(recovered.text_indexes().len(), 5, "text indexes rebuilt");
     assert_eq!(
         recovered.property_indexes().len(),
-        41,
+        42,
         "property indexes rebuilt"
     );
     assert_eq!(

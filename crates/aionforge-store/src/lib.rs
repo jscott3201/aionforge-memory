@@ -21,6 +21,7 @@ mod gql;
 mod indexes;
 mod materialize;
 mod migrate;
+mod note;
 mod provenance;
 mod providers;
 mod schema;
@@ -37,6 +38,7 @@ pub use materialize::{
     ConsolidationArtifacts, Contradiction, FactKey, MaterializedFact, Supersession,
 };
 pub use migrate::{MigrationPlan, MigrationReport, PendingChange};
+pub use note::MaterializedNote;
 pub use providers::CandidateStateInfo;
 pub use schema::{EdgeTypeShape, NodeTypeShape, PropertyKind, PropertyShape, SchemaSnapshot};
 pub use search::{CandidateSet, SearchHit, SearchKind, SetOp};

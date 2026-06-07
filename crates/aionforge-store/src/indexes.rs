@@ -53,13 +53,15 @@ const SCALAR_INDEXES: &[(&str, &str)] = &[
     ("Fact", "predicate"),
     ("Fact", "status"),
     ("Fact", "object_entity_id"),
-    // `id` is indexed only on `Entity` (not on every kind): consolidation resolves an
-    // already-canonical subject entity's `NodeId` by its domain id inside the flip txn
-    // when it wires the `ABOUT`/`MENTIONS` edges (M2.T04). Other kinds are reached by
-    // node id directly, so they need no id index.
+    // `id` is indexed on `Entity` and `Note` (not on every kind). Consolidation resolves
+    // an already-canonical subject entity's `NodeId` by its domain id inside the flip txn
+    // when it wires the `ABOUT`/`MENTIONS` edges (M2.T04), and dedups a content-addressed
+    // summary `Note` by id so replaying an episode never writes a second copy (M2.T06).
+    // Other kinds are reached by node id directly, so they need no id index.
     ("Entity", "id"),
     ("Entity", "canonical_name"),
     ("Entity", "type"),
+    ("Note", "id"),
     ("Skill", "name"),
     ("Skill", "source_hash"),
     ("Note", "derived_from_episode"),

@@ -7,6 +7,7 @@ use std::sync::Arc;
 use aionforge_domain::edges::{About, Audit, Contradicts, HasProvenance, SupersededBy};
 use aionforge_domain::embedding::Embedding;
 use aionforge_domain::ids::{ContentHash, Id};
+use aionforge_domain::nodes::associative::Note;
 use aionforge_domain::nodes::episodic::Episode;
 use aionforge_domain::nodes::forensic::{AuditEvent, ProvenanceRecord};
 use aionforge_domain::nodes::semantic::{Entity, Fact};
@@ -368,6 +369,18 @@ impl Store {
         let snapshot = self.graph.read();
         match snapshot.node_properties(id) {
             Some(props) => Ok(Some(fact::from_properties(props)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Read a summary note back by its node id from a fresh snapshot (M2.T06).
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the stored data cannot be decoded into a [`Note`].
+    pub fn note_by_node_id(&self, id: NodeId) -> Result<Option<Note>, StoreError> {
+        let snapshot = self.graph.read();
+        match snapshot.node_properties(id) {
+            Some(props) => Ok(Some(crate::note::from_properties(props)?)),
             None => Ok(None),
         }
     }

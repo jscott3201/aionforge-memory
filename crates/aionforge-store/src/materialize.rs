@@ -33,7 +33,8 @@ use selene_graph::{Mutator, RowIndex, SeleneGraph};
 
 use crate::convert::{enum_value, id_value, string_value, timestamp_value};
 use crate::error::StoreError;
-use crate::{audit, entity, fact};
+use crate::note::MaterializedNote;
+use crate::{audit, entity, fact, note};
 
 /// A fact to materialize, with the bi-temporal window for its `ABOUT` edge.
 ///
@@ -101,7 +102,7 @@ pub struct Contradiction {
 }
 
 /// Everything one consolidation pass derived for the scheduler to commit atomically
-/// with the episode flip (M2.T04, M2.T05).
+/// with the episode flip (M2.T04, M2.T05, M2.T06).
 ///
 /// Built by a pass via [`ConsolidationArtifacts::default`] plus field pushes (the type
 /// stays `#[non_exhaustive]` so later milestones — summarization, link evolution — can
@@ -120,6 +121,8 @@ pub struct ConsolidationArtifacts {
     pub supersessions: Vec<Supersession>,
     /// Contradiction instructions (with optional quarantine of the source).
     pub contradictions: Vec<Contradiction>,
+    /// Conservative summary notes to write, each with its source-fact lineage (M2.T06).
+    pub notes: Vec<MaterializedNote>,
     /// Audit events recording the pass's decisions (e.g. `canonicalize`, `quarantine`).
     pub audit_events: Vec<AuditEvent>,
 }
@@ -133,6 +136,7 @@ impl ConsolidationArtifacts {
             && self.mentioned_entities.is_empty()
             && self.supersessions.is_empty()
             && self.contradictions.is_empty()
+            && self.notes.is_empty()
             && self.audit_events.is_empty()
     }
 
@@ -143,6 +147,7 @@ impl ConsolidationArtifacts {
         self.mentioned_entities.extend(other.mentioned_entities);
         self.supersessions.extend(other.supersessions);
         self.contradictions.extend(other.contradictions);
+        self.notes.extend(other.notes);
         self.audit_events.extend(other.audit_events);
     }
 }
@@ -321,6 +326,11 @@ pub(crate) fn materialize_into(
         }
     }
 
+    // 3.5. Summary notes (M2.T06): write each content-addressed note (deduped by id so a
+    //      replay is a no-op) and wire its `Note -DERIVED_FROM-> Fact` lineage. The note
+    //      step lives in `note.rs` with the note translation it depends on.
+    note::materialize_notes(mutator, &artifacts.notes, &fact_nodes, &canonical_id, now)?;
+
     // 4. Audit the pass's decisions (forensic, append-only): node + AUDIT edge to episode.
     for event in &artifacts.audit_events {
         let (labels, props) = audit::to_node(event)?;
@@ -491,7 +501,7 @@ pub(crate) fn apply_contradiction(
 
 /// Resolve a supersession/contradiction [`FactKey`] to a `NodeId`: a fact created in this
 /// txn (via `fact_nodes`) first, then the committed `(subject_id, predicate)` index.
-fn resolve_instruction_fact(
+pub(crate) fn resolve_instruction_fact(
     snapshot: &SeleneGraph,
     fact_nodes: &HashMap<String, NodeId>,
     canonical_id: &HashMap<Id, Id>,
@@ -522,7 +532,7 @@ fn instruction_window(at: &Timestamp, now: &Timestamp) -> BiTemporal {
 ///
 /// Keeps the support/derivation/mention edges idempotent: re-running an episode, or a
 /// second episode that supports the same fact, never piles up duplicate edges.
-fn ensure_edge(
+pub(crate) fn ensure_edge(
     mutator: &mut Mutator<'_, '_>,
     label: &str,
     source: NodeId,
@@ -656,7 +666,7 @@ fn supports_props(weight: f64) -> Result<PropertyMap, StoreError> {
 }
 
 /// The `DERIVED_FROM` edge property map (the derivation instant).
-fn derived_from_props(now: &Timestamp) -> Result<PropertyMap, StoreError> {
+pub(crate) fn derived_from_props(now: &Timestamp) -> Result<PropertyMap, StoreError> {
     Ok(PropertyMap::from_pairs(vec![(
         db_string("derived_at")?,
         timestamp_value(now),
