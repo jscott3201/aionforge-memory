@@ -100,12 +100,13 @@ impl CorefTable {
     /// alias. Matches on a case-insensitive name/alias hit or a token-subset relation.
     fn match_and_fold(&mut self, name: &str, entity_type: &str) -> Option<Id> {
         let surface_tokens = tokens(name);
+        let normalized = normalize(name);
         for entry in &mut self.entries {
             if entry.entity_type != entity_type {
                 continue;
             }
-            let exact = entry.canonical_name.eq_ignore_ascii_case(name)
-                || entry.aliases.iter().any(|a| a.eq_ignore_ascii_case(name));
+            let exact = normalize(&entry.canonical_name) == normalized
+                || entry.aliases.iter().any(|a| normalize(a) == normalized);
             let subsumes = {
                 let canonical_tokens = tokens(&entry.canonical_name);
                 is_subset(&surface_tokens, &canonical_tokens)
@@ -254,8 +255,9 @@ fn exact_entity(
             continue;
         }
         candidates.push(entity.identity.id.as_str().to_string());
-        let matches = entity.canonical_name.eq_ignore_ascii_case(name)
-            || entity.aliases.iter().any(|a| a.eq_ignore_ascii_case(name));
+        let normalized = normalize(name);
+        let matches = normalize(&entity.canonical_name) == normalized
+            || entity.aliases.iter().any(|a| normalize(a) == normalized);
         if matches {
             return Ok(Some(EntityHit {
                 id: entity.identity.id,
@@ -300,23 +302,37 @@ fn nearest_entity(
 }
 
 /// The deterministic id for a new entity: a content hash over namespace, type, and the
-/// normalized name, so the same surface in the same namespace always mints the same id.
+/// `normalize`d name, so the same surface in the same namespace always mints the same id —
+/// and, crucially, the same normalization the exact-match gate uses, so two surfaces that
+/// differ only in case or spacing resolve to one entity rather than splitting into duplicates.
 fn new_entity_id(namespace: &Namespace, entity_type: &str, name: &str) -> Id {
-    let key = format!("{}|{}|{}", namespace, entity_type, name.to_lowercase());
+    let key = format!("{}|{}|{}", namespace, entity_type, normalize(name));
     Id::from_content_hash(key.as_bytes())
 }
 
-/// Add `surface` as an alias of `entry` unless it is the canonical name or already present.
+/// Add `surface` as an alias of `entry` unless it is the canonical name or already present
+/// (compared in `normalize`d form, so case/spacing variants are not stored as separate aliases).
 fn fold_alias(entry: &mut CorefEntry, surface: &str) {
-    if entry.canonical_name.eq_ignore_ascii_case(surface)
-        || entry
-            .aliases
-            .iter()
-            .any(|a| a.eq_ignore_ascii_case(surface))
+    let normalized = normalize(surface);
+    if normalize(&entry.canonical_name) == normalized
+        || entry.aliases.iter().any(|a| normalize(a) == normalized)
     {
         return;
     }
     entry.aliases.push(surface.to_string());
+}
+
+/// The canonical identity/comparison form of a surface name: Unicode-lowercased, internal
+/// whitespace runs collapsed to single spaces, ends trimmed. Both the new-entity id derivation
+/// and every exact name/alias equality test route through this, so the two never disagree —
+/// the source of the only normalization the module recognizes. `Resolution.canonical_name`
+/// deliberately keeps the original-case surface for display; only identity and equality
+/// normalize.
+fn normalize(name: &str) -> String {
+    name.split_whitespace()
+        .map(str::to_lowercase)
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Lowercased whitespace tokens of a surface form.
@@ -327,4 +343,43 @@ fn tokens(surface: &str) -> Vec<String> {
 /// Whether every token of `needle` appears in `haystack` (and `needle` is non-empty).
 fn is_subset(needle: &[String], haystack: &[String]) -> bool {
     !needle.is_empty() && needle.iter().all(|token| haystack.contains(token))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ns() -> Namespace {
+        Namespace::Agent("tester".to_string())
+    }
+
+    #[test]
+    fn normalize_collapses_case_and_internal_whitespace() {
+        assert_eq!(normalize("New York"), "new york");
+        assert_eq!(normalize("New   York"), "new york");
+        assert_eq!(normalize("new\tyork"), "new york");
+        assert_eq!(normalize("  Alice  "), "alice");
+        assert_eq!(normalize("ALICE"), "alice");
+    }
+
+    #[test]
+    fn new_entity_id_is_stable_across_case_and_spacing_variants() {
+        // The whole point of the fix: case/spacing variants of the same surface mint one id,
+        // so the exact-match gate and the id derivation never disagree and split a duplicate.
+        let base = new_entity_id(&ns(), "Person", "New York");
+        assert_eq!(base, new_entity_id(&ns(), "Person", "new york"));
+        assert_eq!(base, new_entity_id(&ns(), "Person", "New   York"));
+        assert_eq!(base, new_entity_id(&ns(), "Person", "  NEW YORK  "));
+    }
+
+    #[test]
+    fn new_entity_id_separates_distinct_names_types_and_namespaces() {
+        let a = new_entity_id(&ns(), "Person", "Alice");
+        assert_ne!(a, new_entity_id(&ns(), "Person", "Bob"));
+        assert_ne!(a, new_entity_id(&ns(), "Org", "Alice"));
+        assert_ne!(
+            a,
+            new_entity_id(&Namespace::Agent("other".to_string()), "Person", "Alice")
+        );
+    }
 }

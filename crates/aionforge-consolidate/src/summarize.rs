@@ -134,7 +134,7 @@ pub(crate) fn check_detail_retention(
     let preserved = cluster
         .entity_names
         .iter()
-        .filter(|name| haystack.contains(&name.to_lowercase()))
+        .filter(|name| contains_word(&haystack, &name.to_lowercase()))
         .count();
     let entity_retention = preserved as f64 / total as f64;
     let mean_confidence = if cluster.facts.is_empty() {
@@ -149,6 +149,40 @@ pub(crate) fn check_detail_retention(
         entity_retention,
         mean_confidence,
     }
+}
+
+/// Whole-word containment: does `needle` occur in `haystack` bounded on each side by a
+/// non-alphanumeric character (or a string edge)? Both arguments are expected pre-lowercased.
+///
+/// A plain substring test would count an entity as "retained" merely because its name is a
+/// fragment of a longer, unrelated word in the summary — `"Bo"` inside `"Bobby"`. That is a
+/// false positive on the guard's one job (catching dropped entities), inflating retention and
+/// letting a lossy summary through, so the test must respect word boundaries. Internal content
+/// of a multi-word `needle` (`"new york"`) is matched literally; only the two outer edges are
+/// checked, so multi-word names work without tokenizing.
+fn contains_word(haystack: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return false;
+    }
+    let mut from = 0;
+    while let Some(rel) = haystack[from..].find(needle) {
+        let start = from + rel;
+        let end = start + needle.len();
+        let before_ok = haystack[..start]
+            .chars()
+            .next_back()
+            .is_none_or(|c| !c.is_alphanumeric());
+        let after_ok = haystack[end..]
+            .chars()
+            .next()
+            .is_none_or(|c| !c.is_alphanumeric());
+        if before_ok && after_ok {
+            return true;
+        }
+        // Advance one char past this occurrence's start to find a later one.
+        from = start + haystack[start..].chars().next().map_or(1, char::len_utf8);
+    }
+    false
 }
 
 #[cfg(test)]
@@ -353,6 +387,57 @@ mod tests {
         };
         let outcome = check_detail_retention(&cluster, &lossy, &cfg);
         assert!(!outcome.passed, "an over-summarized note is blocked");
+        assert!(outcome.entity_retention < cfg.entity_retention_threshold);
+    }
+
+    #[test]
+    fn contains_word_respects_boundaries() {
+        // Substring of a longer word is not a match.
+        assert!(!contains_word("bobby went home", "bo"));
+        // Standalone occurrence is a match, even alongside a substring occurrence.
+        assert!(contains_word("bobby and bo", "bo"));
+        // Multi-word names match literally, bounded by edges/punctuation.
+        assert!(contains_word("alice lives in new york.", "new york"));
+        assert!(!contains_word("newyork is not the city", "new york"));
+        // String edges count as boundaries.
+        assert!(contains_word("bo", "bo"));
+        assert!(contains_word("rust, go, bo", "bo"));
+        assert!(!contains_word("", "bo"));
+        assert!(!contains_word("anything", ""));
+    }
+
+    #[test]
+    fn the_guard_does_not_credit_a_substring_only_mention() {
+        let cfg = SummarizationConfig::default(); // entity threshold 0.9, confidence floor 0.6
+        let bo = Id::from_content_hash(b"bo");
+        let nyc = Id::from_content_hash(b"nyc");
+        let aionforge = Id::from_content_hash(b"aionforge");
+        let name_of = names(&[(&bo, "Bo"), (&nyc, "NYC"), (&aionforge, "Aionforge")]);
+        let facts = vec![
+            fact("f1", &bo, "based_in", ObjectValue::Entity(nyc.clone()), 0.9),
+            fact(
+                "f2",
+                &bo,
+                "works_on",
+                ObjectValue::Entity(aionforge.clone()),
+                0.9,
+            ),
+            fact("f3", &bo, "prefers", ObjectValue::Text("Rust".into()), 0.9),
+        ];
+        let cluster = build_clusters(&facts, &name_of, &cfg)
+            .pop()
+            .expect("one cluster");
+
+        // "Bobby" mentions the subject only as a substring; a plain `contains` would have
+        // counted "Bo" as retained (3/3) and passed this lossy summary. Word boundaries drop
+        // it to 2/3, below the threshold, so the over-summarized note is blocked.
+        let lossy = SummaryOutput {
+            content: "Bobby is connected to Aionforge and NYC.".to_string(),
+            keywords: vec!["Aionforge".to_string(), "NYC".to_string()],
+            context: None,
+        };
+        let outcome = check_detail_retention(&cluster, &lossy, &cfg);
+        assert!(!outcome.passed, "a substring-only mention must not pass");
         assert!(outcome.entity_retention < cfg.entity_retention_threshold);
     }
 
