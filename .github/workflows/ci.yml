@@ -102,18 +102,20 @@ jobs:
       (github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch')
       && needs.changes.outputs.deps == 'true'
     runs-on: ubuntu-latest
-    env:
-      SELENE_DB_REF: ${{ vars.SELENE_DB_REF || 'development' }}
     steps:
       - uses: actions/checkout@v4
-      # cargo-deny runs `cargo metadata`, which must resolve the selene-db path
-      # dependency; clone it as a sibling at the configured ref.
-      - name: clone selene-db substrate
-        run: git clone --filter=blob:none https://github.com/jscott3201/selene-db.git ../selene-db
-          && git -C ../selene-db checkout "$SELENE_DB_REF"
-      - uses: EmbarkStudios/cargo-deny-action@v2
+      # cargo-deny runs `cargo metadata`, which fetches the selene-db git dependency
+      # over SSH. Load the deploy key and run cargo-deny on the host (not the container
+      # action, which would not see the SSH agent).
+      - name: authenticate to the selene-db substrate
+        uses: webfactory/ssh-agent@v0.9.1
         with:
-          command: check bans licenses sources
+          ssh-private-key: ${{ secrets.SELENE_DB_DEPLOY_KEY }}
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+      - run: cargo deny check bans licenses sources
 
   thirdparty-current:
     name: third-party attribution current
@@ -122,13 +124,12 @@ jobs:
       (github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch')
       && needs.changes.outputs.deps == 'true'
     runs-on: ubuntu-latest
-    env:
-      SELENE_DB_REF: ${{ vars.SELENE_DB_REF || 'development' }}
     steps:
       - uses: actions/checkout@v4
-      - name: clone selene-db substrate
-        run: git clone --filter=blob:none https://github.com/jscott3201/selene-db.git ../selene-db
-          && git -C ../selene-db checkout "$SELENE_DB_REF"
+      - name: authenticate to the selene-db substrate
+        uses: webfactory/ssh-agent@v0.9.1
+        with:
+          ssh-private-key: ${{ secrets.SELENE_DB_DEPLOY_KEY }}
       - uses: dtolnay/rust-toolchain@1.95.0
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@v2

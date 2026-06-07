@@ -60,20 +60,24 @@ We'd rather say that plainly up front than oversell it.
 
 You'll need the toolchain pinned in `rust-toolchain.toml` (Rust 1.95.0, edition 2024).
 
-Aionforge depends on `selene-db` as a path dependency, so check it out right next
-door as a sibling directory:
-
-```text
-parent/
-├── aionforge-memory/   # this repo
-└── selene-db/          # github.com/jscott3201/selene-db, development branch
-```
+Aionforge builds on `selene-db`, which is a private repo pinned as a git dependency on
+its `development` branch (see the root `Cargo.toml`). Cargo fetches it over SSH using
+your own key — `.cargo/config.toml` sets `git-fetch-with-cli = true`, so the fetch goes
+through your system `git` and SSH agent. You need read access to the `selene-db` repo and
+an SSH key GitHub recognizes; nothing extra to clone.
 
 ```bash
-git clone https://github.com/jscott3201/selene-db.git ../selene-db
 cargo build --workspace --locked
 cargo nextest run --workspace --locked --all-features
 ```
+
+`Cargo.lock` pins the exact substrate commit, so builds are reproducible and CI runs
+`--locked`. To pull a newer `development` commit, run `cargo update -p selene-core` (and
+the other `selene-*` crates).
+
+For tight co-development against a local `selene-db` checkout, uncomment the `[patch]`
+block at the bottom of the root `Cargo.toml` and point it at your checkout. Don't commit
+the uncommented form.
 
 Set up the shared git hooks once after cloning:
 

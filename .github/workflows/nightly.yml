@@ -4,7 +4,8 @@
 # appear between release gates (the release gate audits at PR time; advisories
 # land continuously) and re-runs the full macOS validation off the per-PR path.
 # As the substrate moves on `development`, the scheduled run also surfaces
-# substrate drift early (it builds against the current SELENE_DB_REF).
+# substrate drift early: it `cargo update`s the selene-db git dependency to the
+# latest `development` commit before building, rather than running --locked.
 #
 # Security: no `${{ github.event.* }}` in any `run:` (confined to if:/with:/env:).
 
@@ -25,7 +26,6 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: short
   CARGO_NET_GIT_FETCH_WITH_CLI: "true"
-  SELENE_DB_REF: ${{ vars.SELENE_DB_REF || 'development' }}
 
 permissions:
   contents: read
@@ -36,9 +36,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: clone selene-db substrate
-        run: git clone --filter=blob:none https://github.com/jscott3201/selene-db.git ../selene-db
-          && git -C ../selene-db checkout "$SELENE_DB_REF"
+      - name: authenticate to the selene-db substrate
+        uses: webfactory/ssh-agent@v0.9.1
+        with:
+          ssh-private-key: ${{ secrets.SELENE_DB_DEPLOY_KEY }}
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - name: pull the latest substrate commit (drift)
+        run: cargo update -p selene-core -p selene-graph -p selene-persist -p selene-gql -p selene-algorithms
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-audit
@@ -51,9 +55,10 @@ jobs:
       CARGO_PROFILE_TEST_DEBUG: 0
     steps:
       - uses: actions/checkout@v4
-      - name: clone selene-db substrate
-        run: git clone --filter=blob:none https://github.com/jscott3201/selene-db.git ../selene-db
-          && git -C ../selene-db checkout "$SELENE_DB_REF"
+      - name: authenticate to the selene-db substrate
+        uses: webfactory/ssh-agent@v0.9.1
+        with:
+          ssh-private-key: ${{ secrets.SELENE_DB_DEPLOY_KEY }}
       - uses: dtolnay/rust-toolchain@1.95.0
         with:
           components: clippy
@@ -61,8 +66,12 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: nextest
+      # Nightly builds against the latest substrate commit to surface drift early, so it
+      # updates the pinned commit rather than building --locked.
+      - name: pull the latest substrate commit (drift)
+        run: cargo update -p selene-core -p selene-graph -p selene-persist -p selene-gql -p selene-algorithms
       - name: clippy + tests
         run: |
-          cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-          cargo nextest run --workspace --locked --all-features --profile ci
-          cargo test --workspace --locked --all-features --doc
+          cargo clippy --workspace --all-targets --all-features -- -D warnings
+          cargo nextest run --workspace --all-features --profile ci
+          cargo test --workspace --all-features --doc
