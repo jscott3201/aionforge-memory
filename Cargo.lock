@@ -593,7 +593,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2032,7 +2032,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2115,7 +2115,7 @@ dependencies = [
 [[package]]
 name = "selene-algorithms"
 version = "1.1.0"
-source = "git+ssh://git@github.com/jscott3201/selene-db.git?branch=development#028a2cf0f7a915884317278d21c69eddc598e28f"
+source = "git+ssh://git@github.com/jscott3201/selene-db.git?branch=development#74d3b909b2007765c13c260ce9483b02682dfc38"
 dependencies = [
  "parking_lot",
  "rayon",
@@ -2130,7 +2130,7 @@ dependencies = [
 [[package]]
 name = "selene-core"
 version = "1.1.0"
-source = "git+ssh://git@github.com/jscott3201/selene-db.git?branch=development#028a2cf0f7a915884317278d21c69eddc598e28f"
+source = "git+ssh://git@github.com/jscott3201/selene-db.git?branch=development#74d3b909b2007765c13c260ce9483b02682dfc38"
 dependencies = [
  "bytes",
  "jiff",
@@ -2149,7 +2149,7 @@ dependencies = [
 [[package]]
 name = "selene-gql"
 version = "1.1.0"
-source = "git+ssh://git@github.com/jscott3201/selene-db.git?branch=development#028a2cf0f7a915884317278d21c69eddc598e28f"
+source = "git+ssh://git@github.com/jscott3201/selene-db.git?branch=development#74d3b909b2007765c13c260ce9483b02682dfc38"
 dependencies = [
  "jiff",
  "lru",
@@ -2175,7 +2175,7 @@ dependencies = [
 [[package]]
 name = "selene-graph"
 version = "1.1.0"
-source = "git+ssh://git@github.com/jscott3201/selene-db.git?branch=development#028a2cf0f7a915884317278d21c69eddc598e28f"
+source = "git+ssh://git@github.com/jscott3201/selene-db.git?branch=development#74d3b909b2007765c13c260ce9483b02682dfc38"
 dependencies = [
  "arc-swap",
  "imbl",
@@ -2200,7 +2200,7 @@ dependencies = [
 [[package]]
 name = "selene-persist"
 version = "1.1.0"
-source = "git+ssh://git@github.com/jscott3201/selene-db.git?branch=development#028a2cf0f7a915884317278d21c69eddc598e28f"
+source = "git+ssh://git@github.com/jscott3201/selene-db.git?branch=development#74d3b909b2007765c13c260ce9483b02682dfc38"
 dependencies = [
  "blake3",
  "miette",
@@ -2329,7 +2329,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "52d1cfed4120b4d927bf7c0f86d2087a4a7d6027c906d9f9d525a80573b9be51"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -2357,7 +2357,7 @@ dependencies = [
  "cfg-if",
  "libc",
  "psm",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -2424,7 +2424,7 @@ dependencies = [
  "getrandom 0.4.2",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
