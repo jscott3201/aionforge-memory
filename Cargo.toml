@@ -100,11 +100,14 @@ wiremock = "0.6"
 # nightly workflow runs that update on a schedule so we never silently fall behind.
 # `cargo build` fetches with the system git binary + your SSH key (.cargo/config.toml).
 # For tight co-development against a local checkout, use the commented `[patch]` below.
-selene-core = { git = "ssh://git@github.com/jscott3201/selene-db.git", branch = "development" }
-selene-graph = { git = "ssh://git@github.com/jscott3201/selene-db.git", branch = "development" }
-selene-persist = { git = "ssh://git@github.com/jscott3201/selene-db.git", branch = "development" }
-selene-gql = { git = "ssh://git@github.com/jscott3201/selene-db.git", branch = "development" }
-selene-algorithms = { git = "ssh://git@github.com/jscott3201/selene-db.git", branch = "development" }
+# A `version` accompanies the git source so the dep is not a bare `*` wildcard (the
+# `bans.wildcards = "deny"` gate). The `"1"` requirement is a sanity floor against the
+# selene 1.x line; Cargo.lock still pins the exact `development` commit that builds.
+selene-core = { git = "ssh://git@github.com/jscott3201/selene-db.git", branch = "development", version = "1" }
+selene-graph = { git = "ssh://git@github.com/jscott3201/selene-db.git", branch = "development", version = "1" }
+selene-persist = { git = "ssh://git@github.com/jscott3201/selene-db.git", branch = "development", version = "1" }
+selene-gql = { git = "ssh://git@github.com/jscott3201/selene-db.git", branch = "development", version = "1" }
+selene-algorithms = { git = "ssh://git@github.com/jscott3201/selene-db.git", branch = "development", version = "1" }
 
 # Co-development escape hatch: to build against a local selene-db checkout instead of
 # the fetched branch, uncomment and point these at your sibling checkout. Do not

@@ -10,12 +10,12 @@ accepted = [
   "BSD-2-Clause",
   "BSD-3-Clause",
   "ISC",
-  "Unicode-DFS-2016",
   "Unicode-3.0",
   "CC0-1.0",
   "Zlib",
   "BSL-1.0",
   "MPL-2.0",
+  "CDLA-Permissive-2.0",
 ]
 
 # License-file discovery clarifications. cargo-about's default discovery is
