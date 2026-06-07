@@ -71,6 +71,48 @@ pub(crate) fn derive_graph_seed(
     }
 }
 
+/// Resolve the entity nodes a query names, to seed associative PageRank (03 §1 graph).
+///
+/// These are PageRank *personalization roots* and are deliberately distinct from
+/// [`derive_graph_seed`]'s fact-level precision seed: graph expansion spreads mass from
+/// the entities a query names out to the facts and episodes around them, so it needs the
+/// entity nodes themselves, not the facts about them.
+///
+/// Roots come from two resolvers, unioned: BM25 over the entity text index (matching the
+/// query against canonical names — always available) and, when the query was embedded,
+/// vector search over the entity index (semantic match). The lexical half keeps graph
+/// expansion alive when the embedder is down — a bare-entity query still resolves its
+/// entity by name — while the dense half catches entities named by meaning rather than
+/// surface form. Returns `None` when neither resolves an entity, so the caller skips the
+/// graph signal rather than running an unseeded PageRank.
+///
+/// # Errors
+/// Returns [`RetrievalError`] if an entity search fails.
+pub(crate) fn resolve_seed_entities(
+    store: &Store,
+    query: &str,
+    embedding: Option<&Embedding>,
+) -> Result<Option<Vec<NodeId>>, RetrievalError> {
+    let mut roots: Vec<NodeId> = store
+        .text_search(SearchKind::Entity, query, ENTITY_ROOTS)?
+        .into_iter()
+        .map(|hit| hit.node)
+        .collect();
+    if let Some(embedding) = embedding {
+        roots.extend(
+            store
+                .vector_search_ann(SearchKind::Entity, embedding, ENTITY_ROOTS)?
+                .into_iter()
+                .map(|hit| hit.node),
+        );
+    }
+    if roots.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(dedup_sorted(roots)))
+    }
+}
+
 /// Sort and de-duplicate node ids so the seed is a stable set — the same entities always
 /// produce the same candidate list, preserving recall determinism (03 §6). Order does not
 /// affect the set-algebra composition, but a stable seed keeps the whole path reproducible.

@@ -7,8 +7,9 @@
 //! signal drops out and retrieval degrades to the rest, flagged in the explanation
 //! (03 §6, §8.1).
 //!
-//! In this milestone only the lexical and dense signals exist, so those are the
-//! signals that run; the graph, recency, and trust signals land with their tasks.
+//! The lexical, dense, and associative-graph signals run; the graph signal is gated to
+//! the classes the router enables expansion for (03 §3). The recency and trust signals
+//! land with their tasks.
 
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
@@ -29,11 +30,12 @@ use crate::bundle::{
 };
 use crate::error::RetrievalError;
 use crate::fusion::{DEFAULT_RRF_K, FusedCandidate, WeightedRanking, fuse};
-use crate::precision::derive_graph_seed;
+use crate::precision::{derive_graph_seed, resolve_seed_entities};
 use crate::query::{RecallQuery, TemporalMode};
 use crate::router::{profile_for, route};
 use crate::signals::{
-    Signal, SignalRanking, dense_ranking_for, embed_query, lexical_ranking, ranking_from_hits,
+    Signal, SignalRanking, dense_ranking_for, embed_query, graph_ranking_for, lexical_ranking,
+    ranking_from_hits,
 };
 use crate::temporal::{fact_passes_temporal, fact_serialization_id};
 
@@ -172,6 +174,29 @@ impl<E: Embedder> HybridRetriever<E> {
             rankings.push(WeightedRanking::new(profile.weights.dense, episodes));
             rankings.push(WeightedRanking::new(profile.weights.dense, facts));
             signals_run.push(Signal::Dense);
+        }
+        bail_if_past(deadline)?;
+
+        // The associative graph signal (03 §1, §3): for the classes the router turns graph
+        // expansion on for (multi-hop, entity), seed Personalized PageRank on the entities
+        // the query names and spread mass to the facts and episodes around them. Seeds
+        // resolve from the entity text index (always) and the query vector (when embedded),
+        // so a named-entity query still expands when the embedder is down. Like dense it
+        // runs per kind, so `select` routes each fused candidate by `fact_nodes` membership;
+        // the fact side is current-scoped here while the episode side rides the standard
+        // episode admission in `select`. No resolvable entity means no seed and the signal
+        // is simply skipped — never an unseeded (global) PageRank.
+        if profile.graph_expansion
+            && profile.weights.graph > 0.0
+            && let Some(seeds) =
+                resolve_seed_entities(&self.store, &query.text, query_embedding.as_ref())?
+        {
+            let episodes = graph_ranking_for(&self.store, SearchKind::Episode, &seeds, fanout)?;
+            let facts = self.fact_graph_ranking(&seeds, current_facts.as_deref(), fanout)?;
+            fact_nodes.extend(facts.candidates.iter().map(|c| c.node));
+            rankings.push(WeightedRanking::new(profile.weights.graph, episodes));
+            rankings.push(WeightedRanking::new(profile.weights.graph, facts));
+            signals_run.push(Signal::Graph);
         }
         let signals_ms = signals_started.elapsed().as_millis();
         bail_if_past(deadline)?;
@@ -356,6 +381,41 @@ impl<E: Embedder> HybridRetriever<E> {
             }
             None => dense_ranking_for(&self.store, SearchKind::Fact, embedding, k, exact_rerank),
         }
+    }
+
+    /// The graph (PageRank) fact ranking, scoped by `current` (03 §1, §5).
+    ///
+    /// PageRank spreads associatively across the whole graph, so — unlike the lexical and
+    /// dense fact searches, which the engine bounds to the current-support set — its hits
+    /// are not current by construction. In Current mode (`current` is `Some`) they are
+    /// intersected with the live support membership here, so graph expansion can never
+    /// surface a fact the support provider excludes: `fact_passes_temporal` checks only
+    /// `status == active` in Current mode (it trusts the search to have scoped the set), so
+    /// a contradicted-but-active fact would otherwise leak in. No current fact is *lost* to
+    /// this filter — the lexical fact signal already covers the whole support set, so graph
+    /// expansion only adds associative weight to facts the other signals also reach. `None`
+    /// (any non-Current mode) leaves every reached fact, with the per-candidate window test
+    /// applied later in [`Self::resolve_fact`]. Hits are filtered before they are numbered,
+    /// so the surviving ranks stay dense (0, 1, 2, …) for fusion.
+    fn fact_graph_ranking(
+        &self,
+        seeds: &[NodeId],
+        current: Option<&[NodeId]>,
+        k: usize,
+    ) -> Result<SignalRanking, RetrievalError> {
+        let hits = self
+            .store
+            .personalized_pagerank(SearchKind::Fact, seeds, k)?;
+        let hits = match current {
+            Some(members) => {
+                let set: HashSet<NodeId> = members.iter().copied().collect();
+                hits.into_iter()
+                    .filter(|hit| set.contains(&hit.node))
+                    .collect()
+            }
+            None => hits,
+        };
+        Ok(ranking_from_hits(Signal::Graph, hits))
     }
 
     /// Resolve a fused fact candidate to an authorized, temporally-admitted entry, or
