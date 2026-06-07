@@ -7,7 +7,7 @@
 //! (the domain `serde` derives), never duplicated here.
 
 use aionforge_domain::{ContentHash, EmbedderModel, Embedding, Id, Namespace, Timestamp};
-use selene_core::{DbString, JsonValue, Value, VectorValue, db_string};
+use selene_core::{DbString, JsonValue, NodeId, Value, VectorValue, db_string};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
@@ -88,6 +88,10 @@ pub(crate) fn as_timestamp(value: &Value) -> Result<Timestamp, StoreError> {
 pub(crate) fn as_f64(value: &Value) -> Result<f64, StoreError> {
     match value {
         Value::Float(f) => Ok(*f),
+        // Widen a single-precision float losslessly: search procedures declare
+        // `Float64` scores today, but tolerating `Float32` keeps the decoder robust
+        // to any single-precision metric output without a false type error.
+        Value::Float32(f) => Ok(f64::from(*f)),
         other => Err(StoreError::decode(format!(
             "expected a float, found {other:?}"
         ))),
@@ -128,6 +132,15 @@ pub(crate) fn as_content_hash(value: &Value) -> Result<ContentHash, StoreError> 
     // by treating the stored hex as authoritative.
     let hex = as_str(value)?;
     Ok(ContentHash::from_hex(hex)?)
+}
+
+pub(crate) fn as_node_ref(value: &Value) -> Result<NodeId, StoreError> {
+    match value {
+        Value::NodeRef(id) => Ok(*id),
+        other => Err(StoreError::decode(format!(
+            "expected a node reference, found {other:?}"
+        ))),
+    }
 }
 
 pub(crate) fn as_embedding(value: &Value) -> Result<Embedding, StoreError> {

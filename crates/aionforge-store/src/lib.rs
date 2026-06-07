@@ -18,6 +18,7 @@ mod indexes;
 mod migrate;
 mod providers;
 mod schema;
+mod search;
 mod store;
 
 pub use catalog::SCHEMA_VERSION;
@@ -28,6 +29,7 @@ pub use indexes::VectorIndexInfo;
 pub use migrate::{MigrationPlan, MigrationReport, PendingChange};
 pub use providers::CandidateStateInfo;
 pub use schema::{EdgeTypeShape, NodeTypeShape, PropertyKind, PropertyShape, SchemaSnapshot};
+pub use search::{CandidateSet, SearchHit, SearchKind, SetOp};
 pub use store::Store;
 
 pub use selene_core::{NodeId, Value};

@@ -45,6 +45,11 @@ pub enum StoreError {
     /// [`StoreError::Graph`] instead — this covers the store's own I/O.
     #[error("persistence error: {0}")]
     Persist(String),
+
+    /// A native-search primitive was asked for something it cannot serve, such as a
+    /// text search on a kind that maintains no text index.
+    #[error("search error: {0}")]
+    Search(String),
 }
 
 impl StoreError {
@@ -56,5 +61,10 @@ impl StoreError {
     /// Construct a [`StoreError::Persist`] from a message.
     pub(crate) fn persist(message: impl Into<String>) -> Self {
         Self::Persist(message.into())
+    }
+
+    /// Construct a [`StoreError::Search`] from a message.
+    pub(crate) fn search(message: impl Into<String>) -> Self {
+        Self::Search(message.into())
     }
 }

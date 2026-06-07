@@ -7,7 +7,7 @@ use std::sync::Arc;
 use aionforge_domain::nodes::episodic::Episode;
 use aionforge_domain::time::Timestamp;
 use selene_core::{GraphId, NodeId, db_string};
-use selene_gql::{BindingTable, EmptyProcedureRegistry, Session, StatementOutput};
+use selene_gql::{BindingTable, BuiltinProcedureRegistry, Session, StatementOutput};
 use selene_graph::{DEFAULT_WAL_FILE_NAME, GraphTypeDef, SeleneGraph, SharedGraph, WalConfig};
 
 use crate::config::StoreConfig;
@@ -237,6 +237,9 @@ impl Store {
     ///
     /// The query's source is fixed and trusted; every caller value travels as a
     /// bound parameter, so the parsed statement never depends on caller input.
+    /// Statements run against the engine's full builtin procedure registry, so the
+    /// native `CALL selene.*` / `CALL algo.*` surfaces (vector, BM25, candidate-state,
+    /// and graph algorithms — 03 §1–§4) are available through this one seam.
     ///
     /// # Errors
     /// Returns [`StoreError`] if the statement fails to parse, plan, or execute.
@@ -245,7 +248,8 @@ impl Store {
         for (name, value) in query.params() {
             session.bind_parameter(name.clone(), value.clone());
         }
-        let output = session.execute_source(query.source(), &EmptyProcedureRegistry)?;
+        let registry = BuiltinProcedureRegistry::new();
+        let output = session.execute_source(query.source(), &registry)?;
         materialize(output)
     }
 }
