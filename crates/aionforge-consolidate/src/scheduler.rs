@@ -4,13 +4,18 @@
 //! [`Consolidator::tick_once`] is the unit of work and the deterministic test seam: it
 //! drains one bounded batch of pending episodes, runs the registered passes over each,
 //! and — on success — flips the episode and advances the cursor in a single atomic
-//! commit. [`Consolidator::start`] just calls `tick_once` on a timer until shut down.
+//! commit. [`Consolidator::start`] spawns a task that calls `tick_once` on a timer until
+//! shut down.
 //!
-//! Episodes are processed one at a time in commit order, so the cursor advances
-//! monotonically and a crash can lose at most the in-flight episode (which stays `raw`
-//! and is re-run, never double-committed). A pass failure is audited and retried
-//! (transient) or marks the episode `failed` (fatal); either way the cursor holds at the
-//! failure rather than skipping past it.
+//! Episodes are processed one at a time in commit order, and a tick **stops at the first
+//! episode that does not consolidate**, so the cursor advances only over the contiguous
+//! consolidated prefix and never past a failure. A transient failure leaves the episode
+//! `raw`, so it is the oldest pending next tick and the cursor genuinely holds at it
+//! until it succeeds or escalates; a fatal failure marks the episode `failed` (retained
+//! and audited, excluded from the queue), so later ticks proceed past it — the failed
+//! episode awaits an operator reconcile/skip rather than wedging the whole pipeline. A
+//! crash can lose at most the in-flight episode, which stays `raw` and is re-run, never
+//! double-committed.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -116,10 +121,20 @@ impl<C: Clock> Consolidator<C> {
             .discover_consolidation_work(self.config.batch_size)?;
         let mut report = TickReport::default();
         for item in batch {
+            // Stop at the first episode that does not consolidate: a later episode's
+            // commit must never advance the cursor past a held-back failure (the cursor
+            // tracks the contiguous consolidated prefix). The skipped tail stays pending
+            // and is rediscovered, in order, next tick.
             match self.process_episode(&item).await? {
                 EpisodeOutcome::Consolidated => report.consolidated += 1,
-                EpisodeOutcome::Retried => report.retried += 1,
-                EpisodeOutcome::Failed => report.failed += 1,
+                EpisodeOutcome::Retried => {
+                    report.retried += 1;
+                    break;
+                }
+                EpisodeOutcome::Failed => {
+                    report.failed += 1;
+                    break;
+                }
             }
         }
         let lag = self.lag()?;
@@ -142,12 +157,26 @@ impl<C: Clock> Consolidator<C> {
 
     /// Spawn the background loop, returning a handle that can shut it down.
     ///
-    /// The loop calls [`Self::tick_once`] every `tick_interval` until the handle signals
-    /// shutdown. A tick error is logged, not fatal — the next tick retries.
+    /// Runs the crash-recovery reset first (an episode left `in_progress` by an
+    /// interrupted prior run is returned to `raw` so the next pass re-runs it cleanly),
+    /// then calls [`Self::tick_once`] every `tick_interval` until the handle signals
+    /// shutdown. A reset or tick error is logged, not fatal — the next tick retries.
     #[must_use]
     pub fn start(self) -> ConsolidationHandle {
-        let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
         let consolidator = Arc::new(self);
+        match consolidator.store.reset_in_progress_episodes() {
+            Ok(0) => {}
+            Ok(count) => {
+                tracing::info!(
+                    count,
+                    "reset in_progress episodes left by an interrupted run"
+                )
+            }
+            Err(error) => {
+                tracing::error!(%error, "failed to reset in_progress episodes at startup")
+            }
+        }
+        let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
         let task = tokio::spawn(async move {
             let mut interval = tokio::time::interval(consolidator.config.tick_interval);
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);

@@ -158,6 +158,28 @@ impl ConsolidationPass for FlakyPass {
     }
 }
 
+/// Fails transiently only on the episode whose content matches.
+struct FailOnContentPass {
+    fail_content: String,
+}
+
+#[async_trait]
+impl ConsolidationPass for FailOnContentPass {
+    fn name(&self) -> &'static str {
+        "fail-on-content"
+    }
+    fn version(&self) -> u32 {
+        1
+    }
+    async fn apply(&self, cx: &PassContext<'_>) -> Result<PassOutput, PassError> {
+        if cx.episode.content == self.fail_content {
+            Err(PassError::Transient("targeted failure".to_string()))
+        } else {
+            Ok(PassOutput::default())
+        }
+    }
+}
+
 /// Always fails; `fatal` chooses the classification.
 struct AlwaysFailPass {
     fatal: bool,
@@ -278,6 +300,11 @@ async fn consolidation_resumes_after_restart_without_reprocessing() {
         cursor.last_position.contains("09:02:00"),
         "the cursor resumed at the second episode: {}",
         cursor.last_position
+    );
+    assert_eq!(
+        cursor.rule_versions,
+        serde_json::json!({ "noop": 1 }),
+        "rule_versions survived the WAL recovery"
     );
 
     let applied = Arc::new(AtomicUsize::new(0));
@@ -434,6 +461,73 @@ async fn a_failed_pass_retries_at_least_once_but_commits_exactly_once() {
         2,
         "committed, never re-applied"
     );
+}
+
+#[tokio::test]
+async fn a_mid_batch_failure_holds_the_cursor_at_the_consolidated_prefix() {
+    // The cursor must never advance past a held-back failure: when the second of three
+    // episodes fails, the tick stops there — the third is not processed and the cursor
+    // sits at the first. A later tick (with the failure cleared) drains the rest in order.
+    let store = in_memory();
+    let n1 = insert_episode(&store, "first", 1);
+    let n2 = insert_episode(&store, "second", 2);
+    let n3 = insert_episode(&store, "third", 3);
+
+    let mut consolidator = Consolidator::with_clock(
+        store.clone(),
+        ConsolidationConfig {
+            batch_size: 3,
+            ..config()
+        },
+        fixed_clock(),
+    );
+    consolidator.register(Box::new(FailOnContentPass {
+        fail_content: "second".to_string(),
+    }));
+
+    let report = consolidator.tick_once().await.expect("tick");
+    assert_eq!(
+        report.consolidated, 1,
+        "only the first episode consolidates"
+    );
+    assert_eq!(report.retried, 1, "the second is held back");
+    assert_eq!(episode_state(&store, n1), ConsolidationState::Consolidated);
+    assert_eq!(
+        episode_state(&store, n2),
+        ConsolidationState::Raw,
+        "the failed episode stays raw"
+    );
+    assert_eq!(
+        episode_state(&store, n3),
+        ConsolidationState::Raw,
+        "the episode after the failure is not processed past it"
+    );
+    let cursor = store
+        .load_consolidation_cursor()
+        .expect("load")
+        .expect("cursor");
+    assert!(
+        cursor.last_position.contains("09:01:00"),
+        "the cursor holds at the first episode, never jumping past the failure: {}",
+        cursor.last_position
+    );
+
+    // Clear the failure: a later tick drains the held-back episode and the one after it.
+    let mut healthy = Consolidator::with_clock(
+        store.clone(),
+        ConsolidationConfig {
+            batch_size: 3,
+            ..config()
+        },
+        fixed_clock(),
+    );
+    healthy.register(Box::new(NoopPass));
+    let report = healthy.tick_once().await.expect("tick");
+    assert_eq!(
+        report.consolidated, 2,
+        "the tail drains in order on a later tick"
+    );
+    assert_eq!(pending(&store), 0);
 }
 
 #[tokio::test]

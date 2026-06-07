@@ -177,9 +177,19 @@ impl Store {
             };
             for row in rows.iter() {
                 let Some(node_id) = snapshot.node_id_for_row(RowIndex::new(row)) else {
+                    // The index row resolved to no live node: an index/store inconsistency.
+                    // Skip it but surface it — a silently dropped row would stall the queue.
+                    tracing::warn!(
+                        row,
+                        "consolidation discovery: index row resolves to no node"
+                    );
                     continue;
                 };
                 let Some(props) = snapshot.node_properties(node_id) else {
+                    tracing::warn!(
+                        ?node_id,
+                        "consolidation discovery: episode node has no properties"
+                    );
                     continue;
                 };
                 items.push(ConsolidationWorkItem {
@@ -222,10 +232,14 @@ impl Store {
         )
         .bind("in_progress", enum_value(&ConsolidationState::InProgress)?)?
         .bind("raw", enum_value(&ConsolidationState::Raw)?)?;
+        // A `SET ... RETURN` is a data-modifying statement, so it auto-commits and yields
+        // a `Written` outcome carrying the matched rows.
         match self.execute(&query)? {
             QueryResult::Written { rows, .. } => Ok(rows.map_or(0, |rows| rows.row_count() as u64)),
-            QueryResult::Rows(rows) => Ok(rows.row_count() as u64),
             QueryResult::Empty => Ok(0),
+            QueryResult::Rows(_) => Err(StoreError::decode(
+                "reset_in_progress_episodes expected a Written result from SET ... RETURN",
+            )),
         }
     }
 
