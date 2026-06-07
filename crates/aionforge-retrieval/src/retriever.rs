@@ -23,7 +23,9 @@ use aionforge_domain::ids::SerializationId;
 use aionforge_domain::namespace::Namespace;
 use aionforge_domain::nodes::episodic::{Episode, Role};
 use aionforge_domain::nodes::semantic::Fact;
-use aionforge_store::{CandidateSet, NodeId, SearchKind, SetOp, Store};
+use aionforge_store::{
+    CandidateSet, ExpandDirection, ExpandEdge, NodeId, SearchKind, SetOp, Store,
+};
 
 use crate::bundle::{
     EpisodeEntry, FactEntry, RecallBundle, RecallExplanation, StageTimings, StructuredEntry, render,
@@ -42,6 +44,11 @@ use crate::temporal::{fact_passes_temporal, fact_serialization_id};
 /// The serialization-id kind tag for an episode (02 §10).
 const EPISODE_KIND_TAG: &str = "episode";
 
+/// The hard ceiling on [`RetrieverConfig::support_expansion_depth`] — the "bounded" half
+/// of the M3.T02 depth/fan-out knob. v1 expands a single `SUPPORTS` hop; deeper transitive
+/// expansion is a future extension, and the knob already carries the requested depth.
+const MAX_EXPANSION_DEPTH: usize = 1;
+
 /// Tuning for the retriever that is not per-query.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RetrieverConfig {
@@ -49,11 +56,18 @@ pub struct RetrieverConfig {
     /// its own fan-out. A wider fan-out gives fusion and the diversity cap more to
     /// work with at the cost of more candidate reads.
     pub default_fanout: usize,
+    /// How many `SUPPORTS` hops the dense fact path expands the query-entity roots through
+    /// to recover their supporting evidence (03 §1, M3.T02). `0` disables support
+    /// expansion; the value is clamped to [`MAX_EXPANSION_DEPTH`]. v1 expands a single hop.
+    pub support_expansion_depth: usize,
 }
 
 impl Default for RetrieverConfig {
     fn default() -> Self {
-        Self { default_fanout: 50 }
+        Self {
+            default_fanout: 50,
+            support_expansion_depth: 1,
+        }
     }
 }
 
@@ -162,9 +176,23 @@ impl<E: Embedder> HybridRetriever<E> {
             } else {
                 None
             };
+            // Support expansion (03 §1, M3.T02): for the graph-expansion classes in Current
+            // mode, expand the same query-entity fact roots one incoming `SUPPORTS` hop to
+            // recover the supporting evidence a plain ANN pass leaves behind, composed with
+            // the current-support set. Gated to a non-zero, capped depth knob; the factual
+            // class keeps the plain seed-intersection path above (its expansion is off).
+            let expand_roots = if profile.graph_expansion
+                && matches!(query.options.temporal, TemporalMode::Current)
+                && self.config.support_expansion_depth.min(MAX_EXPANSION_DEPTH) >= 1
+            {
+                derive_graph_seed(&self.store, Some(embedding))?
+            } else {
+                None
+            };
             let facts = self.fact_dense_ranking(
                 current_facts.as_deref(),
                 graph_seed.as_deref(),
+                expand_roots.as_deref(),
                 support_set,
                 embedding,
                 fanout,
@@ -352,10 +380,20 @@ impl<E: Embedder> HybridRetriever<E> {
     /// ANN-then-rerank path over all facts (temporally filtered per candidate later).
     /// The fact lexical signal always covers the whole support set, so a seed that
     /// resolves the wrong (or no) entity never drops a current fact from recall.
+    ///
+    /// When `expand_roots` is present (the M3.T02 support-expansion path, taken in Current
+    /// mode for the graph-expansion classes), the roots are expanded one incoming `SUPPORTS`
+    /// hop and composed with `support` via native `Intersection` — the roots are preserved
+    /// and their supporting evidence is added, all current-scoped, so a plain ANN pass's
+    /// blind spot (a relevant fact's far-embedded evidence) is recovered without admitting a
+    /// non-current fact. Expansion takes precedence over the bare `seed` path; the two are
+    /// mutually exclusive by class in practice (factual seeds, multi-hop/entity expand).
+    #[allow(clippy::too_many_arguments)]
     fn fact_dense_ranking(
         &self,
         current: Option<&[NodeId]>,
         seed: Option<&[NodeId]>,
+        expand_roots: Option<&[NodeId]>,
         support: CandidateSet,
         embedding: &Embedding,
         k: usize,
@@ -364,18 +402,33 @@ impl<E: Embedder> HybridRetriever<E> {
         match current {
             Some([]) => Ok(ranking_from_hits(Signal::Dense, Vec::new())),
             Some(_) => {
-                let hits = match seed {
-                    Some(seed) if !seed.is_empty() => self.store.vector_score_state_nodes(
+                let hits = if let Some(roots) = expand_roots
+                    && !roots.is_empty()
+                {
+                    self.store.vector_score_state_expanded(
+                        SearchKind::Fact,
+                        embedding,
+                        support,
+                        roots,
+                        ExpandEdge::Supports,
+                        ExpandDirection::Incoming,
+                        SetOp::Intersection,
+                        k,
+                    )?
+                } else if let Some(seed) = seed
+                    && !seed.is_empty()
+                {
+                    self.store.vector_score_state_nodes(
                         SearchKind::Fact,
                         embedding,
                         support,
                         seed,
                         SetOp::Intersection,
                         k,
-                    )?,
-                    _ => self
-                        .store
-                        .vector_score_state(SearchKind::Fact, embedding, support, k)?,
+                    )?
+                } else {
+                    self.store
+                        .vector_score_state(SearchKind::Fact, embedding, support, k)?
                 };
                 Ok(ranking_from_hits(Signal::Dense, hits))
             }
