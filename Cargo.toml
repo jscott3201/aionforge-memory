@@ -71,11 +71,17 @@ ulid = "1.2"
 # secret values that redact in logs and zeroize on drop. Introduced at M0.T07.
 figment = { version = "0.10", features = ["toml", "env"] }
 secrecy = "0.10"
+# OpenAI-compatible HTTP client, rustls-only per §8.4 (no native-tls/openssl).
+# Introduced at M0.T08.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
 # --- Test / dev dependencies (versions match selene-db). ---
 proptest = { version = "1.11", default-features = false, features = ["std"] }
 insta = "1.47"
 rstest = "0.26"
+# Async runtime for tests and a mock HTTP server for the embedding client (M0.T08).
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+wiremock = "0.6"
 
 # --- selene-db substrate (private repo; git dep tracking the `development` branch). ---
 # selene-db is private and under active development, so we track its `development`

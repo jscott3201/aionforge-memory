@@ -217,8 +217,12 @@ impl Config {
 }
 
 /// Whether an inference endpoint's transport is allowed (§8.4): `https://` anywhere, or
-/// plain `http://` only to a loopback host.
-fn endpoint_transport_is_allowed(endpoint: &str) -> bool {
+/// plain `http://` only to a loopback host (`localhost`, `127.0.0.1`, or `[::1]`).
+///
+/// Exposed so the embedding client can enforce the same rule at construction, not only
+/// at config validation.
+#[must_use]
+pub fn endpoint_transport_is_allowed(endpoint: &str) -> bool {
     let lower = endpoint.trim().to_ascii_lowercase();
     if lower.starts_with("https://") {
         return true;

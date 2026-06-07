@@ -48,6 +48,9 @@ mod config;
 mod error;
 mod load;
 
-pub use config::{Config, EmbedderConfig, PersistenceConfig, RetrievalConfig, SecurityConfig};
+pub use config::{
+    Config, EmbedderConfig, PersistenceConfig, RetrievalConfig, SecurityConfig,
+    endpoint_transport_is_allowed,
+};
 pub use error::ConfigError;
 pub use load::default_config_path;

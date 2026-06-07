@@ -11,7 +11,20 @@ description = "OpenAI-compatible embedding/chat/rerank client with order-preserv
 
 [dependencies]
 aionforge-domain = { path = "../aionforge-domain", version = "0.1.0" }
-aionforge-store = { path = "../aionforge-store", version = "0.1.0" }
+aionforge-config = { path = "../aionforge-config", version = "0.1.0" }
+reqwest = { workspace = true }
+secrecy = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+miette = { workspace = true }
+
+[dev-dependencies]
+aionforge-domain = { path = "../aionforge-domain", version = "0.1.0" }
+secrecy = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+wiremock = { workspace = true }
 
 [lints]
 workspace = true
