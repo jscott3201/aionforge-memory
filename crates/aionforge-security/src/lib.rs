@@ -10,4 +10,4 @@ mod error;
 mod filter;
 
 pub use error::SecurityError;
-pub use filter::{CaptureFilter, InjectionMarker, RedactionPattern};
+pub use filter::{CaptureFilter, InjectionMarker, MatchValidator, RedactionPattern};
