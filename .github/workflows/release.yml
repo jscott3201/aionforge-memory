@@ -175,12 +175,31 @@ jobs:
       - uses: actions/checkout@v4
       - run: bash .github/scripts/check-store-only-selene.sh
 
+  detect:
+    name: detect optional files
+    if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    outputs:
+      dockerfile: ${{ steps.check.outputs.dockerfile }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: check
+        # hashFiles is not allowed in a job-level `if:`, so the Dockerfile-existence
+        # check lives here as a step output that docker-build gates on.
+        run: |
+          if [ -f Dockerfile ]; then
+            echo "dockerfile=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "dockerfile=false" >> "$GITHUB_OUTPUT"
+          fi
+
   docker-build:
     name: docker image build + hadolint
-    # Wired but inert until a Dockerfile exists (lands with deployment work).
+    # Wired but inert until a Dockerfile exists (lands with the Alpine deployment work).
+    needs: detect
     if: |
       (github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch')
-      && hashFiles('Dockerfile') != ''
+      && needs.detect.outputs.dockerfile == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

@@ -1,13 +1,15 @@
-# Fast iteration CI for aionforge-memory — runs on PRs into `development`.
+# CI for aionforge-memory — runs on PRs into `development`.
 #
-# Workflow model (mirrors selene-db): everyday work merges into `development`
-# behind this CHEAP gate + local hooks; releases batch `development` -> `main`
-# where release.yml runs the full suite. This gate is deliberately cheap — no
-# Rust compilation on source-only PRs — so changes iterate fast.
+# Workflow model: every logical change opens a PR into `development` behind this
+# gate; releases batch `development` -> `main` where release.yml runs the full
+# ubuntu+macOS matrix, and a version tag drives the gated publish (release.yml).
 #
-# Kept here (near-instant): rustfmt, file-size cap (700 LOC), no-secret scan,
-# the GQL parameter-binding gate, and (only when dependency manifests change)
-# cargo-deny + THIRDPARTY.md currency.
+# Near-instant gates always run: rustfmt, file-size cap (700 LOC), no-secret scan,
+# the GQL parameter-binding gate, and the store-only-selene gate. When the source
+# or dependency manifests change, the build-test job (clippy + nextest + doctests
+# on ubuntu) and, on manifest changes, cargo-deny + THIRDPARTY.md currency run too,
+# so a PR cannot merge code that fails to compile, lint, or test. Doc-only PRs skip
+# the compile path and stay fast.
 #
 # Security: no `${{ github.event.* }}` in any `run:` (confined to if:/with:/env:).
 
@@ -30,6 +32,8 @@ env:
 
 permissions:
   contents: read
+  # dorny/paths-filter calls the PR Files API to compute which paths changed.
+  pull-requests: read
 
 jobs:
   changes:
@@ -38,6 +42,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       deps: ${{ steps.filter.outputs.deps }}
+      code: ${{ steps.filter.outputs.code }}
     steps:
       - uses: actions/checkout@v4
       - id: filter
@@ -51,6 +56,12 @@ jobs:
               - 'deny.toml'
               - 'about.hbs'
               - 'about.toml'
+            code:
+              - 'crates/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - '.config/**'
+              - 'rust-toolchain*'
 
   fmt:
     name: fmt
@@ -94,6 +105,37 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: bash .github/scripts/check-store-only-selene.sh
+
+  build-test:
+    name: build, clippy, test (ubuntu)
+    needs: changes
+    if: |
+      (github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch')
+      && (needs.changes.outputs.code == 'true' || needs.changes.outputs.deps == 'true')
+    runs-on: ubuntu-latest
+    env:
+      # Strip DWARF from the test build graph to keep ubuntu `ld` under the runner
+      # mmap cap (mirrors release.yml / selene-db's CARGO_PROFILE_TEST_DEBUG=0).
+      CARGO_PROFILE_TEST_DEBUG: 0
+    steps:
+      - uses: actions/checkout@v4
+      # cargo fetches the selene-db git dependency over SSH; load the deploy key.
+      - name: authenticate to the selene-db substrate
+        uses: webfactory/ssh-agent@v0.9.1
+        with:
+          ssh-private-key: ${{ secrets.SELENE_DB_DEPLOY_KEY }}
+      - uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest
+      - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - name: nextest + doctests
+        run: |
+          cargo nextest run --workspace --locked --all-features --profile ci
+          cargo test --workspace --locked --all-features --doc
 
   deny:
     name: cargo-deny
