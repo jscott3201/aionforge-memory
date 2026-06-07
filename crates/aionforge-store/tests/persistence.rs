@@ -1,0 +1,442 @@
+//! Acceptance tests for WAL-backed persistence and recovery.
+//!
+//! Pins the durability contract: a migrated store with data, indexes, and live
+//! candidate-state membership comes back identical after the process drops the graph
+//! and recovers from the WAL alone — schema, rows, native indexes, and providers all
+//! rebuilt from the replayed log. Recovery also re-runs the §13.5 dimension check that
+//! the version-guarded migration would skip on an already-current graph.
+
+use std::path::PathBuf;
+
+use aionforge_store::{BoundQuery, QueryResult, Store, StoreConfig, Value};
+
+use jiff::Zoned;
+
+fn now() -> Zoned {
+    "2026-06-06T12:00:00-05:00[America/Chicago]"
+        .parse()
+        .expect("valid zoned datetime")
+}
+
+fn zdt() -> Value {
+    Value::ZonedDateTime(Box::new(now()))
+}
+
+/// A fresh, empty temp directory unique to `label`, removed first so re-runs start
+/// clean. No external temp-dir crate, matching the engine's own durable tests.
+fn temp_dir(label: &str) -> PathBuf {
+    let dir =
+        std::env::temp_dir().join(format!("aionforge-persist-{label}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    dir
+}
+
+/// Insert a minimal valid Fact (every required field bound; `is_pinned`/`status` ride
+/// their schema defaults where applicable).
+fn insert_fact(store: &Store, id: &str, subject: &str) {
+    let query = BoundQuery::new(
+        "INSERT (f:Fact {id: $id, ingested_at: $ts, namespace: $ns, importance: $imp, \
+         trust: $tr, last_access: $ts, access_count_recent: $ac, referenced_count: $rc, \
+         surprise: $su, subject_id: $subj, predicate: $pred, object_kind: $ok, \
+         confidence: $conf, status: $st, statement: $stmt})",
+    )
+    .bind_str("id", id)
+    .unwrap()
+    .bind("ts", zdt())
+    .unwrap()
+    .bind_str("ns", "agent:test")
+    .unwrap()
+    .bind("imp", Value::Float(0.5))
+    .unwrap()
+    .bind("tr", Value::Float(0.5))
+    .unwrap()
+    .bind("ac", Value::Uint(0))
+    .unwrap()
+    .bind("rc", Value::Uint(0))
+    .unwrap()
+    .bind("su", Value::Float(0.0))
+    .unwrap()
+    .bind_str("subj", subject)
+    .unwrap()
+    .bind_str("pred", "relates_to")
+    .unwrap()
+    .bind_str("ok", "string")
+    .unwrap()
+    .bind("conf", Value::Float(0.9))
+    .unwrap()
+    .bind_str("st", "active")
+    .unwrap()
+    .bind_str("stmt", "a canonical statement")
+    .unwrap();
+    store.execute(&query).expect("insert fact");
+}
+
+fn fact_count(store: &Store) -> usize {
+    match store
+        .execute(&BoundQuery::new("MATCH (f:Fact) RETURN f.id AS id"))
+        .expect("count facts")
+    {
+        QueryResult::Rows(rows) => rows.row_count(),
+        other => panic!("unexpected query result: {other:?}"),
+    }
+}
+
+fn provider_count(store: &Store, name: &str) -> usize {
+    store
+        .candidate_state_infos()
+        .expect("candidate-state infos")
+        .into_iter()
+        .find(|info| info.name == name)
+        .unwrap_or_else(|| panic!("provider {name} is registered"))
+        .candidate_count
+}
+
+/// The `(reason, target-id)` of the single SUPERSEDED_BY edge out of `from`. Reads the
+/// edge's property and orientation back, so a recovered edge is verified directly, not
+/// just through its effect on a provider's membership.
+fn superseded_by(store: &Store, from: &str) -> (String, String) {
+    let query = BoundQuery::new(
+        "MATCH (a:Fact {id: $from})-[r:SUPERSEDED_BY]->(b:Fact) \
+         RETURN r.reason AS reason, b.id AS target",
+    )
+    .bind_str("from", from)
+    .unwrap();
+    match store.execute(&query).expect("query superseded_by edge") {
+        QueryResult::Rows(rows) => {
+            assert_eq!(
+                rows.row_count(),
+                1,
+                "exactly one SUPERSEDED_BY out of {from}"
+            );
+            let string_at = |column: usize| match rows.value(0, column) {
+                Some(Value::String(value)) => value.as_str().to_owned(),
+                other => panic!("column {column} was not a string: {other:?}"),
+            };
+            (string_at(0), string_at(1))
+        }
+        other => panic!("unexpected query result: {other:?}"),
+    }
+}
+
+#[test]
+fn persistence_round_trips_schema_data_indexes_and_providers() {
+    let dir = temp_dir("round-trip");
+    let config = StoreConfig::default();
+
+    // Write phase: migrate, insert two Facts, supersede one so a provider has state.
+    {
+        let store =
+            Store::open_persistent_migrated(&dir, config, &now()).expect("open and migrate");
+        insert_fact(&store, "fact-1", "entity-a");
+        insert_fact(&store, "fact-2", "entity-b");
+        let supersede = BoundQuery::new(
+            "MATCH (a:Fact {id: $from}), (b:Fact {id: $to}) \
+             INSERT (a)-[:SUPERSEDED_BY {valid_from: $ts, ingested_at: $ts, reason: $reason}]->(b)",
+        )
+        .bind_str("from", "fact-1")
+        .unwrap()
+        .bind_str("to", "fact-2")
+        .unwrap()
+        .bind("ts", zdt())
+        .unwrap()
+        .bind_str("reason", "superseded")
+        .unwrap();
+        store.execute(&supersede).expect("supersede");
+
+        assert_eq!(store.schema_version().expect("schema version"), 1);
+        assert_eq!(store.vector_indexes().len(), 7);
+        assert_eq!(store.text_indexes().len(), 5);
+        assert_eq!(store.property_indexes().len(), 40);
+        assert_eq!(store.composite_indexes().len(), 3);
+        assert_eq!(fact_count(&store), 2);
+        assert_eq!(provider_count(&store, "current_support_facts"), 1);
+        // Drop releases the WAL file lock so recovery can reopen it in this process.
+        drop(store);
+    }
+
+    // Recovery phase: from the WAL alone, everything must come back identical.
+    let recovered = Store::recover(&dir, config).expect("recover");
+    assert_eq!(
+        recovered.schema_version().expect("schema version"),
+        1,
+        "schema version survives"
+    );
+    assert_eq!(
+        recovered.vector_indexes().len(),
+        7,
+        "vector indexes rebuilt"
+    );
+    assert_eq!(recovered.text_indexes().len(), 5, "text indexes rebuilt");
+    assert_eq!(
+        recovered.property_indexes().len(),
+        40,
+        "property indexes rebuilt"
+    );
+    assert_eq!(
+        recovered.composite_indexes().len(),
+        3,
+        "composite indexes rebuilt"
+    );
+    assert_eq!(fact_count(&recovered), 2, "Fact rows survive");
+    assert_eq!(
+        provider_count(&recovered, "current_support_facts"),
+        1,
+        "candidate-state membership rebuilt from replayed edges"
+    );
+    // The edge itself — its property and its direction — survives, not just its effect
+    // on the provider count.
+    let (reason, target) = superseded_by(&recovered, "fact-1");
+    assert_eq!(reason, "superseded", "edge property survives recovery");
+    assert_eq!(target, "fact-2", "edge orientation survives recovery");
+
+    // A migrate after recovery is a no-op — the schema is already current.
+    assert!(
+        recovered.migrate(&now()).expect("re-migrate").is_noop(),
+        "post-recovery migrate is a no-op"
+    );
+
+    // Post-recovery writes are accepted and durable, proving the WAL was reopened live.
+    insert_fact(&recovered, "fact-3", "entity-c");
+    assert_eq!(fact_count(&recovered), 3, "post-recovery write lands");
+    assert_eq!(
+        provider_count(&recovered, "current_support_facts"),
+        2,
+        "fact-2 and fact-3 are current support after the post-recovery insert"
+    );
+    drop(recovered);
+
+    let rerecovered = Store::recover(&dir, config).expect("re-recover");
+    assert_eq!(
+        fact_count(&rerecovered),
+        3,
+        "the post-recovery write is itself durable"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn recovery_runs_the_dimension_consistency_check() {
+    let dir = temp_dir("dim-check");
+    let written = StoreConfig {
+        embedding_dimension: 768,
+    };
+
+    {
+        let store =
+            Store::open_persistent_migrated(&dir, written, &now()).expect("open and migrate");
+        assert!(store.vector_indexes().iter().all(|v| v.dimension == 768));
+        drop(store);
+    }
+
+    // Recovering under a different embedder dimension must fail loudly (§13.5): the
+    // recovered indexes are pinned at 768, the asserted dimension is 1536.
+    let mismatched = StoreConfig {
+        embedding_dimension: 1536,
+    };
+    assert!(
+        Store::recover(&dir, mismatched).is_err(),
+        "recovery rejects a dimension mismatch"
+    );
+
+    // Recovering under the dimension the indexes were built at succeeds.
+    let recovered = Store::recover(&dir, written).expect("recover at the written dimension");
+    assert!(
+        recovered
+            .vector_indexes()
+            .iter()
+            .all(|v| v.dimension == 768)
+    );
+    drop(recovered);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn open_or_recover_creates_then_recovers() {
+    let dir = temp_dir("open-or-recover");
+    let config = StoreConfig::default();
+
+    // First call: no WAL yet, so it creates the directory, opens fresh, and migrates.
+    {
+        let store = Store::open_or_recover(&dir, config, &now()).expect("first open creates");
+        assert_eq!(store.schema_version().expect("schema version"), 1);
+        insert_fact(&store, "fact-1", "entity-a");
+        drop(store);
+    }
+
+    // Second call: the WAL exists, so it recovers and the data is there.
+    let store = Store::open_or_recover(&dir, config, &now()).expect("second open recovers");
+    assert_eq!(store.schema_version().expect("schema version"), 1);
+    assert_eq!(
+        fact_count(&store),
+        1,
+        "data from the first run is recovered"
+    );
+    drop(store);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Insert a minimal valid ProvenanceRecord (every NOT NULL field bound).
+fn insert_provenance(store: &Store, id: &str, subject: &str) {
+    let query = BoundQuery::new(
+        "INSERT (p:ProvenanceRecord {id: $id, ingested_at: $ts, namespace: $ns, \
+         subject_id: $subj, writer_agent_id: $writer, signature: $sig, \
+         model_family: $mf, trust_at_write: $tw})",
+    )
+    .bind_str("id", id)
+    .unwrap()
+    .bind("ts", zdt())
+    .unwrap()
+    .bind_str("ns", "agent:test")
+    .unwrap()
+    .bind_str("subj", subject)
+    .unwrap()
+    .bind_str("writer", "agent:test")
+    .unwrap()
+    .bind_str("sig", "signature-bytes")
+    .unwrap()
+    .bind_str("mf", "test-model")
+    .unwrap()
+    .bind("tw", Value::Float(0.5))
+    .unwrap();
+    store.execute(&query).expect("insert provenance record");
+}
+
+/// Insert a minimal valid Scope (every NOT NULL field bound).
+fn insert_scope(store: &Store, id: &str) {
+    let query = BoundQuery::new(
+        "INSERT (s:Scope {id: $id, ingested_at: $ts, namespace: $ns, name: $name, scope_kind: $kind})",
+    )
+    .bind_str("id", id)
+    .unwrap()
+    .bind("ts", zdt())
+    .unwrap()
+    .bind_str("ns", "agent:test")
+    .unwrap()
+    .bind_str("name", "test-scope")
+    .unwrap()
+    .bind_str("kind", "task")
+    .unwrap();
+    store.execute(&query).expect("insert scope");
+}
+
+/// Insert a minimal valid RecencyWindow (every NOT NULL field bound).
+fn insert_recency_window(store: &Store, id: &str) {
+    let query = BoundQuery::new(
+        "INSERT (w:RecencyWindow {id: $id, ingested_at: $ts, namespace: $ns, label: $label})",
+    )
+    .bind_str("id", id)
+    .unwrap()
+    .bind("ts", zdt())
+    .unwrap()
+    .bind_str("ns", "agent:test")
+    .unwrap()
+    .bind_str("label", "last-hour")
+    .unwrap();
+    store.execute(&query).expect("insert recency window");
+}
+
+/// Run a fixed, property-free edge insert binding only the two endpoint ids.
+fn insert_edge(store: &Store, source: &str, from: &str, to: &str) {
+    let query = BoundQuery::new(source)
+        .bind_str("from", from)
+        .unwrap()
+        .bind_str("to", to)
+        .unwrap();
+    store.execute(&query).expect("insert edge");
+}
+
+#[test]
+fn candidate_state_providers_survive_recovery() {
+    let dir = temp_dir("providers");
+    let config = StoreConfig::default();
+
+    // A small graph that places each of the five §9 providers in a known, nonzero state:
+    //  - fact-a: plain current fact, and the SUPPORTS source for fact-b.
+    //  - fact-b: the grounded incumbent — incoming SUPPORTS + outgoing HAS_PROVENANCE,
+    //    in a scope and a recency window, and the target of a CONTRADICTS.
+    //  - fact-c: contradicts fact-b (outgoing CONTRADICTS), so it leaves current support.
+    let expected = [
+        ("current_support_facts", 2usize),       // fact-a, fact-b
+        ("provenance_current_support_facts", 1), // fact-b
+        ("scope_membership", 1),                 // fact-b
+        ("recency_active", 1),                   // fact-b
+        ("unresolved_current", 2),               // fact-a, fact-c (fact-b has incoming CONTRADICTS)
+    ];
+
+    {
+        let store =
+            Store::open_persistent_migrated(&dir, config, &now()).expect("open and migrate");
+        insert_fact(&store, "fact-a", "entity-a");
+        insert_fact(&store, "fact-b", "entity-b");
+        insert_fact(&store, "fact-c", "entity-c");
+        insert_provenance(&store, "prov-1", "fact-b");
+        insert_scope(&store, "scope-1");
+        insert_recency_window(&store, "window-1");
+
+        let supports = BoundQuery::new(
+            "MATCH (a:Fact {id: $from}), (b:Fact {id: $to}) INSERT (a)-[:SUPPORTS {weight: $w}]->(b)",
+        )
+        .bind_str("from", "fact-a")
+        .unwrap()
+        .bind_str("to", "fact-b")
+        .unwrap()
+        .bind("w", Value::Float(1.0))
+        .unwrap();
+        store.execute(&supports).expect("supports");
+
+        let contradicts = BoundQuery::new(
+            "MATCH (a:Fact {id: $from}), (b:Fact {id: $to}) \
+             INSERT (a)-[:CONTRADICTS {valid_from: $ts, ingested_at: $ts, detected_by: $by}]->(b)",
+        )
+        .bind_str("from", "fact-c")
+        .unwrap()
+        .bind_str("to", "fact-b")
+        .unwrap()
+        .bind("ts", zdt())
+        .unwrap()
+        .bind_str("by", "contradiction-detector")
+        .unwrap();
+        store.execute(&contradicts).expect("contradict");
+
+        insert_edge(
+            &store,
+            "MATCH (a:Fact {id: $from}), (b:ProvenanceRecord {id: $to}) \
+             INSERT (a)-[:HAS_PROVENANCE]->(b)",
+            "fact-b",
+            "prov-1",
+        );
+        insert_edge(
+            &store,
+            "MATCH (a:Fact {id: $from}), (b:Scope {id: $to}) INSERT (a)-[:IN_SCOPE]->(b)",
+            "fact-b",
+            "scope-1",
+        );
+        insert_edge(
+            &store,
+            "MATCH (a:Fact {id: $from}), (b:RecencyWindow {id: $to}) INSERT (a)-[:RECENT_IN]->(b)",
+            "fact-b",
+            "window-1",
+        );
+
+        for (name, count) in expected {
+            assert_eq!(
+                provider_count(&store, name),
+                count,
+                "{name} before recovery"
+            );
+        }
+        drop(store);
+    }
+
+    // Every provider's membership must rebuild from the WAL alone.
+    let recovered = Store::recover(&dir, config).expect("recover");
+    for (name, count) in expected {
+        assert_eq!(
+            provider_count(&recovered, name),
+            count,
+            "{name} rebuilt after recovery"
+        );
+    }
+    drop(recovered);
+    let _ = std::fs::remove_dir_all(&dir);
+}

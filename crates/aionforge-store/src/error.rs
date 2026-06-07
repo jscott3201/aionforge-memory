@@ -39,11 +39,22 @@ pub enum StoreError {
     /// Stored graph data did not match the shape a domain kind expects.
     #[error("could not decode stored data into a domain value: {0}")]
     Decode(String),
+
+    /// A filesystem operation on the store's on-disk state failed (creating the
+    /// data directory, for instance). WAL-open and commit failures surface as
+    /// [`StoreError::Graph`] instead — this covers the store's own I/O.
+    #[error("persistence error: {0}")]
+    Persist(String),
 }
 
 impl StoreError {
     /// Construct a [`StoreError::Decode`] from a message.
     pub(crate) fn decode(message: impl Into<String>) -> Self {
         Self::Decode(message.into())
+    }
+
+    /// Construct a [`StoreError::Persist`] from a message.
+    pub(crate) fn persist(message: impl Into<String>) -> Self {
+        Self::Persist(message.into())
     }
 }

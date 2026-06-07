@@ -1,13 +1,14 @@
 //! The L0 store: a single owned `SharedGraph` with typed read/write and
 //! parameter-bound GQL.
 
+use std::path::Path;
 use std::sync::Arc;
 
 use aionforge_domain::nodes::episodic::Episode;
 use aionforge_domain::time::Timestamp;
 use selene_core::{GraphId, NodeId, db_string};
 use selene_gql::{BindingTable, EmptyProcedureRegistry, Session, StatementOutput};
-use selene_graph::{GraphTypeDef, SeleneGraph, SharedGraph};
+use selene_graph::{DEFAULT_WAL_FILE_NAME, GraphTypeDef, SeleneGraph, SharedGraph, WalConfig};
 
 use crate::config::StoreConfig;
 use crate::episode;
@@ -45,9 +46,9 @@ impl Store {
     /// Open an in-memory store with no persistence and no schema applied yet.
     ///
     /// The graph is closed but bound to an empty type, so it accepts catalog DDL but
-    /// holds no kinds — call [`Store::migrate`] to declare the schema. Persistence
-    /// (WAL, snapshots, recovery) is wired in a later task; this holds everything in
-    /// memory.
+    /// holds no kinds — call [`Store::migrate`] to declare the schema. This store keeps
+    /// everything in memory and writes nothing to disk; for WAL-backed durability use
+    /// [`Store::open_persistent`], [`Store::recover`], or [`Store::open_or_recover`].
     ///
     /// # Errors
     /// Returns [`StoreError`] if the empty graph type fails the engine's
@@ -66,15 +67,106 @@ impl Store {
     /// # Errors
     /// Returns [`StoreError`] if the empty graph type or the provider registration fails.
     pub fn open_with_config(config: StoreConfig) -> Result<Self, StoreError> {
-        let graph = SharedGraph::builder(GraphId::new(1))
-            .bound_to(GraphTypeDef {
-                name: db_string("aionforge.memory")?,
-                node_types: Vec::new(),
-                edge_types: Vec::new(),
-            })?
+        let graph = SharedGraph::builder(graph_id())
+            .bound_to(empty_graph_type()?)?
             .with_provider(candidate_state_provider()?)
             .build()?;
         Ok(Self { graph, config })
+    }
+
+    /// Open a WAL-backed store at `dir`, with no schema applied yet.
+    ///
+    /// The graph is the same closed, provider-bound shape as
+    /// [`Store::open_with_config`], but every commit is now appended to a durable
+    /// write-ahead log at `dir/<wal>` before it becomes visible. `dir` is created if
+    /// it does not exist. Call [`Store::migrate`] to declare the schema; the DDL and
+    /// index registration are persisted to the WAL and replayed on
+    /// [`Store::recover`].
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if `dir` cannot be created, the WAL cannot be opened
+    /// (including when another writer already holds its lock), or the graph type or
+    /// provider registration fails.
+    pub fn open_persistent(dir: &Path, config: StoreConfig) -> Result<Self, StoreError> {
+        std::fs::create_dir_all(dir).map_err(|err| {
+            StoreError::persist(format!(
+                "cannot create the store directory {}: {err}",
+                dir.display()
+            ))
+        })?;
+        let graph = SharedGraph::builder(graph_id())
+            .with_wal(dir.join(DEFAULT_WAL_FILE_NAME), WalConfig::default())?
+            .bound_to(empty_graph_type()?)?
+            .with_provider(candidate_state_provider()?)
+            .build()?;
+        Ok(Self { graph, config })
+    }
+
+    /// Open a WAL-backed store at `dir` with the full schema already applied.
+    ///
+    /// Equivalent to [`Store::open_persistent`] followed by [`Store::migrate`]. `now`
+    /// stamps the `SchemaVersion` singleton.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if opening or migrating fails.
+    pub fn open_persistent_migrated(
+        dir: &Path,
+        config: StoreConfig,
+        now: &Timestamp,
+    ) -> Result<Self, StoreError> {
+        let store = Self::open_persistent(dir, config)?;
+        store.migrate(now)?;
+        Ok(store)
+    }
+
+    /// Recover a WAL-backed store from `dir`.
+    ///
+    /// The closed binding is reconstructed by replaying the persisted schema DDL onto
+    /// an empty type, the indexes are rebuilt from primary values, and the
+    /// candidate-state providers (data-model §9) are re-attached so post-recovery
+    /// commits maintain the same sets. The empty baseline is correct for the WAL-only
+    /// shape this store writes (no on-disk snapshots yet); once snapshots/compaction
+    /// land, the recovery baseline must come from the snapshot's recorded type.
+    ///
+    /// Recovery does not migrate — the schema is already present in the replayed log —
+    /// but it does re-run the §13.5 dimension-consistency check, which the version-
+    /// guarded [`Store::migrate`] would skip on an already-current graph.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if recovery fails (corrupt or mismatched persistence,
+    /// type drift, or a recovered vector index whose dimension disagrees with
+    /// `config`).
+    pub fn recover(dir: &Path, config: StoreConfig) -> Result<Self, StoreError> {
+        let graph = SharedGraph::recover_closed_with_providers(
+            dir,
+            graph_id(),
+            empty_graph_type()?,
+            vec![candidate_state_provider()?],
+        )?;
+        let store = Self { graph, config };
+        store.dimension_consistency_check(config.embedding_dimension)?;
+        Ok(store)
+    }
+
+    /// Open the store at `dir`, recovering existing persistence or creating it fresh.
+    ///
+    /// If a WAL is present at `dir`, recover from it; otherwise create the directory,
+    /// open fresh, and migrate. This is the ready-to-use entry point for a durable
+    /// store whose first run and later runs take the same call. `now` stamps the
+    /// `SchemaVersion` on the first run and is unused on recovery.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if recovery or fresh open/migration fails.
+    pub fn open_or_recover(
+        dir: &Path,
+        config: StoreConfig,
+        now: &Timestamp,
+    ) -> Result<Self, StoreError> {
+        if dir.join(DEFAULT_WAL_FILE_NAME).exists() {
+            Self::recover(dir, config)
+        } else {
+            Self::open_persistent_migrated(dir, config, now)
+        }
     }
 
     /// Open an in-memory store with the full schema already applied.
@@ -156,6 +248,24 @@ impl Store {
         let output = session.execute_source(query.source(), &EmptyProcedureRegistry)?;
         materialize(output)
     }
+}
+
+/// This store's fixed graph identity. A single graph per store, so a constant id;
+/// recovery asserts the same value against the persisted metadata.
+fn graph_id() -> GraphId {
+    GraphId::new(1)
+}
+
+/// The closed binding every store opens with: bound (so catalog DDL is accepted) but
+/// empty, so it holds no kinds until [`Store::migrate`] declares them. Recovery replays
+/// the persisted DDL onto this same empty baseline, so the value must match the one used
+/// at fresh open.
+fn empty_graph_type() -> Result<GraphTypeDef, StoreError> {
+    Ok(GraphTypeDef {
+        name: db_string("aionforge.memory")?,
+        node_types: Vec::new(),
+        edge_types: Vec::new(),
+    })
 }
 
 /// Convert an owned engine [`StatementOutput`] into the owned [`QueryResult`].
