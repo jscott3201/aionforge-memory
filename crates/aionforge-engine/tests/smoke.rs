@@ -108,7 +108,7 @@ async fn open_capture_then_search_round_trips() {
         "the captured memory is recalled"
     );
     assert_eq!(
-        bundle.structured[0].content,
+        bundle.structured[0].content(),
         "the user prefers graph databases"
     );
     assert!(bundle.rendered.contains("graph databases"));

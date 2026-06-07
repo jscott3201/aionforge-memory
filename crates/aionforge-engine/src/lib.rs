@@ -29,8 +29,8 @@ pub use aionforge_consolidate::{
     PredicateRule, ResolutionConfig, Rule, RuleExtractor, RuleSummarizer, SummarizationConfig,
 };
 pub use aionforge_retrieval::{
-    QueryClass, RecallBundle, RecallExplanation, RecallOptions, RecallQuery, RetrieverConfig,
-    Signal, SignalWeights, StructuredEntry,
+    EpisodeEntry, FactEntry, QueryClass, RecallBundle, RecallExplanation, RecallOptions,
+    RecallQuery, RetrieverConfig, Signal, SignalWeights, StructuredEntry, TemporalMode,
 };
 pub use aionforge_store::{Store, StoreConfig};
 

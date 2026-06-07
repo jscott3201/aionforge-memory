@@ -96,7 +96,10 @@ async fn a_host_can_capture_and_search_through_the_library() {
         .expect("search");
 
     assert_eq!(bundle.structured.len(), 1);
-    assert_eq!(bundle.structured[0].content, "remember to water the ferns");
+    assert_eq!(
+        bundle.structured[0].content(),
+        "remember to water the ferns"
+    );
     assert!(
         bundle
             .rendered

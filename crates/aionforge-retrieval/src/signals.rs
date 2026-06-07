@@ -82,7 +82,7 @@ pub fn lexical_ranking(
     k: usize,
 ) -> Result<SignalRanking, RetrievalError> {
     let hits = store.text_search(kind, query, k)?;
-    Ok(to_ranking(Signal::Lexical, hits))
+    Ok(ranking_from_hits(Signal::Lexical, hits))
 }
 
 /// Rank a kind by dense similarity to the query (03 §1 dense).
@@ -105,34 +105,69 @@ pub async fn dense_ranking<E: Embedder>(
 ) -> Result<DenseRanking, RetrievalError> {
     let Some(embedding) = embed_query(embedder, query).await else {
         return Ok(DenseRanking {
-            ranking: to_ranking(Signal::Dense, Vec::new()),
+            ranking: ranking_from_hits(Signal::Dense, Vec::new()),
             embedder_available: false,
         });
     };
-
-    let approximate = store.vector_search_ann(kind, &embedding, k)?;
-    let hits = if exact_rerank && !approximate.is_empty() {
-        let candidates: Vec<NodeId> = approximate.iter().map(|hit| hit.node).collect();
-        store.vector_rerank(kind, &embedding, &candidates, k)?
-    } else {
-        approximate
-    };
-
+    let hits = dense_hits(store, kind, &embedding, k, exact_rerank)?;
     Ok(DenseRanking {
-        ranking: to_ranking(Signal::Dense, hits),
+        ranking: ranking_from_hits(Signal::Dense, hits),
         embedder_available: true,
     })
 }
 
+/// A dense ranking over a kind from a query vector that has already been embedded.
+///
+/// The body the hybrid retriever uses once it has embedded the query a single time and
+/// fans the same vector across the kinds it searches (episodes and facts), so a recall
+/// never embeds the query twice. Embedder availability is decided at the embed step;
+/// this is the pure search half (03 §1).
+///
+/// # Errors
+/// Returns [`RetrievalError`] if a search fails.
+pub(crate) fn dense_ranking_for(
+    store: &Store,
+    kind: SearchKind,
+    embedding: &Embedding,
+    k: usize,
+    exact_rerank: bool,
+) -> Result<SignalRanking, RetrievalError> {
+    Ok(ranking_from_hits(
+        Signal::Dense,
+        dense_hits(store, kind, embedding, k, exact_rerank)?,
+    ))
+}
+
+/// Run approximate vector search and, when `exact_rerank` is set, refine the retrieved
+/// set with full-precision scoring (the HNSW-then-Flat-oracle path, 03 §1, §4).
+fn dense_hits(
+    store: &Store,
+    kind: SearchKind,
+    embedding: &Embedding,
+    k: usize,
+    exact_rerank: bool,
+) -> Result<Vec<SearchHit>, RetrievalError> {
+    let approximate = store.vector_search_ann(kind, embedding, k)?;
+    let hits = if exact_rerank && !approximate.is_empty() {
+        let candidates: Vec<NodeId> = approximate.iter().map(|hit| hit.node).collect();
+        store.vector_rerank(kind, embedding, &candidates, k)?
+    } else {
+        approximate
+    };
+    Ok(hits)
+}
+
 /// Embed the query, returning `None` if the embedder is unreachable or returns no
 /// vector — the caller treats that as graceful degradation, not failure.
-async fn embed_query<E: Embedder>(embedder: &E, query: &str) -> Option<Embedding> {
+pub(crate) async fn embed_query<E: Embedder>(embedder: &E, query: &str) -> Option<Embedding> {
     let inputs = [query.to_string()];
     embedder.embed(&inputs).await.ok()?.into_iter().next()
 }
 
-/// Number the engine hits into a best-first ranking.
-fn to_ranking(signal: Signal, hits: Vec<SearchHit>) -> SignalRanking {
+/// Number a kind's engine hits into a best-first ranking. The retriever uses this to
+/// wrap the scoped fact searches (BM25 over a candidate-state node list, vector scoring
+/// over a maintained set) it composes outside the generic signal helpers.
+pub(crate) fn ranking_from_hits(signal: Signal, hits: Vec<SearchHit>) -> SignalRanking {
     let candidates = hits
         .into_iter()
         .enumerate()

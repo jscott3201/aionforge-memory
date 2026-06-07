@@ -195,7 +195,7 @@ async fn recall_returns_structured_and_rendered_views() {
         bundle
             .structured
             .windows(2)
-            .all(|w| w[0].score >= w[1].score),
+            .all(|w| w[0].score() >= w[1].score()),
         "structured must be in score order",
     );
     // Rendered view marks content as third-party data and wraps each memory.
@@ -277,15 +277,15 @@ async fn rendered_view_is_serialization_id_ordered_not_score_ordered() {
     // The rendered order follows serialization id, which is a content hash and so is
     // independent of the score order in the structured view.
     let mut by_sid = bundle.structured.clone();
-    by_sid.sort_by(|a, b| a.serialization_id.cmp(&b.serialization_id));
-    let rendered_first_id = by_sid[0].serialization_id.to_string();
+    by_sid.sort_by(|a, b| a.serialization_id().cmp(b.serialization_id()));
+    let rendered_first_id = by_sid[0].serialization_id().to_string();
     let pos_first = bundle
         .rendered
         .find(&rendered_first_id)
         .expect("id present");
     let pos_second = bundle
         .rendered
-        .find(&by_sid[1].serialization_id.to_string())
+        .find(&by_sid[1].serialization_id().to_string())
         .expect("id present");
     assert!(
         pos_first < pos_second,
@@ -330,11 +330,7 @@ async fn namespace_authorization_hides_other_agents_private_content() {
         .await
         .expect("recall");
 
-    let contents: Vec<&str> = bundle
-        .structured
-        .iter()
-        .map(|e| e.content.as_str())
-        .collect();
+    let contents: Vec<&str> = bundle.structured.iter().map(|e| e.content()).collect();
     assert!(
         contents.contains(&"alice private note"),
         "own content visible"
@@ -377,11 +373,7 @@ async fn system_role_episodes_are_excluded() {
         .await
         .expect("recall");
 
-    let contents: Vec<&str> = bundle
-        .structured
-        .iter()
-        .map(|e| e.content.as_str())
-        .collect();
+    let contents: Vec<&str> = bundle.structured.iter().map(|e| e.content()).collect();
     assert!(contents.contains(&"a normal user turn"));
     assert!(
         !contents.contains(&"a system directive turn"),
@@ -416,11 +408,7 @@ async fn expired_memories_are_excluded_by_default_and_included_on_history() {
         .recall(RecallQuery::new("memory", alice(), 10))
         .await
         .expect("recall");
-    let default_contents: Vec<&str> = default
-        .structured
-        .iter()
-        .map(|e| e.content.as_str())
-        .collect();
+    let default_contents: Vec<&str> = default.structured.iter().map(|e| e.content()).collect();
     assert!(default_contents.contains(&"an active memory"));
     assert!(
         !default_contents.contains(&"a forgotten memory"),
@@ -439,11 +427,7 @@ async fn expired_memories_are_excluded_by_default_and_included_on_history() {
         })
         .await
         .expect("recall");
-    let history_contents: Vec<&str> = history
-        .structured
-        .iter()
-        .map(|e| e.content.as_str())
-        .collect();
+    let history_contents: Vec<&str> = history.structured.iter().map(|e| e.content()).collect();
     assert!(
         history_contents.contains(&"a forgotten memory"),
         "history query includes expired"
@@ -492,12 +476,12 @@ async fn the_session_diversity_cap_demotes_a_dominant_session() {
     let aaa = bundle
         .structured
         .iter()
-        .filter(|e| e.content.contains("session aaa"))
+        .filter(|e| e.content().contains("session aaa"))
         .count();
     let bee = bundle
         .structured
         .iter()
-        .filter(|e| e.content.contains("session bee"))
+        .filter(|e| e.content().contains("session bee"))
         .count();
     assert_eq!(bundle.structured.len(), 3);
     assert!(aaa <= 2, "the dominant session is capped at 2, was {aaa}");
@@ -663,8 +647,8 @@ async fn compact_view_is_score_ordered_with_verbose_detail() {
 
     // The compact view lists memories in score order (most relevant first), unlike the
     // rendered view which is serialization-id ordered for the prefix-cache contract.
-    let strongest = bundle.structured[0].serialization_id.to_string();
-    let weakest = bundle.structured[1].serialization_id.to_string();
+    let strongest = bundle.structured[0].serialization_id().to_string();
+    let weakest = bundle.structured[1].serialization_id().to_string();
     let pos_strongest = compact.find(&strongest).expect("strongest present");
     let pos_weakest = compact.find(&weakest).expect("weakest present");
     assert!(
