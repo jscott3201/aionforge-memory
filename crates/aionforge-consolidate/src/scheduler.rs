@@ -17,8 +17,7 @@
 //! crash can lose at most the in-flight episode, which stays `raw` and is re-run, never
 //! double-committed.
 
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use aionforge_domain::blocks::Identity;
 use aionforge_domain::ids::Id;
@@ -56,18 +55,15 @@ enum EpisodeOutcome {
 
 /// The asynchronous consolidator over a shared store.
 ///
-/// Holds the registered passes, the tuning, an injected clock, and the in-memory retry
-/// accounting. Generic over the [`Clock`] so tests inject a fixed time; production uses
-/// [`SystemClock`].
+/// Holds the registered passes, the tuning, and an injected clock. The retry count is not
+/// kept here — it is derived per failure from the durable audit trail, so it survives a
+/// restart (see [`Self::handle_failure`]). Generic over the [`Clock`] so tests inject a fixed
+/// time; production uses [`SystemClock`].
 pub struct Consolidator<C: Clock = SystemClock> {
     store: Arc<Store>,
     passes: Vec<Box<dyn ConsolidationPass>>,
     config: ConsolidationConfig,
     clock: C,
-    /// The substrate actor id stamped on this consolidator's audit events.
-    actor_id: Id,
-    /// Per-episode transient-failure counts, keyed by episode id string.
-    attempts: Mutex<HashMap<String, u32>>,
 }
 
 impl Consolidator<SystemClock> {
@@ -87,8 +83,6 @@ impl<C: Clock> Consolidator<C> {
             passes: Vec::new(),
             config,
             clock,
-            actor_id: Id::generate(),
-            attempts: Mutex::new(HashMap::new()),
         }
     }
 
@@ -253,11 +247,14 @@ impl<C: Clock> Consolidator<C> {
             &now,
             &artifacts,
         )?;
-        self.forget_attempts(item.episode.identity.id.as_str());
         Ok(EpisodeOutcome::Consolidated)
     }
 
     /// Audit a pass failure and decide retry vs. fatal.
+    ///
+    /// The attempt count is the number of `consolidation_failed` audits this episode already
+    /// carries plus this one — read from the durable store, so it survives a restart and a
+    /// poison-pill episode escalates to fatal instead of getting a fresh retry budget each crash.
     fn handle_failure(
         &self,
         item: &ConsolidationWorkItem,
@@ -265,20 +262,16 @@ impl<C: Clock> Consolidator<C> {
         error: &PassError,
         now: &Timestamp,
     ) -> Result<EpisodeOutcome, ConsolidationError> {
-        let key = item.episode.identity.id.as_str().to_owned();
-        let attempts = {
-            let mut guard = self.attempts.lock().expect("attempts mutex poisoned");
-            let count = guard.entry(key).or_insert(0);
-            *count += 1;
-            *count
-        };
+        let episode_id = item.episode.identity.id.as_str();
+        let attempts = self
+            .store
+            .count_consolidation_failures(&item.episode.identity.id)?
+            + 1;
         let fatal = matches!(error, PassError::Fatal(_)) || attempts > self.config.max_retries;
         let audit = self.failure_audit(&item.episode, pass_name, error, attempts, fatal, now);
         self.store
             .record_consolidation_failure(item.node_id, &audit, fatal)?;
-        let episode_id = item.episode.identity.id.as_str();
         if fatal {
-            self.forget_attempts(episode_id);
             tracing::error!(
                 episode = episode_id,
                 pass = pass_name,
@@ -297,15 +290,12 @@ impl<C: Clock> Consolidator<C> {
         }
     }
 
-    /// Drop the retry count for an episode that left the pending set.
-    fn forget_attempts(&self, episode_id: &str) {
-        self.attempts
-            .lock()
-            .expect("attempts mutex poisoned")
-            .remove(episode_id);
-    }
-
     /// Build the `consolidation_failed` audit event (unsigned, like the capture path).
+    ///
+    /// The id is content-derived from the episode and the attempt number, so each attempt has a
+    /// stable, unique id (a replay re-derives the same id rather than minting a new one and
+    /// colliding with the `AuditEvent.id` UNIQUE constraint). The actor id is derived from the
+    /// enabled passes' versions, so forensic attribution is stable across restarts.
     fn failure_audit(
         &self,
         episode: &Episode,
@@ -317,14 +307,14 @@ impl<C: Clock> Consolidator<C> {
     ) -> AuditEvent {
         AuditEvent {
             identity: Identity {
-                id: Id::generate(),
+                id: failure_audit_id(&episode.identity.id, attempts),
                 ingested_at: now.clone(),
                 namespace: Namespace::System,
                 expired_at: None,
             },
             kind: AuditKind::ConsolidationFailed,
             subject_id: episode.identity.id.clone(),
-            actor_id: self.actor_id.clone(),
+            actor_id: scheduler_actor_id(&self.rule_versions()),
             payload: serde_json::json!({
                 "pass": pass_name,
                 "reason": error.to_string(),
@@ -335,6 +325,20 @@ impl<C: Clock> Consolidator<C> {
             occurred_at: now.clone(),
         }
     }
+}
+
+/// The deterministic id of a `consolidation_failed` audit: keyed on the episode and the attempt
+/// number, so each attempt has a stable, unique id and a replay is idempotent.
+fn failure_audit_id(episode_id: &Id, attempt: u32) -> Id {
+    Id::from_content_hash(
+        format!("consolidation_failed|{}|{attempt}", episode_id.as_str()).as_bytes(),
+    )
+}
+
+/// The deterministic actor id for the consolidation scheduler, derived from the enabled passes'
+/// versions, so forensic attribution survives a restart (not a per-process random value).
+fn scheduler_actor_id(rule_versions: &serde_json::Value) -> Id {
+    Id::from_content_hash(format!("consolidation-scheduler|{rule_versions}").as_bytes())
 }
 
 /// Emit the lag gauges and warn when the ceiling is breached.
