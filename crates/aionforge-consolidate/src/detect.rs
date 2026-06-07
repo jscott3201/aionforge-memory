@@ -60,17 +60,33 @@ pub(crate) fn detect(
         return out;
     }
 
+    // For each functional (subject, predicate) the episode touches, pick the one new fact
+    // that wins — the lowest content-hash id (see `detect_intra_episode_ties`, which uses
+    // the same rule to retire the losers). An incumbent is then superseded only by that
+    // winner, never by a losing peer. This matters when an episode asserts two new values
+    // for one functional predicate (e.g. both SF and Boston for `based_in`) against an NYC
+    // incumbent: routing every retirement to the single survivor means NYC and the loser
+    // each get exactly one `SUPERSEDED_BY` edge to the winner, so correctness does not rest
+    // on the store absorbing redundant, differently-targeted supersessions of one incumbent.
+    let survivors = functional_survivors(new_facts, cfg);
+
     // New facts vs the committed current set, scoped to the same (subject, predicate).
     for materialized in new_facts {
         let new_key = fact_key(&materialized.fact);
         let rule = cfg.rule(&new_key.predicate);
+        let is_survivor = survivors
+            .get(&(
+                new_key.subject_id.as_str().to_string(),
+                new_key.predicate.clone(),
+            ))
+            .is_none_or(|winner| winner == materialized.fact.identity.id.as_str());
         for incumbent in current.iter().filter(|c| {
             c.key.subject_id == new_key.subject_id && c.key.predicate == new_key.predicate
         }) {
             if incumbent.key.object == new_key.object {
                 continue; // the same triple — T04a dedup handles it, not a conflict
             }
-            if rule.functional && *captured_at >= incumbent.valid_from {
+            if rule.functional && is_survivor && *captured_at >= incumbent.valid_from {
                 out.supersessions.push(Supersession {
                     old_fact: incumbent.key.clone(),
                     new_fact: new_key.clone(),
@@ -104,9 +120,38 @@ pub(crate) fn detect(
     out
 }
 
+/// The winning new fact id for each functional `(subject, predicate)` the episode asserts:
+/// the lowest content-hash id. This is the single survivor every functional retirement —
+/// of an incumbent or of a losing peer — points at, so the rule lives in exactly one place
+/// and `detect` and `detect_intra_episode_ties` cannot disagree about who won.
+fn functional_survivors(
+    new_facts: &[MaterializedFact],
+    cfg: &DetectionConfig,
+) -> BTreeMap<(String, String), String> {
+    let mut survivors: BTreeMap<(String, String), String> = BTreeMap::new();
+    for materialized in new_facts {
+        let key = fact_key(&materialized.fact);
+        if !cfg.rule(&key.predicate).functional {
+            continue;
+        }
+        let group = (key.subject_id.as_str().to_string(), key.predicate);
+        let id = materialized.fact.identity.id.as_str().to_string();
+        survivors
+            .entry(group)
+            .and_modify(|winner| {
+                if id < *winner {
+                    *winner = id.clone();
+                }
+            })
+            .or_insert(id);
+    }
+    survivors
+}
+
 /// Among new facts that share a functional `(subject, predicate)`, keep the one with the
-/// lowest content-hash fact id and supersede the rest by it — a deterministic, clock-free
-/// tiebreak for the within-episode case (both facts share `captured_at`).
+/// lowest content-hash fact id (the `functional_survivors` winner) and supersede the rest
+/// by it — a deterministic, clock-free tiebreak for the within-episode case (both facts
+/// share `captured_at`).
 fn detect_intra_episode_ties(
     new_facts: &[MaterializedFact],
     cfg: &DetectionConfig,
@@ -523,6 +568,63 @@ mod tests {
         assert!(
             out.supersessions.is_empty(),
             "a stale assertion cannot retire a newer incumbent"
+        );
+    }
+
+    #[test]
+    fn one_incumbent_is_superseded_only_by_the_surviving_new_fact() {
+        // An episode asserts two new values (SF, Boston) for one functional predicate while
+        // an NYC incumbent stands. Every retirement must route to the single survivor: the
+        // incumbent is retired once (not once per new fact), and the losing peer is retired
+        // by that same survivor — so no retired fact points at anything but the winner.
+        let cfg = DetectionConfig::with_default_rules();
+        let subject = Id::generate();
+        let sf = mfact_with_id(
+            Id::from_content_hash(b"sf"),
+            &subject,
+            "based_in",
+            text("SF"),
+        );
+        let boston = mfact_with_id(
+            Id::from_content_hash(b"boston"),
+            &subject,
+            "based_in",
+            text("Boston"),
+        );
+        let (survivor, loser) = if sf.fact.identity.id.as_str() < boston.fact.identity.id.as_str() {
+            (&sf, &boston)
+        } else {
+            (&boston, &sf)
+        };
+        let cur = vec![current(&subject, "based_in", text("NYC"), 0.9)];
+
+        let out = run(&cur, &[sf.clone(), boston.clone()], &cfg);
+
+        assert_eq!(
+            out.supersessions.len(),
+            2,
+            "the incumbent and the losing peer are each retired exactly once"
+        );
+        assert!(
+            out.supersessions
+                .iter()
+                .all(|s| s.new_fact.object == survivor.fact.object),
+            "every retirement points at the single survivor, not a losing peer: {:?}",
+            out.supersessions
+        );
+        let retired: Vec<ObjectValue> = out
+            .supersessions
+            .iter()
+            .map(|s| s.old_fact.object.clone())
+            .collect();
+        assert!(retired.contains(&text("NYC")), "the incumbent is retired");
+        assert!(
+            retired.contains(&loser.fact.object),
+            "the losing peer is retired"
+        );
+        assert!(
+            out.contradictions.is_empty(),
+            "supersession, not contradiction"
         );
     }
 }

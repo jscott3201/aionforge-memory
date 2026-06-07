@@ -28,7 +28,7 @@ use aionforge_domain::time::Timestamp;
 use aionforge_domain::value::ObjectValue;
 use aionforge_store::{BoundQuery, CandidateSet, QueryResult, Store, StoreConfig, Value};
 
-const DIM: usize = 8;
+const DIM: usize = 12;
 
 /// A one-hot embedder: each distinct surface gets its own axis, so different surfaces are
 /// orthogonal (never cluster) and an identical surface is identical (always coreferences).
@@ -57,7 +57,10 @@ fn axis(text: &str) -> usize {
         "nyc" => 1,
         "sf" => 2,
         "server" => 3,
-        other => 4 + (other.bytes().map(usize::from).sum::<usize>() % (DIM - 4)),
+        "boston" => 4,
+        "rust" => 5,
+        "go" => 6,
+        other => 7 + (other.bytes().map(usize::from).sum::<usize>() % (DIM - 7)),
     }
 }
 
@@ -98,11 +101,23 @@ fn store() -> Arc<Store> {
     Arc::new(store)
 }
 
-/// Insert a `raw` episode. `minute` makes both `ingested_at` and `captured_at` strictly
-/// increasing, so discovery order (and therefore which fact is the incumbent) is fixed.
-/// Trust is 0.9 — above the default high-trust threshold, so a high-trust incumbent
-/// quarantines its contradiction.
+/// Insert a `raw` episode at trust 0.9 — above the default high-trust threshold, so a
+/// high-trust incumbent quarantines its contradiction.
 fn insert_raw_episode(store: &Store, content: &str, namespace: &Namespace, minute: u32) {
+    insert_raw_episode_trust(store, content, namespace, minute, 0.9);
+}
+
+/// Insert a `raw` episode with an explicit trust. `minute` makes both `ingested_at` and
+/// `captured_at` strictly increasing, so discovery order (and therefore which fact is the
+/// incumbent) is fixed; `trust` flows onto the derived fact and drives the quarantine
+/// decision when it is the incumbent of a contradiction.
+fn insert_raw_episode_trust(
+    store: &Store,
+    content: &str,
+    namespace: &Namespace,
+    minute: u32,
+    trust: f64,
+) {
     let at = ts(&format!(
         "2026-06-06T09:{minute:02}:00-05:00[America/Chicago]"
     ));
@@ -115,7 +130,7 @@ fn insert_raw_episode(store: &Store, content: &str, namespace: &Namespace, minut
         },
         stats: Stats {
             importance: 0.5,
-            trust: 0.9,
+            trust,
             last_access: at.clone(),
             access_count_recent: 0,
             referenced_count: 0,
@@ -220,6 +235,60 @@ fn current_support_with_predicate(store: &Store, predicate: &str) -> Vec<FactSta
     out
 }
 
+/// Reset every episode to `raw` so a re-drain replays consolidation — the crash/re-trigger
+/// path. With content-derived ids and idempotent materialization, a replay writes nothing.
+fn reset_to_raw(store: &Store) {
+    let query =
+        BoundQuery::new("MATCH (e:Episode) SET e.consolidation_state = $raw RETURN e.id AS id")
+            .bind_str("raw", "raw")
+            .expect("bind raw");
+    store.execute(&query).expect("reset episodes to raw");
+}
+
+/// Count `AuditEvent` nodes of a given kind.
+fn audit_count(store: &Store, kind: &str) -> u64 {
+    scalar_count(
+        store,
+        BoundQuery::new("MATCH (a:AuditEvent) WHERE a.kind = $k RETURN count(a) AS n")
+            .bind_str("k", kind)
+            .expect("bind kind"),
+    )
+}
+
+/// A single-rule `status` extractor (free-text object) plus a detection config that
+/// declares "up"/"down" mutually exclusive — the configured-antonym stand-in for the
+/// always-on boolean inversion (the rule extractor cannot emit booleans; M4's will).
+fn status_extractor_and_config() -> (RuleExtractor, PassConfig) {
+    let extractor = RuleExtractor::new(
+        "rule-status",
+        vec![Rule {
+            marker: "status".to_string(),
+            predicate: "status".to_string(),
+            subject_type: "Service".to_string(),
+            object: ObjectRule::Text,
+            confidence: 0.9,
+        }],
+    );
+    let mut detection = DetectionConfig::with_default_rules();
+    detection.predicates.insert(
+        "status".to_string(),
+        PredicateRule {
+            functional: false,
+            contradicts: vec![(
+                ObjectValue::Text("up".to_string()),
+                ObjectValue::Text("down".to_string()),
+            )],
+        },
+    );
+    (
+        extractor,
+        PassConfig {
+            resolution: ResolutionConfig::default(),
+            detection,
+        },
+    )
+}
+
 #[tokio::test]
 async fn a_functional_predicate_supersedes_across_episodes() {
     let store = store();
@@ -277,35 +346,7 @@ async fn a_high_trust_contradiction_quarantines_the_new_fact() {
     let store = store();
     let namespace = Namespace::Agent("ops".to_string());
 
-    // A single-rule extractor for a `status` predicate whose object is a free-text literal
-    // ("up"/"down"), paired with a detection config that declares those two mutually
-    // exclusive. The rule extractor cannot emit booleans (M4's model-backed one will), so a
-    // configured antonym pair stands in for the always-on boolean-inversion rule here.
-    let extractor = RuleExtractor::new(
-        "rule-status",
-        vec![Rule {
-            marker: "status".to_string(),
-            predicate: "status".to_string(),
-            subject_type: "Service".to_string(),
-            object: ObjectRule::Text,
-            confidence: 0.9,
-        }],
-    );
-    let mut detection = DetectionConfig::with_default_rules();
-    detection.predicates.insert(
-        "status".to_string(),
-        PredicateRule {
-            functional: false,
-            contradicts: vec![(
-                ObjectValue::Text("up".to_string()),
-                ObjectValue::Text("down".to_string()),
-            )],
-        },
-    );
-    let pass_config = PassConfig {
-        resolution: ResolutionConfig::default(),
-        detection,
-    };
+    let (extractor, pass_config) = status_extractor_and_config();
 
     // E1 (high-trust, 0.9) says the server is up; E2 says it is down — a contradiction.
     insert_raw_episode(&store, "Server status up.", &namespace, 0);
@@ -346,13 +387,198 @@ async fn a_high_trust_contradiction_quarantines_the_new_fact() {
 
     // A quarantine reconcile signal is recorded for review.
     assert_eq!(
-        scalar_count(
-            &store,
-            BoundQuery::new("MATCH (a:AuditEvent) WHERE a.kind = $k RETURN count(a) AS n")
-                .bind_str("k", "quarantine")
-                .expect("bind kind"),
-        ),
+        audit_count(&store, "quarantine"),
         1,
         "the quarantine raises exactly one audit event"
+    );
+}
+
+#[tokio::test]
+async fn multiple_new_values_for_one_functional_predicate_route_to_one_survivor() {
+    let store = store();
+    let namespace = Namespace::Agent("alice".to_string());
+
+    // E1 establishes the NYC incumbent; E2 asserts TWO competing values for the same
+    // functional predicate in one episode (SF and Boston). The episode's intra-episode
+    // tiebreak keeps one survivor, and every retirement — the incumbent and the losing
+    // peer — routes to that single survivor.
+    insert_raw_episode(&store, "Alice is based in NYC.", &namespace, 0);
+    insert_raw_episode(
+        &store,
+        "Alice is based in SF. Alice is based in Boston.",
+        &namespace,
+        5,
+    );
+
+    let mut consolidator = Consolidator::new(Arc::clone(&store), ConsolidationConfig::default());
+    consolidator.register(Box::new(FactExtractionPass::new(
+        Arc::new(RuleExtractor::with_default_rules()),
+        Arc::new(AxisEmbedder::new()),
+        PassConfig::default(),
+    )));
+
+    drain(&consolidator).await;
+
+    // Two of the three facts are retired (NYC and the losing peer); exactly one stays live.
+    assert_eq!(
+        facts_with_status(&store, "based_in", "superseded"),
+        2,
+        "the incumbent and the losing peer are both retired"
+    );
+    assert_eq!(
+        facts_with_status(&store, "based_in", "active"),
+        1,
+        "a functional predicate keeps exactly one current value"
+    );
+    // Two SUPERSEDED_BY edges, both terminating at the one survivor (so it has no outgoing
+    // SUPERSEDED_BY of its own) — never the redundant, differently-targeted topology.
+    assert_eq!(
+        total_fact_edges(&store, "SUPERSEDED_BY"),
+        2,
+        "each retired fact points at the survivor exactly once"
+    );
+    let current = current_support_with_predicate(&store, "based_in");
+    assert_eq!(
+        current,
+        vec![FactStatus::Active],
+        "current support is exactly the one surviving fact: {current:?}"
+    );
+}
+
+#[tokio::test]
+async fn replaying_an_episode_re_applies_no_detection() {
+    let store = store();
+    let namespace = Namespace::Agent("alice".to_string());
+
+    insert_raw_episode(&store, "Alice is based in NYC.", &namespace, 0);
+    insert_raw_episode(&store, "Alice is based in SF.", &namespace, 5);
+
+    let mut consolidator = Consolidator::new(Arc::clone(&store), ConsolidationConfig::default());
+    consolidator.register(Box::new(FactExtractionPass::new(
+        Arc::new(RuleExtractor::with_default_rules()),
+        Arc::new(AxisEmbedder::new()),
+        PassConfig::default(),
+    )));
+
+    drain(&consolidator).await;
+
+    // Snapshot the post-consolidation shape.
+    let superseded = facts_with_status(&store, "based_in", "superseded");
+    let active = facts_with_status(&store, "based_in", "active");
+    let edges = total_fact_edges(&store, "SUPERSEDED_BY");
+    assert_eq!((superseded, active, edges), (1, 1, 1), "first pass result");
+
+    // Replay every episode. Content-derived ids reuse the same fact nodes, the survivor's
+    // window is already closed, and the supersession edge already exists — so detection
+    // emits the same instruction and materialization applies nothing new.
+    reset_to_raw(&store);
+    drain(&consolidator).await;
+
+    assert_eq!(
+        facts_with_status(&store, "based_in", "superseded"),
+        superseded,
+        "replay adds no superseded fact"
+    );
+    assert_eq!(
+        facts_with_status(&store, "based_in", "active"),
+        active,
+        "replay adds no active fact"
+    );
+    assert_eq!(
+        total_fact_edges(&store, "SUPERSEDED_BY"),
+        edges,
+        "replay adds no second SUPERSEDED_BY edge"
+    );
+    let current = current_support_with_predicate(&store, "based_in");
+    assert_eq!(
+        current,
+        vec![FactStatus::Active],
+        "current support is unchanged after replay: {current:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_low_trust_contradiction_is_recorded_without_quarantine() {
+    let store = store();
+    let namespace = Namespace::Agent("ops".to_string());
+    let (extractor, pass_config) = status_extractor_and_config();
+
+    // The incumbent is LOW trust (0.5, below the 0.7 threshold): the contradiction is still
+    // recorded, but the new fact is not quarantined — it stands on equal footing.
+    insert_raw_episode_trust(&store, "Server status up.", &namespace, 0, 0.5);
+    insert_raw_episode(&store, "Server status down.", &namespace, 5);
+
+    let mut consolidator = Consolidator::new(Arc::clone(&store), ConsolidationConfig::default());
+    consolidator.register(Box::new(FactExtractionPass::new(
+        Arc::new(extractor),
+        Arc::new(AxisEmbedder::new()),
+        pass_config,
+    )));
+
+    drain(&consolidator).await;
+
+    // Both facts stay active; the contradiction is recorded; nothing is quarantined.
+    assert_eq!(
+        facts_with_status(&store, "status", "active"),
+        2,
+        "neither fact is held back below the trust threshold"
+    );
+    assert_eq!(
+        facts_with_status(&store, "status", "quarantined"),
+        0,
+        "a low-trust incumbent does not quarantine the new fact"
+    );
+    assert_eq!(
+        total_fact_edges(&store, "CONTRADICTS"),
+        1,
+        "the contradiction is still recorded as an edge"
+    );
+    assert_eq!(
+        audit_count(&store, "quarantine"),
+        0,
+        "no quarantine, so no reconcile signal"
+    );
+}
+
+#[tokio::test]
+async fn a_multi_valued_predicate_keeps_every_value() {
+    let store = store();
+    let namespace = Namespace::Agent("alice".to_string());
+
+    // `prefers` is unregistered, so it is multi-valued: a second preference is additive, not
+    // a supersession or a contradiction. This is the conservative-by-default invariant end
+    // to end — extraction, resolution, and materialization all leave both facts live.
+    insert_raw_episode(&store, "Alice prefers Rust.", &namespace, 0);
+    insert_raw_episode(&store, "Alice prefers Go.", &namespace, 5);
+
+    let mut consolidator = Consolidator::new(Arc::clone(&store), ConsolidationConfig::default());
+    consolidator.register(Box::new(FactExtractionPass::new(
+        Arc::new(RuleExtractor::with_default_rules()),
+        Arc::new(AxisEmbedder::new()),
+        PassConfig::default(),
+    )));
+
+    drain(&consolidator).await;
+
+    assert_eq!(
+        facts_with_status(&store, "prefers", "active"),
+        2,
+        "both preferences are retained"
+    );
+    assert_eq!(
+        total_fact_edges(&store, "SUPERSEDED_BY"),
+        0,
+        "an additive predicate retires nothing"
+    );
+    assert_eq!(
+        total_fact_edges(&store, "CONTRADICTS"),
+        0,
+        "independent values do not contradict"
+    );
+    let current = current_support_with_predicate(&store, "prefers");
+    assert_eq!(
+        current,
+        vec![FactStatus::Active, FactStatus::Active],
+        "current support holds both live preferences: {current:?}"
     );
 }
