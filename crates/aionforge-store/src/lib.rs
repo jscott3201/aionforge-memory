@@ -43,7 +43,7 @@ pub use migrate::{MigrationPlan, MigrationReport, PendingChange};
 pub use note::MaterializedNote;
 pub use providers::CandidateStateInfo;
 pub use schema::{EdgeTypeShape, NodeTypeShape, PropertyKind, PropertyShape, SchemaSnapshot};
-pub use search::{CandidateSet, SearchHit, SearchKind, SetOp};
+pub use search::{CandidateSet, ExpandDirection, ExpandEdge, SearchHit, SearchKind, SetOp};
 pub use store::{CaptureWriteIds, Store};
 
 pub use selene_core::{NodeId, Value};
