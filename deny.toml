@@ -4,11 +4,16 @@
 # git dependency tracking its `development` branch and inherits its transitive
 # tree, so the license allow-list, the rustls-only bans, and the duplicate-version
 # skips must agree):
-#   - rustls-only TLS posture (no native-tls / openssl* / schannel /
-#     security-framework) PLUS aws-lc-rs/aws-lc-sys banned so the rustls *ring*
-#     provider is the only crypto backend (musl/distroless-clean — GAP-7/deploy)
+#   - rustls-only TLS posture: native-tls and openssl* (the alternative TLS
+#     implementations) are banned, PLUS aws-lc-rs/aws-lc-sys, so rustls with the
+#     *ring* provider is the only TLS+crypto backend. reqwest 0.13 verifies server
+#     certs through rustls-platform-verifier, which reads the OS trust store via
+#     schannel (Windows) / security-framework (macOS) / openssl-probe (Linux); those
+#     are cert-store readers, not TLS stacks, so they are permitted. The deployment
+#     image therefore ships a CA bundle (it is not OS-trust-store-free).
 #   - dual MIT OR Apache-2.0 posture; permissive allow-list for transitive deps;
-#     MPL-2.0 allowed (imbl via selene-db; webpki-roots)
+#     MPL-2.0 allowed (imbl via selene-db; webpki-roots); CDLA-Permissive-2.0 allowed
+#     (webpki-root-certs via the platform verifier)
 #   - crates.io as the only registry; git deps must be pinned to a sha
 
 [graph]
@@ -34,7 +39,6 @@ allow = [
   "BSD-2-Clause",
   "BSD-3-Clause",
   "ISC",
-  "Unicode-DFS-2016",
   "Unicode-3.0",
   "CC0-1.0",
   "Zlib",
@@ -43,6 +47,11 @@ allow = [
   # tree via imbl (through the selene-db path dep) and webpki-roots. Aionforge
   # itself stays dual MIT/Apache-2.0.
   "MPL-2.0",
+  # CDLA-Permissive-2.0: a permissive data license (no copyleft, no patent or
+  # distribution restrictions on dependents). Reaches the tree via
+  # webpki-root-certs, pulled by reqwest 0.13's rustls-platform-verifier (the
+  # cert-verification path). Aionforge itself stays dual MIT/Apache-2.0.
+  "CDLA-Permissive-2.0",
 ]
 exceptions = []
 
@@ -51,14 +60,14 @@ multiple-versions = "deny"
 wildcards = "deny"
 highlight = "all"
 deny = [
-  # rustls-only TLS posture
+  # rustls-only TLS posture: ban the alternative TLS implementations. The OS
+  # cert-store readers schannel / security-framework / openssl-probe are NOT banned
+  # here — reqwest 0.13's rustls-platform-verifier pulls them to validate certs, and
+  # they carry no TLS stack of their own (see the header note).
   { name = "native-tls" },
   { name = "openssl-sys" },
   { name = "openssl-src" },
   { name = "openssl" },
-  { name = "openssl-probe" },
-  { name = "schannel" },
-  { name = "security-framework" },
   # Force the rustls *ring* crypto provider: aws-lc-rs needs cmake/Go and fails
   # on musl, breaking the static/distroless image. ring is musl-clean.
   { name = "aws-lc-rs" },
@@ -69,10 +78,27 @@ deny = [
 # duplicate lines on the first `cargo deny` run during M0.T01/T08; each new entry
 # needs a documented, owner-attributed reason added here after lockfile review.
 skip = [
-  # Empty until the selene-db path dep + heavier frameworks (tokio/reqwest/dalek/
-  # ratatui...) bring duplicate version lines into the tree at M0.T03/T08. selene-db's
-  # documented duplicates (getrandom/wit-bindgen/r-efi/hashbrown/cpufeatures) get
-  # re-added here, each owner-attributed, only once they actually appear.
+  # Reviewed 2026-06-07 (jscott3201). Each line is a transitive duplicate where two
+  # major lines legitimately coexist and deduping needs an upstream release we do not
+  # control. We skip the OLDER version(s) and leave the newest unskipped, so a brand
+  # new duplicate of any of these still trips the gate for re-review.
+  #
+  # cpufeatures: RustCrypto SIMD detection; 0.2 (sha2 line) vs 0.3 (newer hashes).
+  { name = "cpufeatures", version = "=0.2.17" },
+  # getrandom: 0.2 via ring (the rustls crypto provider) and 0.3 via rand_core; 0.4
+  # (via uuid) is the newest and stays unskipped.
+  { name = "getrandom", version = "=0.2.17" },
+  { name = "getrandom", version = "=0.3.4" },
+  # hashbrown: 0.16 via lru; 0.17 via indexmap + rkyv (selene-db) stays unskipped.
+  { name = "hashbrown", version = "=0.16.1" },
+  # r-efi: getrandom's UEFI backend, dragged in at two lines by the two getrandom
+  # versions above.
+  { name = "r-efi", version = "=5.3.0" },
+  # windows-sys (Windows targets only): 0.52 via the tokio/mio generation, 0.61 via
+  # newer crates which stays unskipped.
+  { name = "windows-sys", version = "=0.52.0" },
+  # wit-bindgen: getrandom/wasi wasm backend at two lines.
+  { name = "wit-bindgen", version = "=0.51.0" },
 ]
 skip-tree = []
 
