@@ -9,14 +9,14 @@ use aionforge_domain::embedding::Embedding;
 use aionforge_domain::ids::{ContentHash, Id};
 use aionforge_domain::nodes::episodic::Episode;
 use aionforge_domain::nodes::forensic::{AuditEvent, ProvenanceRecord};
-use aionforge_domain::nodes::semantic::{Entity, Fact, FactStatus};
+use aionforge_domain::nodes::semantic::{Entity, Fact};
 use aionforge_domain::time::Timestamp;
-use selene_core::{EdgeId, GraphId, LabelDiff, NodeId, PropertyDiff, PropertyMap, db_string};
+use selene_core::{GraphId, NodeId, PropertyMap, db_string};
 use selene_gql::{BindingTable, BuiltinProcedureRegistry, Session, StatementOutput};
 use selene_graph::{DEFAULT_WAL_FILE_NAME, GraphTypeDef, SeleneGraph, SharedGraph, WalConfig};
 
 use crate::config::StoreConfig;
-use crate::convert::{as_id, enum_value, timestamp_value};
+use crate::convert::as_id;
 use crate::error::StoreError;
 use crate::gql::{BoundQuery, QueryResult, Rows};
 use crate::providers::candidate_state_provider;
@@ -451,58 +451,13 @@ impl Store {
         new: NodeId,
         edge: &SupersededBy,
     ) -> Result<(), StoreError> {
-        // Fail closed: the supersession edge's own window must be ordered.
-        if !edge.temporal.windows_ordered() {
-            return Err(StoreError::invariant(
-                "SUPERSEDED_BY window bounds are out of order".to_string(),
-            ));
-        }
-        let about_label = db_string(About::LABEL)?;
-        let superseded_by_label = db_string(SupersededBy::LABEL)?;
-        let edge_props = fact::superseded_by_props(edge)?;
-        let valid_to = timestamp_value(&edge.temporal.valid_from);
-
+        // One atomic commit, sharing the same mutator-scoped body the consolidation flip
+        // uses (materialize::apply_supersession), so the direct-write and consolidation
+        // paths can never drift apart. Nothing is published if it errors (txn rolls back).
         let mut txn = self.graph.begin_write();
         {
             let mut mutator = txn.mutator();
-            // Find the old fact's ABOUT out-edge. `edge_id` is `Copy`, so the read
-            // borrow of the working graph ends before the mutation below.
-            let about_edge: EdgeId = mutator
-                .read()
-                .outgoing_edges(old)
-                .and_then(|adjacency| adjacency.iter_label(&about_label).next().map(|e| e.edge_id))
-                .ok_or_else(|| {
-                    StoreError::decode("superseded fact has no ABOUT edge".to_string())
-                })?;
-            // The closed window must stay ordered: the supersession instant cannot
-            // precede the fact's `valid_from`. Read the prior window and check before
-            // any mutation (so the txn rolls back cleanly on violation).
-            let prior = fact::about_from_properties(
-                mutator.read().edge_properties(about_edge).ok_or_else(|| {
-                    StoreError::decode("ABOUT edge has no properties".to_string())
-                })?,
-            )?;
-            if edge.temporal.valid_from < prior.temporal.valid_from {
-                return Err(StoreError::invariant(
-                    "supersession instant precedes the fact's valid_from".to_string(),
-                ));
-            }
-            // Close the event-time window on the prior fact (non-destructive).
-            mutator.update_edge(
-                about_edge,
-                PropertyDiff::new([(db_string("valid_to")?, valid_to)], [])?,
-            )?;
-            // Record the supersession edge.
-            mutator.create_edge(superseded_by_label, old, new, edge_props)?;
-            // Mirror the scalar status (the source of truth is edge presence; GAP-4).
-            mutator.update_node(
-                old,
-                LabelDiff::new([], [])?,
-                PropertyDiff::new(
-                    [(db_string("status")?, enum_value(&FactStatus::Superseded)?)],
-                    [],
-                )?,
-            )?;
+            crate::materialize::apply_supersession(&mut mutator, old, new, edge)?;
         }
         txn.commit()?;
         Ok(())
@@ -526,28 +481,18 @@ impl Store {
         edge: &Contradicts,
         quarantine_source: bool,
     ) -> Result<(), StoreError> {
-        // Fail closed: never persist a window whose bounds are out of order (02 §5).
-        if !edge.temporal.windows_ordered() {
-            return Err(StoreError::invariant(
-                "CONTRADICTS window bounds are out of order".to_string(),
-            ));
-        }
-        let contradicts_label = db_string(Contradicts::LABEL)?;
-        let edge_props = fact::contradicts_props(edge)?;
+        // Shares materialize::apply_contradiction with the consolidation flip (see
+        // supersede_fact). Nothing is published if it errors (the txn rolls back).
         let mut txn = self.graph.begin_write();
         {
             let mut mutator = txn.mutator();
-            mutator.create_edge(contradicts_label, source, target, edge_props)?;
-            if quarantine_source {
-                mutator.update_node(
-                    source,
-                    LabelDiff::new([], [])?,
-                    PropertyDiff::new(
-                        [(db_string("status")?, enum_value(&FactStatus::Quarantined)?)],
-                        [],
-                    )?,
-                )?;
-            }
+            crate::materialize::apply_contradiction(
+                &mut mutator,
+                source,
+                target,
+                edge,
+                quarantine_source,
+            )?;
         }
         txn.commit()?;
         Ok(())

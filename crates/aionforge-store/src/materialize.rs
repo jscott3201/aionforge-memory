@@ -20,16 +20,18 @@
 
 use std::collections::{HashMap, HashSet};
 
-use aionforge_domain::edges::{About, Audit, DerivedFrom, Mentions, Supports};
+use aionforge_domain::edges::{
+    About, Audit, Contradicts, DerivedFrom, Mentions, SupersededBy, Supports,
+};
 use aionforge_domain::ids::Id;
 use aionforge_domain::nodes::forensic::AuditEvent;
-use aionforge_domain::nodes::semantic::{Entity, Fact};
+use aionforge_domain::nodes::semantic::{Entity, Fact, FactStatus};
 use aionforge_domain::time::{BiTemporal, Timestamp};
 use aionforge_domain::value::ObjectValue;
-use selene_core::{NodeId, PropertyMap, Value, db_string};
+use selene_core::{EdgeId, LabelDiff, NodeId, PropertyDiff, PropertyMap, Value, db_string};
 use selene_graph::{Mutator, RowIndex, SeleneGraph};
 
-use crate::convert::{id_value, string_value, timestamp_value};
+use crate::convert::{enum_value, id_value, string_value, timestamp_value};
 use crate::error::StoreError;
 use crate::{audit, entity, fact};
 
@@ -46,13 +48,65 @@ pub struct MaterializedFact {
     pub about: About,
 }
 
+/// The value-triple that identifies a fact for materialization: the same
+/// `(subject_id, predicate, object)` key the dedup probe uses.
+///
+/// Supersession/contradiction instructions reference facts by this triple, not by
+/// `Fact.id`, because `Fact.id` is not indexed (the triple is, on `subject_id`) and the
+/// triple survives the new-entity id remap at materialize time.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FactKey {
+    /// The fact's subject entity id (a fresh new-entity id is remapped to canonical).
+    pub subject_id: Id,
+    /// The relation.
+    pub predicate: String,
+    /// The typed object.
+    pub object: ObjectValue,
+}
+
+/// An instruction to supersede a prior fact with a newer one (04 §2, non-lossy).
+///
+/// Materialization closes the prior fact's `ABOUT` event-time window at `valid_from`,
+/// writes `old -SUPERSEDED_BY-> new`, and mirrors the prior fact's status — all
+/// idempotently (a second apply is a no-op).
+#[derive(Debug, Clone)]
+pub struct Supersession {
+    /// The prior fact being superseded (a committed current fact).
+    pub old_fact: FactKey,
+    /// The newer fact that supersedes it (asserted this episode).
+    pub new_fact: FactKey,
+    /// Why the supersession occurred (recorded on the edge).
+    pub reason: String,
+    /// The supersession instant — the prior window closes here.
+    pub valid_from: Timestamp,
+}
+
+/// An instruction to record that one fact contradicts another (04 §2, quarantine-aware).
+///
+/// Materialization writes `source -CONTRADICTS-> target` and, when `quarantine_source`,
+/// mirrors the source fact's status to `quarantined` — the side the
+/// `current_support_facts` provider then excludes. Both facts are retained.
+#[derive(Debug, Clone)]
+pub struct Contradiction {
+    /// The fact recorded as contradicting (quarantined when `quarantine_source`).
+    pub source_fact: FactKey,
+    /// The incumbent fact it contradicts.
+    pub target_fact: FactKey,
+    /// What detected the contradiction (rule id).
+    pub detected_by: String,
+    /// Whether to quarantine the source (a new fact contradicting a high-trust current).
+    pub quarantine_source: bool,
+    /// When the contradiction was detected.
+    pub detected_at: Timestamp,
+}
+
 /// Everything one consolidation pass derived for the scheduler to commit atomically
-/// with the episode flip (M2.T04).
+/// with the episode flip (M2.T04, M2.T05).
 ///
 /// Built by a pass via [`ConsolidationArtifacts::default`] plus field pushes (the type
-/// stays `#[non_exhaustive]` so later milestones — supersession, summarization — can add
-/// payload fields without breaking the seam). The scheduler merges one of these per pass
-/// into a single set with [`ConsolidationArtifacts::merge`] before committing.
+/// stays `#[non_exhaustive]` so later milestones — summarization, link evolution — can
+/// add payload fields without breaking the seam). The scheduler merges one of these per
+/// pass into a single set with [`ConsolidationArtifacts::merge`] before committing.
 #[derive(Debug, Default, Clone)]
 #[non_exhaustive]
 pub struct ConsolidationArtifacts {
@@ -62,7 +116,11 @@ pub struct ConsolidationArtifacts {
     pub facts: Vec<MaterializedFact>,
     /// Entity ids (new or already-existing) the episode mentions; wired as `MENTIONS`.
     pub mentioned_entities: Vec<Id>,
-    /// Audit events recording the pass's decisions (e.g. `canonicalize`).
+    /// Supersession instructions (a newer fact replaces a prior current one).
+    pub supersessions: Vec<Supersession>,
+    /// Contradiction instructions (with optional quarantine of the source).
+    pub contradictions: Vec<Contradiction>,
+    /// Audit events recording the pass's decisions (e.g. `canonicalize`, `quarantine`).
     pub audit_events: Vec<AuditEvent>,
 }
 
@@ -73,6 +131,8 @@ impl ConsolidationArtifacts {
         self.new_entities.is_empty()
             && self.facts.is_empty()
             && self.mentioned_entities.is_empty()
+            && self.supersessions.is_empty()
+            && self.contradictions.is_empty()
             && self.audit_events.is_empty()
     }
 
@@ -81,6 +141,8 @@ impl ConsolidationArtifacts {
         self.new_entities.extend(other.new_entities);
         self.facts.extend(other.facts);
         self.mentioned_entities.extend(other.mentioned_entities);
+        self.supersessions.extend(other.supersessions);
+        self.contradictions.extend(other.contradictions);
         self.audit_events.extend(other.audit_events);
     }
 }
@@ -121,13 +183,17 @@ pub(crate) fn materialize_into(
     let canon = |id: &Id| canonical_id.get(id).cloned().unwrap_or_else(|| id.clone());
 
     // 2. Facts (+ ABOUT), content-deduped within the batch and against the committed graph.
+    // `fact_nodes` records each fact's NodeId by its dedup key so step 2.5 can resolve a
+    // supersession/contradiction target created in this same txn (the index sees only
+    // committed nodes).
     let mut seen_facts: HashSet<String> = HashSet::new();
+    let mut fact_nodes: HashMap<String, NodeId> = HashMap::new();
     for materialized in &artifacts.facts {
         let subject_id = canon(&materialized.fact.subject_id);
         let object = remap_object(&materialized.fact.object, canon);
 
         let key = fact_dedup_key(&subject_id, &materialized.fact.predicate, &object)?;
-        if !seen_facts.insert(key) {
+        if !seen_facts.insert(key.clone()) {
             continue; // an exact duplicate already handled earlier in this same batch
         }
 
@@ -147,6 +213,7 @@ pub(crate) fn materialize_into(
             Some(node) => node, // already asserted by a prior episode; reuse it
             None => create_fact(mutator, materialized, subject_id, object, subject_node)?,
         };
+        fact_nodes.insert(key, fact_node);
 
         // Episode supports the fact (weight = confidence); fact derives from the episode.
         ensure_edge(
@@ -162,6 +229,63 @@ pub(crate) fn materialize_into(
             fact_node,
             episode_node_id,
             derived_from_props(now)?,
+        )?;
+    }
+
+    // 2.5. Supersession / contradiction (M2.T05). Facts exist now, so both endpoints
+    // resolve — the new/source side from this txn's `fact_nodes`, the prior/incumbent side
+    // from the committed index. Each apply is idempotent (window-already-closed skip,
+    // edge-presence guard), so replay re-applies nothing.
+    for supersession in &artifacts.supersessions {
+        let old = resolve_instruction_fact(
+            mutator.read(),
+            &fact_nodes,
+            &canonical_id,
+            &supersession.old_fact,
+        )?;
+        let new = resolve_instruction_fact(
+            mutator.read(),
+            &fact_nodes,
+            &canonical_id,
+            &supersession.new_fact,
+        )?;
+        let (Some(old), Some(new)) = (old, new) else {
+            tracing::warn!(reason = %supersession.reason, "consolidation: supersession endpoint unresolved; skipping");
+            continue;
+        };
+        let edge = SupersededBy {
+            reason: supersession.reason.clone(),
+            temporal: instruction_window(&supersession.valid_from, now),
+        };
+        apply_supersession(mutator, old, new, &edge)?;
+    }
+    for contradiction in &artifacts.contradictions {
+        let source = resolve_instruction_fact(
+            mutator.read(),
+            &fact_nodes,
+            &canonical_id,
+            &contradiction.source_fact,
+        )?;
+        let target = resolve_instruction_fact(
+            mutator.read(),
+            &fact_nodes,
+            &canonical_id,
+            &contradiction.target_fact,
+        )?;
+        let (Some(source), Some(target)) = (source, target) else {
+            tracing::warn!(detected_by = %contradiction.detected_by, "consolidation: contradiction endpoint unresolved; skipping");
+            continue;
+        };
+        let edge = Contradicts {
+            detected_by: contradiction.detected_by.clone(),
+            temporal: instruction_window(&contradiction.detected_at, now),
+        };
+        apply_contradiction(
+            mutator,
+            source,
+            target,
+            &edge,
+            contradiction.quarantine_source,
         )?;
     }
 
@@ -224,6 +348,153 @@ fn create_fact(
         fact::about_props(&materialized.about)?,
     )?;
     Ok(fact_node)
+}
+
+/// Supersede `old` by `new` against an open transaction's mutator (04 §2–§4).
+///
+/// The shared body behind [`Store::supersede_fact`](crate::Store) and the
+/// consolidation flip: closes the prior fact's `ABOUT` event-time window
+/// (`valid_to <- valid_from`), writes `old -SUPERSEDED_BY-> new`, and mirrors
+/// `old.status = superseded`. Idempotent — if the prior window is already closed it is a
+/// no-op, and the `SUPERSEDED_BY` edge is written only when absent, so a replay re-applies
+/// nothing. The prior fact and its data are preserved (non-lossy).
+///
+/// # Errors
+/// Returns [`StoreError::Invariant`] if the supersession window is out of order or its
+/// instant precedes the prior fact's `valid_from`, or if `old` has no `ABOUT` edge.
+pub(crate) fn apply_supersession(
+    mutator: &mut Mutator<'_, '_>,
+    old: NodeId,
+    new: NodeId,
+    edge: &SupersededBy,
+) -> Result<(), StoreError> {
+    // Fail closed: the supersession edge's own window must be ordered.
+    if !edge.temporal.windows_ordered() {
+        return Err(StoreError::invariant(
+            "SUPERSEDED_BY window bounds are out of order".to_string(),
+        ));
+    }
+    let about_label = db_string(About::LABEL)?;
+    // Find the old fact's ABOUT out-edge (`edge_id` is Copy, so the read borrow ends here).
+    let about_edge: EdgeId = mutator
+        .read()
+        .outgoing_edges(old)
+        .and_then(|adjacency| adjacency.iter_label(&about_label).next().map(|e| e.edge_id))
+        .ok_or_else(|| StoreError::decode("superseded fact has no ABOUT edge".to_string()))?;
+    let prior = fact::about_from_properties(
+        mutator
+            .read()
+            .edge_properties(about_edge)
+            .ok_or_else(|| StoreError::decode("ABOUT edge has no properties".to_string()))?,
+    )?;
+    // Idempotency: an already-closed window means this supersession was applied before.
+    if prior.temporal.valid_to.is_some() {
+        return Ok(());
+    }
+    // The closed window must stay ordered: the supersession instant cannot precede the
+    // fact's `valid_from`.
+    if edge.temporal.valid_from < prior.temporal.valid_from {
+        return Err(StoreError::invariant(
+            "supersession instant precedes the fact's valid_from".to_string(),
+        ));
+    }
+    mutator.update_edge(
+        about_edge,
+        PropertyDiff::new(
+            [(
+                db_string("valid_to")?,
+                timestamp_value(&edge.temporal.valid_from),
+            )],
+            [],
+        )?,
+    )?;
+    ensure_edge(
+        mutator,
+        SupersededBy::LABEL,
+        old,
+        new,
+        fact::superseded_by_props(edge)?,
+    )?;
+    mutator.update_node(
+        old,
+        LabelDiff::new([], [])?,
+        PropertyDiff::new(
+            [(db_string("status")?, enum_value(&FactStatus::Superseded)?)],
+            [],
+        )?,
+    )?;
+    Ok(())
+}
+
+/// Record that `source` contradicts `target` against an open transaction's mutator (04 §2).
+///
+/// The shared body behind [`Store::contradict_fact`](crate::Store) and the consolidation
+/// flip: writes `source -CONTRADICTS-> target` (only when absent) and, when
+/// `quarantine_source`, mirrors `source.status = quarantined` — the side the
+/// `current_support_facts` provider excludes. Both facts are retained; replay re-applies
+/// nothing.
+///
+/// # Errors
+/// Returns [`StoreError::Invariant`] if the contradiction window is out of order.
+pub(crate) fn apply_contradiction(
+    mutator: &mut Mutator<'_, '_>,
+    source: NodeId,
+    target: NodeId,
+    edge: &Contradicts,
+    quarantine_source: bool,
+) -> Result<(), StoreError> {
+    if !edge.temporal.windows_ordered() {
+        return Err(StoreError::invariant(
+            "CONTRADICTS window bounds are out of order".to_string(),
+        ));
+    }
+    ensure_edge(
+        mutator,
+        Contradicts::LABEL,
+        source,
+        target,
+        fact::contradicts_props(edge)?,
+    )?;
+    if quarantine_source {
+        mutator.update_node(
+            source,
+            LabelDiff::new([], [])?,
+            PropertyDiff::new(
+                [(db_string("status")?, enum_value(&FactStatus::Quarantined)?)],
+                [],
+            )?,
+        )?;
+    }
+    Ok(())
+}
+
+/// Resolve a supersession/contradiction [`FactKey`] to a `NodeId`: a fact created in this
+/// txn (via `fact_nodes`) first, then the committed `(subject_id, predicate)` index.
+fn resolve_instruction_fact(
+    snapshot: &SeleneGraph,
+    fact_nodes: &HashMap<String, NodeId>,
+    canonical_id: &HashMap<Id, Id>,
+    key: &FactKey,
+) -> Result<Option<NodeId>, StoreError> {
+    let canon = |id: &Id| canonical_id.get(id).cloned().unwrap_or_else(|| id.clone());
+    let subject = canon(&key.subject_id);
+    let object = remap_object(&key.object, canon);
+    let dedup_key = fact_dedup_key(&subject, &key.predicate, &object)?;
+    if let Some(node) = fact_nodes.get(&dedup_key) {
+        return Ok(Some(*node));
+    }
+    find_existing_fact(snapshot, &subject, &key.predicate, &object)
+}
+
+/// The bi-temporal window for a supersession/contradiction edge: event time opens at the
+/// detection instant, transaction time at `now`, both open-ended.
+fn instruction_window(at: &Timestamp, now: &Timestamp) -> BiTemporal {
+    BiTemporal {
+        valid_from: at.clone(),
+        valid_to: None,
+        ingested_at: now.clone(),
+        expired_at: None,
+    }
 }
 
 /// Create an `source -label-> target` edge only if no such edge already exists.
