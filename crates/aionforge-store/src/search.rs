@@ -57,7 +57,7 @@ pub enum SearchKind {
 
 impl SearchKind {
     /// The selene-db node label.
-    fn label(self) -> &'static str {
+    pub(crate) fn label(self) -> &'static str {
         match self {
             SearchKind::Episode => "Episode",
             SearchKind::Fact => "Fact",
@@ -321,7 +321,7 @@ fn text_property(kind: SearchKind) -> Result<&'static str, StoreError> {
 }
 
 /// A `k` limit as the engine integer the search procedures expect.
-fn k_value(k: usize) -> Value {
+pub(crate) fn k_value(k: usize) -> Value {
     Value::Int(i64::try_from(k).unwrap_or(i64::MAX))
 }
 
@@ -331,7 +331,10 @@ fn node_list_value(nodes: &[NodeId]) -> Value {
 }
 
 /// Read `(node_id, <score_col>)` rows from a search result into best-first hits.
-fn extract_hits(result: QueryResult, score_col: &str) -> Result<Vec<SearchHit>, StoreError> {
+pub(crate) fn extract_hits(
+    result: QueryResult,
+    score_col: &str,
+) -> Result<Vec<SearchHit>, StoreError> {
     let rows = match result {
         QueryResult::Rows(rows) => rows,
         // A `YIELD` always projects a (possibly empty) row table, so a search CALL

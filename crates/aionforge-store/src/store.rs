@@ -261,6 +261,35 @@ impl Store {
         materialize(output)
     }
 
+    /// Run a sequence of parameter-bound statements in one engine session, returning the
+    /// last statement's result.
+    ///
+    /// Unlike [`Store::execute`] — which opens a fresh session per call — every statement
+    /// here shares one session. selene graph-algorithm projections live in the session,
+    /// not the graph, so a projection a `CALL algo.projection_build` statement registers is
+    /// visible to a later `CALL algo.pagerank` over it; running them through two separate
+    /// `execute` calls would lose the projection between them. Each source is fixed and
+    /// trusted and every caller value travels as a bound parameter, exactly as in
+    /// [`Store::execute`].
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if any statement fails to parse, plan, or execute.
+    pub(crate) fn execute_session(
+        &self,
+        statements: &[BoundQuery],
+    ) -> Result<QueryResult, StoreError> {
+        let registry = BuiltinProcedureRegistry::new();
+        let mut session = Session::new(&self.graph);
+        let mut result = QueryResult::Empty;
+        for query in statements {
+            for (name, value) in query.params() {
+                session.bind_parameter(name.clone(), value.clone());
+            }
+            result = materialize(session.execute_source(query.source(), &registry)?)?;
+        }
+        Ok(result)
+    }
+
     /// The id of a live episode with this content hash, if one exists.
     ///
     /// The exact-duplicate check on the capture path (04 §1): `content_hash` is an

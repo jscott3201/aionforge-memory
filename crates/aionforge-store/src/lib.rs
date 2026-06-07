@@ -19,6 +19,7 @@ mod episode;
 mod error;
 mod fact;
 mod gql;
+mod graph_signal;
 mod indexes;
 mod materialize;
 mod migrate;
