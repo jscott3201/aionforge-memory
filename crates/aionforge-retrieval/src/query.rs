@@ -93,6 +93,11 @@ pub struct RecallOptions {
     /// How many candidates to pull from each signal before fusion. Zero falls back to
     /// the retriever's configured default.
     pub fanout: usize,
+    /// Whether this is a sensitive query: the high-precision path then composes against
+    /// `provenance_current_support_facts` (facts grounded by incoming support and
+    /// provenance) instead of `current_support_facts` (03 §4). Conservative default
+    /// `false`; automatic sensitivity detection is deferred to a later milestone.
+    pub sensitive: bool,
 }
 
 impl Default for RecallOptions {
@@ -104,6 +109,7 @@ impl Default for RecallOptions {
             deadline: None,
             include_expired: false,
             fanout: 0,
+            sensitive: false,
         }
     }
 }

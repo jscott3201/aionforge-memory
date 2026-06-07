@@ -368,6 +368,33 @@ impl Store {
         Ok(None)
     }
 
+    /// The node ids of every fact whose subject is `subject`, from a fresh snapshot.
+    ///
+    /// `Fact.subject_id` is scalar-indexed, so this is a probe, not a scan. The
+    /// high-precision retrieval path (M2.T08) uses it to turn the entities a query
+    /// mentions into a bounded fact candidate seed it composes with the
+    /// `current_support_facts` set (03 §4). Returns all matching facts regardless of
+    /// status; scoping to current is the caller's set-algebra step.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the subject id cannot be encoded for the lookup.
+    pub fn facts_by_subject(&self, subject: &Id) -> Result<Vec<NodeId>, StoreError> {
+        let snapshot = self.graph.read();
+        let label = db_string(Fact::LABEL)?;
+        let prop = db_string("subject_id")?;
+        let value = crate::convert::id_value(subject)?;
+        let Some(rows) = snapshot.nodes_with_property_eq(&label, &prop, &value) else {
+            return Ok(Vec::new());
+        };
+        let mut nodes = Vec::new();
+        for row in rows.iter() {
+            if let Some(node) = snapshot.node_id_for_row(selene_graph::RowIndex::new(row)) {
+                nodes.push(node);
+            }
+        }
+        Ok(nodes)
+    }
+
     /// Commit a fact node through the single write funnel, returning its node id.
     ///
     /// Writes only the node; [`Store::assert_fact`] additionally wires the `ABOUT`

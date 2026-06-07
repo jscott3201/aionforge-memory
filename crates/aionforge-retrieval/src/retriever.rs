@@ -22,13 +22,14 @@ use aionforge_domain::ids::SerializationId;
 use aionforge_domain::namespace::Namespace;
 use aionforge_domain::nodes::episodic::{Episode, Role};
 use aionforge_domain::nodes::semantic::Fact;
-use aionforge_store::{CandidateSet, NodeId, SearchKind, Store};
+use aionforge_store::{CandidateSet, NodeId, SearchKind, SetOp, Store};
 
 use crate::bundle::{
     EpisodeEntry, FactEntry, RecallBundle, RecallExplanation, StageTimings, StructuredEntry, render,
 };
 use crate::error::RetrievalError;
 use crate::fusion::{DEFAULT_RRF_K, FusedCandidate, WeightedRanking, fuse};
+use crate::precision::derive_graph_seed;
 use crate::query::{RecallQuery, TemporalMode};
 use crate::router::{profile_for, route};
 use crate::signals::{
@@ -140,8 +141,22 @@ impl<E: Embedder> HybridRetriever<E> {
                 fanout,
                 profile.exact_rerank,
             )?;
+            // The high-precision default path (03 §4): for the factual/temporal-current
+            // classes, derive a graph candidate seed (scope membership, else the entities
+            // the query names) and compose it with the current-support set. Other classes
+            // and the historical temporal modes leave the seed `None` and use the plain
+            // current/global fact dense path.
+            let graph_seed = if profile.exact_rerank
+                && matches!(query.options.temporal, TemporalMode::Current)
+            {
+                derive_graph_seed(&self.store, Some(embedding))?
+            } else {
+                None
+            };
             let facts = self.fact_dense_ranking(
                 current_facts.as_deref(),
+                graph_seed.as_deref(),
+                query.options.sensitive,
                 embedding,
                 fanout,
                 profile.exact_rerank,
@@ -287,18 +302,27 @@ impl<E: Embedder> HybridRetriever<E> {
         Ok(ranking_from_hits(Signal::Lexical, hits))
     }
 
-    /// The dense fact ranking, scoped by `current` (03 §1, §4, §5).
+    /// The dense fact ranking, scoped by `current` and an optional high-precision `seed`
+    /// (03 §1, §4, §5).
     ///
-    /// `Some(members)` is the live `current_support_facts` set (Current mode): an empty
-    /// set short-circuits the search, and a non-empty one is scored through
-    /// `vector_score_candidate_state`, the atomic provider-scoped primitive — it resolves
-    /// the set and scores it in a single snapshot, so the score cannot drift from a set
-    /// that changed between resolving membership and scoring (full precision over the
-    /// bounded current set, no ANN recall loss and no fuse-then-filter gap). `None` runs
-    /// the standard ANN-then-rerank path over all facts, temporally filtered later.
+    /// `current` is `Some` in Current mode (the live `current_support_facts` membership)
+    /// and `None` otherwise. When a high-precision graph `seed` is present (the factual /
+    /// temporal-current path), the ranking is the seed composed with the current-support
+    /// set via native `Intersection` set algebra and exact-vector-reranked — the §4
+    /// high-precision path that restores current-fact precision a plain ANN pass loses.
+    /// `sensitive` swaps in `provenance_current_support_facts` for that composition.
+    ///
+    /// Without a seed it falls back to T07: an empty current set short-circuits; a
+    /// non-empty one is scored through the atomic `vector_score_candidate_state`
+    /// primitive (single snapshot, no TOCTOU); a `None` current set runs the standard
+    /// ANN-then-rerank path over all facts (temporally filtered per candidate later).
+    /// The fact lexical signal always covers the whole current set, so a seed that
+    /// resolves the wrong (or no) entity never drops a current fact from recall.
     fn fact_dense_ranking(
         &self,
         current: Option<&[NodeId]>,
+        seed: Option<&[NodeId]>,
+        sensitive: bool,
         embedding: &Embedding,
         k: usize,
         exact_rerank: bool,
@@ -306,12 +330,29 @@ impl<E: Embedder> HybridRetriever<E> {
         match current {
             Some([]) => Ok(ranking_from_hits(Signal::Dense, Vec::new())),
             Some(_) => {
-                let hits = self.store.vector_score_state(
-                    SearchKind::Fact,
-                    embedding,
-                    CandidateSet::CurrentSupportFacts,
-                    k,
-                )?;
+                let hits = match seed {
+                    Some(seed) if !seed.is_empty() => {
+                        let set = if sensitive {
+                            CandidateSet::ProvenanceCurrentSupportFacts
+                        } else {
+                            CandidateSet::CurrentSupportFacts
+                        };
+                        self.store.vector_score_state_nodes(
+                            SearchKind::Fact,
+                            embedding,
+                            set,
+                            seed,
+                            SetOp::Intersection,
+                            k,
+                        )?
+                    }
+                    _ => self.store.vector_score_state(
+                        SearchKind::Fact,
+                        embedding,
+                        CandidateSet::CurrentSupportFacts,
+                        k,
+                    )?,
+                };
                 Ok(ranking_from_hits(Signal::Dense, hits))
             }
             None => dense_ranking_for(&self.store, SearchKind::Fact, embedding, k, exact_rerank),

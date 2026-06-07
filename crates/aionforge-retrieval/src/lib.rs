@@ -11,6 +11,7 @@
 mod bundle;
 mod error;
 mod fusion;
+mod precision;
 mod query;
 mod retriever;
 mod router;
