@@ -20,24 +20,18 @@
 //! call and dies with the session, so there is no cross-call cache to invalidate as the
 //! graph advances.
 //!
-//! ## Kind filtering (interim)
-//! `CALL algo.pagerank` yields `(node_id, score)` over every projected node with no label,
-//! and a standalone `CALL ... YIELD` admits neither a label predicate nor `RETURN`/`ORDER
-//! BY`/`LIMIT`, so the ranking is filtered to one [`SearchKind`] *here*: intersect the PPR
-//! scores with the kind's node set, then sort and cap in Rust. The node set comes from a
-//! label scan, which is the one inefficiency on this path — tracked for replacement by a
-//! selene-side label + limit on `algo.pagerank` (mirroring `selene.vector_search_nodes`),
-//! after which this becomes a single bounded call with no scan and no Rust sort.
-
-use std::cmp::Ordering;
-use std::collections::HashSet;
+//! ## Kind filtering and limit
+//! `algo.pagerank` takes a trailing `result_label` and `limit`: the procedure filters the
+//! scored nodes to the requested label and truncates to the top `k` by score before the rows
+//! cross back. So the ranking is exactly the top-`k` nodes of one [`SearchKind`], best-first,
+//! in a single bounded call — no full-graph transfer, no label scan, no Rust-side sort.
 
 use selene_core::{NodeId, Value};
 
-use crate::convert::{as_node_ref, string_value};
+use crate::convert::string_value;
 use crate::error::StoreError;
-use crate::gql::{BoundQuery, QueryResult};
-use crate::search::{SearchHit, SearchKind, extract_hits};
+use crate::gql::BoundQuery;
+use crate::search::{SearchHit, SearchKind, extract_hits, k_value};
 use crate::store::Store;
 
 /// The node labels the associative projection spans — the memory entities and the records
@@ -87,61 +81,31 @@ impl Store {
         }
 
         // Build the ephemeral associative projection and PageRank over it in one session
-        // (the projection is session-scoped). The `WHERE score > 0.0` yield-filter drops
-        // nodes outside the seed's connected component before the rows cross back.
+        // (the projection is session-scoped). `result_label` filters the scored nodes to the
+        // requested kind and `limit` truncates to the top `k` by score inside the procedure;
+        // the `WHERE score > 0.0` yield-filter then drops any node outside the seed's
+        // connected component (zero personalized mass).
         let build = BoundQuery::new("CALL algo.projection_build($name, $labels, $types, NULL)")
             .bind_str("name", PROJECTION_NAME)?
             .bind("labels", string_list_value(&PROJECTION_NODE_LABELS)?)?
             .bind("types", string_list_value(&PROJECTION_EDGE_TYPES)?)?;
         let rank = BoundQuery::new(
             "CALL algo.pagerank($name, $damping, $max_iter, $tolerance, NULL, \
-             $orientation, $seeds) YIELD node_id, score WHERE score > 0.0",
+             $orientation, $seeds, $result_label, $limit) YIELD node_id, score \
+             WHERE score > 0.0",
         )
         .bind_str("name", PROJECTION_NAME)?
         .bind("damping", Value::Float(DAMPING))?
         .bind("max_iter", Value::Int(MAX_ITERATIONS))?
         .bind("tolerance", Value::Float(TOLERANCE))?
         .bind_str("orientation", ORIENTATION_UNDIRECTED)?
-        .bind("seeds", personalization_value(seeds))?;
+        .bind("seeds", personalization_value(seeds))?
+        .bind_str("result_label", kind.label())?
+        .bind("limit", k_value(k))?;
 
-        let ranked = extract_hits(self.execute_session(&[build, rank])?, "score")?;
-
-        // Keep only nodes of `kind`, then sort best-first and cap at `k`. PageRank cannot
-        // order or limit in the CALL, so both happen here.
-        let of_kind = self.kind_node_set(kind)?;
-        let mut hits: Vec<SearchHit> = ranked
-            .into_iter()
-            .filter(|hit| of_kind.contains(&hit.node))
-            .collect();
-        hits.sort_by(|a, b| {
-            b.score
-                .partial_cmp(&a.score)
-                .unwrap_or(Ordering::Equal)
-                .then_with(|| a.node.cmp(&b.node))
-        });
-        hits.truncate(k);
-        Ok(hits)
-    }
-
-    /// The set of node ids carrying `kind`'s label. A label scan — the interim cost the
-    /// module note tracks for replacement by a selene-side label filter on `algo.pagerank`.
-    fn kind_node_set(&self, kind: SearchKind) -> Result<HashSet<NodeId>, StoreError> {
-        let label = kind.label();
-        let source = format!("MATCH (n:{label}) RETURN n AS node_id"); // gql-ident-ok
-        let QueryResult::Rows(rows) = self.execute(&BoundQuery::new(source))? else {
-            return Ok(HashSet::new());
-        };
-        let Some(idx) = rows.column_index("node_id") else {
-            return Ok(HashSet::new());
-        };
-        let mut set = HashSet::with_capacity(rows.row_count());
-        for row in 0..rows.row_count() {
-            let value = rows
-                .value(row, idx)
-                .ok_or_else(|| StoreError::decode("label-scan row missing node_id"))?;
-            set.insert(as_node_ref(value)?);
-        }
-        Ok(set)
+        // PageRank already filtered to `kind` and returned the top `k` best-first, so the
+        // yielded rows are the ranking — no Rust-side label intersection, sort, or truncate.
+        extract_hits(self.execute_session(&[build, rank])?, "score")
     }
 }
 
