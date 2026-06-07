@@ -20,7 +20,11 @@ use crate::error::RetrievalError;
 
 /// A retrieval signal — the source that produced a ranking (03 §1). Graph, recency,
 /// and trust land with their tasks; this module implements lexical and dense.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+///
+/// The declared order (lexical, dense, …) is the canonical order fusion sums
+/// contributions in, so a fused result is independent of the order signals are
+/// supplied (03 §2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Signal {
     /// Native BM25 over a maintained text index.
     Lexical,
