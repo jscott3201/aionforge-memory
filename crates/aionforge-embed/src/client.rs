@@ -1,5 +1,6 @@
 //! The OpenAI-compatible HTTP embedding client.
 
+use std::sync::Once;
 use std::time::Duration;
 
 use aionforge_config::EmbedderConfig;
@@ -9,6 +10,20 @@ use secrecy::{ExposeSecret, SecretString};
 
 use crate::error::EmbedError;
 use crate::wire::{EmbeddingRequest, EmbeddingResponse};
+
+/// Install the ring crypto provider as the process default exactly once.
+///
+/// reqwest is built with `rustls-no-provider`, which carries no crypto provider, so
+/// a `Client` constructed before a provider is installed panics. We install ring
+/// here rather than aws-lc-rs to keep the aws-lc-sys C/cmake build out of the tree.
+/// The install is process-global and first-writer-wins: if the host already set a
+/// default provider, that one stands and the returned error is ignored.
+fn ensure_crypto_provider() {
+    static INSTALLED: Once = Once::new();
+    INSTALLED.call_once(|| {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    });
+}
 
 /// An OpenAI-compatible embedding client.
 ///
@@ -50,6 +65,9 @@ impl HttpEmbedder {
                 "endpoint {endpoint} must use https:// unless the host is localhost"
             )));
         }
+        // reqwest's `rustls-no-provider` ships no crypto provider, so a client built
+        // before one is installed panics; install ring as the process default first.
+        ensure_crypto_provider();
         let client = reqwest::Client::builder()
             .timeout(timeout)
             .build()

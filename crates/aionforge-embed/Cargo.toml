@@ -13,6 +13,7 @@ description = "OpenAI-compatible embedding/chat/rerank client with order-preserv
 aionforge-domain = { path = "../aionforge-domain", version = "0.1.0" }
 aionforge-config = { path = "../aionforge-config", version = "0.1.0" }
 reqwest = { workspace = true }
+rustls = { workspace = true }
 secrecy = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -71,9 +71,15 @@ ulid = "1.2"
 # secret values that redact in logs and zeroize on drop. Introduced at M0.T07.
 figment = { version = "0.10", features = ["toml", "env"] }
 secrecy = "0.10"
-# OpenAI-compatible HTTP client, rustls-only per §8.4 (no native-tls/openssl).
-# Introduced at M0.T08.
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# OpenAI-compatible HTTP client, rustls per §8.4 (no native-tls). Introduced at
+# M0.T08; bumped 0.12 -> 0.13 in M1. 0.13 splits TLS into feature flags: we take
+# `rustls-no-provider` and supply our own ring crypto provider (below) so the
+# aws-lc-sys C/cmake build never enters the tree.
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "json"] }
+# The ring crypto provider for reqwest's rustls-no-provider — ring only, never the
+# aws-lc-rs default. aionforge-embed installs it as the process default before it
+# builds a client (rustls-no-provider panics on a client built with no provider).
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
 # Capture-side privacy/injection filter patterns (M1.T02). Already in the tree
 # transitively via selene-db, so this direct pin reuses that exact locked version.
 regex = "1"
