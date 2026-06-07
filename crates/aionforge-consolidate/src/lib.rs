@@ -27,17 +27,21 @@ mod lag;
 mod pass;
 mod resolve;
 mod rule_extractor;
+mod rule_summarizer;
 mod scheduler;
+mod summarize;
 
 pub use clock::{Clock, SystemClock};
 pub use config::{
     ConsolidationConfig, DetectionConfig, PassConfig, PredicateRule, ResolutionConfig,
+    SummarizationConfig,
 };
 pub use error::ConsolidationError;
 pub use fact_extraction::FactExtractionPass;
 pub use lag::ConsolidationLag;
 pub use pass::{ConsolidationPass, NoopPass, PassContext, PassError, PassOutput};
 pub use rule_extractor::{ObjectRule, Rule, RuleExtractor};
+pub use rule_summarizer::RuleSummarizer;
 pub use scheduler::{ConsolidationHandle, Consolidator, TickReport};
 
 // Re-exported from the store so callers can build a pass payload / read derived facts

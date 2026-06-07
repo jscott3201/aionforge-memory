@@ -122,12 +122,50 @@ impl Default for DetectionConfig {
     }
 }
 
-/// The tuning the fact-extraction pass needs: entity resolution plus supersession
-/// detection. Bundled so the facade and the pass take one config, not a widening list.
+/// How the fact-extraction pass condenses fact clusters into summary notes
+/// (write-and-consolidation §2, M2.T06).
+///
+/// Conservative by default: summarization is on, but it only fires on a cluster large
+/// enough to be worth condensing, and a detail-retention guard skips any summary that would
+/// drop too much of the cluster's specificity rather than write a lossy note. Carries
+/// floats, so it derives `PartialEq`, not `Eq`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SummarizationConfig {
+    /// Whether summarization runs at all (off → extraction/detection only, the T05 behavior).
+    pub enabled: bool,
+    /// The fewest facts a subject must have before its cluster is worth summarizing.
+    pub min_facts: usize,
+    /// The fewest distinct entities a cluster must reference before it is summarized.
+    pub min_entities: usize,
+    /// The fraction of a cluster's distinct entities the summary must preserve (in its
+    /// content or keywords) to clear the detail-retention guard. High = conservative: a
+    /// summary that drops more specificity than this is skipped, not written.
+    pub entity_retention_threshold: f64,
+    /// The mean source-fact confidence a cluster must clear before it is summarized.
+    pub confidence_floor: f64,
+}
+
+impl Default for SummarizationConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            min_facts: 3,
+            min_entities: 2,
+            entity_retention_threshold: 0.9,
+            confidence_floor: 0.6,
+        }
+    }
+}
+
+/// The tuning the fact-extraction pass needs: entity resolution, supersession detection,
+/// and summarization. Bundled so the facade and the pass take one config, not a widening
+/// list.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct PassConfig {
     /// Entity-resolution tuning.
     pub resolution: ResolutionConfig,
     /// Supersession/contradiction detection tuning.
     pub detection: DetectionConfig,
+    /// Summary-note tuning.
+    pub summarization: SummarizationConfig,
 }

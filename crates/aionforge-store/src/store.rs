@@ -343,6 +343,31 @@ impl Store {
         }
     }
 
+    /// Read an entity by its domain id from a fresh snapshot. `Entity.id` is indexed, so
+    /// this is a probe — summarization (M2.T06) uses it to name a committed fact's subject
+    /// and entity-typed objects when it rolls a subject's facts into a note.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the stored data cannot be decoded into an [`Entity`].
+    pub fn entity_by_id(&self, id: &Id) -> Result<Option<Entity>, StoreError> {
+        let snapshot = self.graph.read();
+        let label = db_string(Entity::LABEL)?;
+        let prop = db_string("id")?;
+        let value = crate::convert::id_value(id)?;
+        let Some(rows) = snapshot.nodes_with_property_eq(&label, &prop, &value) else {
+            return Ok(None);
+        };
+        for row in rows.iter() {
+            let Some(node) = snapshot.node_id_for_row(selene_graph::RowIndex::new(row)) else {
+                continue;
+            };
+            if let Some(props) = snapshot.node_properties(node) {
+                return Ok(Some(entity::from_properties(props)?));
+            }
+        }
+        Ok(None)
+    }
+
     /// Commit a fact node through the single write funnel, returning its node id.
     ///
     /// Writes only the node; [`Store::assert_fact`] additionally wires the `ABOUT`
