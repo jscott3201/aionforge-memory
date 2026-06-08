@@ -182,3 +182,67 @@ fn first_id(result: &QueryResult) -> Option<String> {
         _ => None,
     }
 }
+
+#[test]
+fn commit_audit_writes_a_standalone_event_that_round_trips() {
+    let store = store();
+    let agent = Id::generate();
+    // A `namespace_denied` rejection audit: the agent is both subject and actor, the event lives in
+    // the system namespace, and the payload carries the requested namespace and the deny reason.
+    let mut event = audit(&agent, &agent);
+    event.kind = AuditKind::NamespaceDenied;
+    event.identity.namespace = Namespace::System;
+    event.payload = serde_json::json!({
+        "requested_namespace": "team:squad",
+        "reason": "not a member of the team",
+        "agent": agent.as_str(),
+    });
+
+    let node_id = store.commit_audit(&event).expect("commit_audit");
+
+    // Read every field back through the node id `commit_audit` returns (no episode, no edge).
+    let read = store
+        .audit_event_by_node_id(node_id)
+        .expect("read")
+        .expect("the audit node exists");
+    assert_eq!(read.kind, AuditKind::NamespaceDenied);
+    assert_eq!(read.subject_id, agent, "subject is the acting agent");
+    assert_eq!(read.actor_id, agent);
+    assert_eq!(read.identity.namespace, Namespace::System);
+    assert_eq!(read.payload["requested_namespace"], "team:squad");
+    assert_eq!(read.payload["reason"], "not a member of the team");
+    assert_eq!(read.payload["agent"], agent.as_str());
+
+    // It is discoverable by the scalar `kind` index, and no Episode or AUDIT edge was written.
+    assert_eq!(
+        count(
+            &store,
+            "MATCH (a:AuditEvent) WHERE a.kind = 'namespace_denied' RETURN count(a) AS n",
+        ),
+        1,
+    );
+    assert_eq!(
+        count(&store, "MATCH (e:Episode) RETURN count(e) AS n"),
+        0,
+        "a rejection writes no memory",
+    );
+    assert_eq!(
+        count(
+            &store,
+            "MATCH (:AuditEvent)-[r:AUDIT]->() RETURN count(r) AS n",
+        ),
+        0,
+        "no AUDIT edge is wired for a subject without a node",
+    );
+}
+
+fn count(store: &Store, pattern: &str) -> u64 {
+    match store.execute(&BoundQuery::new(pattern)).expect("count") {
+        QueryResult::Rows(rows) => match rows.value(0, 0) {
+            Some(Value::Uint(n)) => *n,
+            Some(Value::Int(n)) => u64::try_from(*n).unwrap_or(0),
+            _ => 0,
+        },
+        _ => 0,
+    }
+}

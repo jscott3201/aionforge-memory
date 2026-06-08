@@ -4,16 +4,15 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use aionforge_domain::edges::{About, Audit, Contradicts, HasProvenance, SupersededBy};
+use aionforge_domain::edges::{About, Contradicts, SupersededBy};
 use aionforge_domain::embedding::Embedding;
 use aionforge_domain::ids::{ContentHash, Id};
 use aionforge_domain::namespace::Namespace;
 use aionforge_domain::nodes::associative::Note;
 use aionforge_domain::nodes::episodic::Episode;
-use aionforge_domain::nodes::forensic::{AuditEvent, ProvenanceRecord};
 use aionforge_domain::nodes::semantic::{Entity, Fact};
 use aionforge_domain::time::Timestamp;
-use selene_core::{GraphId, NodeId, PropertyMap, Value, db_string};
+use selene_core::{GraphId, NodeId, Value, db_string};
 use selene_gql::{BindingTable, BuiltinProcedureRegistry, Session, StatementOutput};
 use selene_graph::{DEFAULT_WAL_FILE_NAME, GraphTypeDef, SeleneGraph, SharedGraph, WalConfig};
 
@@ -23,7 +22,7 @@ use crate::error::StoreError;
 use crate::gql::{BoundQuery, QueryResult, Rows};
 use crate::providers::candidate_state_provider;
 use crate::search::SearchKind;
-use crate::{audit, entity, episode, fact, provenance};
+use crate::{entity, episode, fact};
 
 /// The storage layer over a selene-db `SharedGraph`.
 ///
@@ -624,93 +623,6 @@ impl Store {
         txn.commit()?;
         Ok(())
     }
-
-    /// Commit a capture bundle through the single mutation funnel (04 §1).
-    ///
-    /// Writes the episode, its provenance record, and the capture audit event as one
-    /// atomic commit, wiring `Episode -HAS_PROVENANCE-> ProvenanceRecord` and
-    /// `AuditEvent -AUDIT-> Episode`. The caller has already set each record's
-    /// `subject_id`/`actor_id` to the episode's domain id; the edges connect the
-    /// freshly assigned node ids. Durable before visible, like every write here.
-    ///
-    /// # Errors
-    /// Returns [`StoreError`] if translation, any node/edge mutation, or the commit
-    /// fails; nothing is published if any step fails.
-    pub fn commit_capture(
-        &self,
-        episode: &Episode,
-        provenance: &ProvenanceRecord,
-        audit: &AuditEvent,
-    ) -> Result<CaptureWriteIds, StoreError> {
-        let (episode_labels, episode_props) = episode::to_node(episode)?;
-        let (provenance_labels, provenance_props) = provenance::to_node(provenance)?;
-        let (audit_labels, audit_props) = audit::to_node(audit)?;
-        let has_provenance = db_string(HasProvenance::LABEL)?;
-        let audit_edge = db_string(Audit::LABEL)?;
-
-        let mut txn = self.graph.begin_write();
-        let ids = {
-            let mut mutator = txn.mutator();
-            let episode_id = mutator.create_node(episode_labels, episode_props)?;
-            let provenance_id = mutator.create_node(provenance_labels, provenance_props)?;
-            mutator.create_edge(
-                has_provenance,
-                episode_id,
-                provenance_id,
-                PropertyMap::from_pairs(Vec::new())?,
-            )?;
-            let audit_id = mutator.create_node(audit_labels, audit_props)?;
-            mutator.create_edge(
-                audit_edge,
-                audit_id,
-                episode_id,
-                PropertyMap::from_pairs(Vec::new())?,
-            )?;
-            CaptureWriteIds {
-                episode: episode_id,
-                provenance: provenance_id,
-                audit: audit_id,
-            }
-        };
-        txn.commit()?;
-        Ok(ids)
-    }
-
-    /// Read a provenance record back by its node id (for tests and inspection).
-    ///
-    /// # Errors
-    /// Returns [`StoreError`] if the stored data cannot be decoded.
-    pub fn provenance_by_node_id(
-        &self,
-        id: NodeId,
-    ) -> Result<Option<ProvenanceRecord>, StoreError> {
-        match self.graph.read().node_properties(id) {
-            Some(props) => Ok(Some(provenance::from_properties(props)?)),
-            None => Ok(None),
-        }
-    }
-
-    /// Read an audit event back by its node id (for tests and inspection).
-    ///
-    /// # Errors
-    /// Returns [`StoreError`] if the stored data cannot be decoded.
-    pub fn audit_event_by_node_id(&self, id: NodeId) -> Result<Option<AuditEvent>, StoreError> {
-        match self.graph.read().node_properties(id) {
-            Some(props) => Ok(Some(audit::from_properties(props)?)),
-            None => Ok(None),
-        }
-    }
-}
-
-/// The node ids assigned by a [`Store::commit_capture`] write.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CaptureWriteIds {
-    /// The committed episode.
-    pub episode: NodeId,
-    /// The provenance record proving the write.
-    pub provenance: NodeId,
-    /// The capture audit event.
-    pub audit: NodeId,
 }
 
 /// This store's fixed graph identity. A single graph per store, so a constant id;

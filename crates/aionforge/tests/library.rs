@@ -73,6 +73,7 @@ async fn a_host_can_capture_and_search_through_the_library() {
             content: "remember to water the ferns".to_string(),
             role: Role::User,
             agent_id: agent.clone(),
+            teams: Vec::new(),
             session_id: None,
             captured_at: now(),
             writer: WriterContext {

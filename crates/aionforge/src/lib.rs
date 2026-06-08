@@ -21,6 +21,7 @@
 //!         content: "the user prefers graph databases".to_string(),
 //!         role: Role::User,
 //!         agent_id: agent.clone(),
+//!         teams: Vec::new(),
 //!         session_id: None,
 //!         captured_at: now.clone(),
 //!         writer: WriterContext {

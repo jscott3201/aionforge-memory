@@ -10,6 +10,7 @@
 
 mod audit;
 mod bad_pattern;
+mod capture_write;
 mod catalog;
 mod config;
 mod consolidation;
@@ -35,6 +36,7 @@ mod skill;
 mod skill_induction;
 mod store;
 
+pub use capture_write::CaptureWriteIds;
 pub use catalog::SCHEMA_VERSION;
 pub use config::{DEFAULT_EMBEDDING_DIMENSION, StoreConfig, default_data_dir};
 pub use consolidation::{ConsolidationCursor, ConsolidationWorkItem, LagSnapshot};
@@ -52,6 +54,6 @@ pub use relates_to::{LinkEdgeWrite, RelatesToLink};
 pub use schema::{EdgeTypeShape, NodeTypeShape, PropertyKind, PropertyShape, SchemaSnapshot};
 pub use search::{CandidateSet, ExpandDirection, ExpandEdge, SearchHit, SearchKind, SetOp};
 pub use skill_induction::InducedSkillWrite;
-pub use store::{CaptureWriteIds, Store};
+pub use store::Store;
 
 pub use selene_core::{EdgeId, NodeId, Value};

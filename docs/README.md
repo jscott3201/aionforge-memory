@@ -19,4 +19,10 @@ This is reference and guides, not planning or changelogs.
   a closed relationship vocabulary, a confidence floor, and per-run cascade caps; degrades to a
   deterministic rule tier.
 
+## Boundaries
+
+- [Namespace authorization](namespace-authorization.md) — who can write where: the caller-asserted
+  principal, the own-private / member-team write policy, refused-and-audited denials, and the
+  visible set that bounds reads.
+
 More subsystem guides land here as each one is built.

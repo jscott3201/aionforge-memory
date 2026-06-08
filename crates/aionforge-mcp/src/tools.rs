@@ -107,6 +107,9 @@ pub async fn capture_tool<E: Embedder>(
         content: params.content,
         role,
         agent_id,
+        // Team membership from the MCP request context is wired in M4.T01 PR-E; for now an MCP
+        // write is confined to the agent's own private namespace.
+        teams: Vec::new(),
         session_id,
         captured_at,
         writer: WriterContext {

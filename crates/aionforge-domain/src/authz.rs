@@ -156,7 +156,7 @@ pub struct AuthorizationError {
 /// authorized or refused with a typed error; a read is scoped by a precomputed [`VisibleSet`]. The
 /// production default is [`DefaultAuthorizer`]; later milestones can compose a stricter authority
 /// (e.g. signature-gated writes in M4.T03) behind the same seam without touching the call sites.
-pub trait Authorizer: Send + Sync {
+pub trait Authorizer: Send + Sync + std::fmt::Debug {
     /// Authorize a write to `target` by `principal`. `Err` denies it; the façade rejects the write
     /// and records a `namespace_denied` audit.
     ///

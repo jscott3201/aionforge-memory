@@ -95,6 +95,7 @@ async fn capture_then_start_consolidation_derives_a_fact() {
             content: "Alice works on Aionforge".to_string(),
             role: Role::User,
             agent_id: agent,
+            teams: Vec::new(),
             session_id: None,
             captured_at: now(),
             writer: WriterContext {
@@ -162,6 +163,7 @@ async fn consolidation_lag_reports_a_pending_capture_without_reaching_into_the_s
             content: "Alice works on Aionforge".to_string(),
             role: Role::User,
             agent_id: Id::generate(),
+            teams: Vec::new(),
             session_id: None,
             captured_at: now(),
             writer: WriterContext {

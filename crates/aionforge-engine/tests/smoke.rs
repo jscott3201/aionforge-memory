@@ -79,6 +79,7 @@ async fn open_capture_then_search_round_trips() {
             content: "the user prefers graph databases".to_string(),
             role: Role::User,
             agent_id: agent.clone(),
+            teams: Vec::new(),
             session_id: None,
             captured_at: now(),
             writer: WriterContext {
@@ -122,6 +123,7 @@ async fn an_exact_duplicate_is_not_recaptured() {
         content: content.to_string(),
         role: Role::User,
         agent_id: agent.clone(),
+        teams: Vec::new(),
         session_id: None,
         captured_at: now(),
         writer: WriterContext {
@@ -147,6 +149,95 @@ async fn an_exact_duplicate_is_not_recaptured() {
     assert_eq!(first.verdict, CaptureVerdict::New);
     assert_eq!(second.verdict, CaptureVerdict::ExactDuplicate);
     assert_eq!(second.episode_id, first.episode_id);
+}
+
+#[tokio::test]
+async fn a_forbidden_namespace_write_is_refused_at_the_facade() {
+    let memory = Memory::new_in_memory();
+    let agent = Id::generate();
+    // A trusted write to global is never directly writable, so the facade refuses it (06 §1).
+    let mut req = capture_request(&agent, "privileged");
+    req.trusted = true;
+    req.namespace = Some(Namespace::Global);
+
+    let err = memory
+        .capture(req)
+        .await
+        .expect_err("the facade refuses it");
+    assert!(
+        matches!(err, aionforge_engine::EngineError::Capture(_)),
+        "a forbidden write surfaces as a capture error, got {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_custom_authorizer_is_honored_by_the_facade() {
+    use std::sync::Arc;
+
+    // A deny-everything authority injected via with_authorizer refuses even an own-private write,
+    // proving the seam is consulted (and is the M4.T03 signature-gating hook).
+    #[derive(Debug)]
+    struct DenyAll;
+    impl aionforge_engine::Authorizer for DenyAll {
+        fn authorize_write(
+            &self,
+            principal: &aionforge_engine::Principal,
+            target: &Namespace,
+        ) -> Result<(), aionforge_engine::AuthorizationError> {
+            Err(aionforge_engine::AuthorizationError {
+                agent: principal.agent_id.as_str().to_string(),
+                target: target.to_string(),
+                reason: aionforge_engine::DenyReason::NotDirectlyWritable,
+            })
+        }
+        fn visible_namespaces(
+            &self,
+            principal: &aionforge_engine::Principal,
+        ) -> aionforge_engine::VisibleSet {
+            aionforge_engine::VisibleSet::new(principal.private(), Vec::new())
+        }
+    }
+
+    let store = aionforge_engine::Store::open_with_config(aionforge_engine::StoreConfig {
+        embedding_dimension: 4,
+    })
+    .expect("open store");
+    store.migrate(&now()).expect("migrate");
+    let memory = Memory::with_authorizer(
+        Arc::new(store),
+        FakeEmbedder::new(),
+        MemoryConfig::default(),
+        Arc::new(DenyAll),
+    )
+    .expect("build memory");
+
+    let agent = Id::generate();
+    let err = memory
+        .capture(capture_request(&agent, "anything"))
+        .await
+        .expect_err("DenyAll refuses every write");
+    assert!(matches!(err, aionforge_engine::EngineError::Capture(_)));
+}
+
+/// A capture request for `agent` with the given content — untrusted, private, no teams.
+fn capture_request(agent: &Id, content: &str) -> CaptureRequest {
+    CaptureRequest {
+        content: content.to_string(),
+        role: Role::User,
+        agent_id: agent.clone(),
+        teams: Vec::new(),
+        session_id: None,
+        captured_at: now(),
+        writer: WriterContext {
+            model_family: "host-model".to_string(),
+            model_version: None,
+            transport: None,
+            request_id: None,
+            trust: 0.5,
+        },
+        trusted: false,
+        namespace: None,
+    }
 }
 
 /// A small helper so each test reads cleanly.
