@@ -22,7 +22,7 @@ use aionforge_domain::time::Timestamp;
 use selene_core::{
     DbString, LabelDiff, LabelSet, NodeId, PropertyDiff, PropertyMap, Value, db_string,
 };
-use selene_graph::{RowIndex, SeleneGraph};
+use selene_graph::{Mutator, RowIndex, SeleneGraph};
 
 use crate::convert::{
     as_bool, as_content_hash, as_embedder_model, as_embedding, as_f64, as_i64, as_id, as_namespace,
@@ -218,6 +218,62 @@ fn skill_nodes_by_name(snapshot: &SeleneGraph, name: &str) -> Result<Vec<NodeId>
         .collect())
 }
 
+/// Bump a skill's success or failure counter and stamp the matching `last_*_at`, within a
+/// caller-supplied transaction.
+///
+/// The shared core of both [`Store::record_skill_outcome`] and the failure-counter bump inside
+/// [`Store::save_bad_pattern`](crate::Store::save_bad_pattern), so recording a bad pattern moves
+/// the same reliability stats as a plain failure outcome — atomically with the pattern write. The
+/// caller owns the transaction; this only reads the current counter (dropping the borrow before
+/// mutating) and applies the increment.
+///
+/// # Errors
+/// Returns [`StoreError`] if `skill` is not a live node, the counter is missing or would
+/// overflow, or the mutation fails.
+pub(crate) fn bump_skill_outcome(
+    mutator: &mut Mutator,
+    skill: NodeId,
+    success: bool,
+    at: &Timestamp,
+) -> Result<(), StoreError> {
+    let counter = if success {
+        SUCCESS_COUNT
+    } else {
+        FAILURE_COUNT
+    };
+    let last_at = if success {
+        LAST_SUCCESS_AT
+    } else {
+        LAST_FAILURE_AT
+    };
+    // Read the current counter, then drop the read borrow before mutating.
+    let current = {
+        let props = mutator
+            .read()
+            .node_properties(skill)
+            .ok_or_else(|| StoreError::decode("skill node not found for outcome".to_string()))?;
+        let value = props.get(&db_string(counter)?).ok_or_else(|| {
+            StoreError::decode(format!("skill is missing required property `{counter}`"))
+        })?;
+        as_u64(value)?
+    };
+    let next = current
+        .checked_add(1)
+        .ok_or_else(|| StoreError::invariant(format!("skill {skill:?} {counter} overflow")))?;
+    mutator.update_node(
+        skill,
+        LabelDiff::new([], [])?,
+        PropertyDiff::new(
+            [
+                (db_string(counter)?, Value::Uint(next)),
+                (db_string(last_at)?, timestamp_value(at)),
+            ],
+            [],
+        )?,
+    )?;
+    Ok(())
+}
+
 impl Store {
     /// Save a new skill version through the single write funnel, returning its node id (05).
     ///
@@ -292,43 +348,10 @@ impl Store {
         success: bool,
         at: &Timestamp,
     ) -> Result<(), StoreError> {
-        let counter = if success {
-            SUCCESS_COUNT
-        } else {
-            FAILURE_COUNT
-        };
-        let last_at = if success {
-            LAST_SUCCESS_AT
-        } else {
-            LAST_FAILURE_AT
-        };
         let mut txn = self.graph().begin_write();
         {
             let mut mutator = txn.mutator();
-            // Read the current counter, then drop the read borrow before mutating.
-            let current = {
-                let props = mutator.read().node_properties(skill).ok_or_else(|| {
-                    StoreError::decode("skill node not found for outcome".to_string())
-                })?;
-                let value = props.get(&db_string(counter)?).ok_or_else(|| {
-                    StoreError::decode(format!("skill is missing required property `{counter}`"))
-                })?;
-                as_u64(value)?
-            };
-            let next = current
-                .checked_add(1)
-                .ok_or_else(|| StoreError::invariant(format!("skill {counter} overflow")))?;
-            mutator.update_node(
-                skill,
-                LabelDiff::new([], [])?,
-                PropertyDiff::new(
-                    [
-                        (db_string(counter)?, Value::Uint(next)),
-                        (db_string(last_at)?, timestamp_value(at)),
-                    ],
-                    [],
-                )?,
-            )?;
+            bump_skill_outcome(&mut mutator, skill, success, at)?;
         }
         txn.commit()?;
         Ok(())

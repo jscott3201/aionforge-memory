@@ -25,6 +25,13 @@ pub struct ProceduralConfig {
     pub prior_alpha: f64,
     /// Beta prior β₀ for the reliability posterior; default `1.0`.
     pub prior_beta: f64,
+    /// How hard each query-relevant bad pattern shrinks a skill's rank score, via the penalty
+    /// `1 / (1 + bad_pattern_weight * count)`. Default `0.5`: one relevant failure mode multiplies
+    /// the score by `2/3`. Zero disables the bad-pattern penalty (patterns still surface).
+    pub bad_pattern_weight: f64,
+    /// Cosine-similarity floor, in `[0, 1]`, above which a skill's linked bad pattern counts as
+    /// relevant to the current problem and contributes to the penalty. Default `0.7`.
+    pub bad_pattern_similarity_threshold: f64,
 }
 
 impl Default for ProceduralConfig {
@@ -36,6 +43,8 @@ impl Default for ProceduralConfig {
             candidate_multiplier: 4,
             prior_alpha: 1.0,
             prior_beta: 1.0,
+            bad_pattern_weight: 0.5,
+            bad_pattern_similarity_threshold: 0.7,
         }
     }
 }
@@ -85,6 +94,20 @@ impl ProceduralConfig {
                     "{name} must be a finite positive value, got {prior}"
                 ));
             }
+        }
+        if !self.bad_pattern_weight.is_finite() || self.bad_pattern_weight < 0.0 {
+            return Err(format!(
+                "procedural.bad_pattern_weight must be a finite non-negative value, got {}",
+                self.bad_pattern_weight
+            ));
+        }
+        if !self.bad_pattern_similarity_threshold.is_finite()
+            || !(0.0..=1.0).contains(&self.bad_pattern_similarity_threshold)
+        {
+            return Err(format!(
+                "procedural.bad_pattern_similarity_threshold must be a finite value in [0, 1], got {}",
+                self.bad_pattern_similarity_threshold
+            ));
         }
         Ok(())
     }
@@ -153,6 +176,40 @@ mod tests {
                 ..ProceduralConfig::default()
             };
             assert!(beta.validate().is_err(), "beta {bad} should be rejected");
+        }
+    }
+
+    #[test]
+    fn a_negative_bad_pattern_weight_is_rejected() {
+        for bad in [-0.1, f64::NAN, f64::INFINITY] {
+            let config = ProceduralConfig {
+                bad_pattern_weight: bad,
+                ..ProceduralConfig::default()
+            };
+            assert!(
+                config.validate().is_err(),
+                "weight {bad} should be rejected"
+            );
+        }
+        // Zero is allowed: it disables the penalty.
+        let zero = ProceduralConfig {
+            bad_pattern_weight: 0.0,
+            ..ProceduralConfig::default()
+        };
+        zero.validate().expect("a zero weight disables the penalty");
+    }
+
+    #[test]
+    fn an_out_of_range_bad_pattern_threshold_is_rejected() {
+        for bad in [-0.1, 1.1, f64::NAN, f64::INFINITY] {
+            let config = ProceduralConfig {
+                bad_pattern_similarity_threshold: bad,
+                ..ProceduralConfig::default()
+            };
+            assert!(
+                config.validate().is_err(),
+                "threshold {bad} should be rejected"
+            );
         }
     }
 }
