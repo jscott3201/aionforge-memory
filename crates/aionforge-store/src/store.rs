@@ -676,6 +676,25 @@ impl Store {
         Ok(ids)
     }
 
+    /// Write a single standalone audit event in its own transaction — for an event with no
+    /// committed memory subject, such as a `namespace_denied` write rejection (06 §1, M4.T01).
+    /// The audit node is committed on its own; no `AUDIT` edge is wired, since the rejected write
+    /// never produced a subject to point at. The event stays queryable by the `(kind, occurred_at)`
+    /// and `(actor_id, occurred_at)` composite indexes.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if translating the event or the commit fails.
+    pub fn commit_audit(&self, audit: &AuditEvent) -> Result<NodeId, StoreError> {
+        let (labels, props) = audit::to_node(audit)?;
+        let mut txn = self.graph.begin_write();
+        let id = {
+            let mut mutator = txn.mutator();
+            mutator.create_node(labels, props)?
+        };
+        txn.commit()?;
+        Ok(id)
+    }
+
     /// Read a provenance record back by its node id (for tests and inspection).
     ///
     /// # Errors

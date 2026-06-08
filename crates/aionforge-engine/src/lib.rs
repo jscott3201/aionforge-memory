@@ -18,6 +18,7 @@ use aionforge_capture::Capturer;
 use aionforge_consolidate::{
     Consolidator, Distiller, FactExtractionPass, LinkEvolvePass, SkillInductionPass,
 };
+use aionforge_domain::authz::{Authorizer, DefaultAuthorizer};
 use aionforge_domain::contracts::{
     Capture, Embedder, FactExtractor, LinkEvolver, Retriever, SkillInducer, Summarizer,
 };
@@ -58,10 +59,12 @@ pub struct Memory<E> {
     embedder: Arc<E>,
     capturer: Capturer<CaptureFilter, Arc<E>>,
     retriever: HybridRetriever<Arc<E>>,
+    authorizer: Arc<dyn Authorizer>,
 }
 
 impl<E: Embedder> Memory<E> {
-    /// Build a memory over an already-migrated store and an embedder.
+    /// Build a memory over an already-migrated store and an embedder, with the default namespace
+    /// authority ([`DefaultAuthorizer`]).
     ///
     /// The one embedder backs both the capture and retrieval paths through a shared
     /// reference, so the client is built once. The capture-side privacy filter uses
@@ -72,6 +75,20 @@ impl<E: Embedder> Memory<E> {
     /// [`EngineError::Filter`] if the default privacy filter fails to compile, which the
     /// security crate's tests guard against.
     pub fn new(store: Arc<Store>, embedder: E, config: MemoryConfig) -> Result<Self, EngineError> {
+        Self::with_authorizer(store, embedder, config, Arc::new(DefaultAuthorizer))
+    }
+
+    /// Build a memory with an explicit namespace authority — the injection point for a stricter
+    /// policy (e.g. signature-gated writes in M4.T03) behind the same [`Authorizer`] seam.
+    ///
+    /// # Errors
+    /// As [`Memory::new`].
+    pub fn with_authorizer(
+        store: Arc<Store>,
+        embedder: E,
+        config: MemoryConfig,
+        authorizer: Arc<dyn Authorizer>,
+    ) -> Result<Self, EngineError> {
         config.capture.validate().map_err(EngineError::Config)?;
         let embedder = Arc::new(embedder);
         let filter = CaptureFilter::with_defaults().map_err(EngineError::filter)?;
@@ -80,6 +97,7 @@ impl<E: Embedder> Memory<E> {
             filter,
             Arc::clone(&embedder),
             config.capture,
+            Arc::clone(&authorizer),
         );
         let retriever =
             HybridRetriever::new(Arc::clone(&store), Arc::clone(&embedder), config.retriever);
@@ -88,7 +106,14 @@ impl<E: Embedder> Memory<E> {
             embedder,
             capturer,
             retriever,
+            authorizer,
         })
+    }
+
+    /// The namespace authority backing this memory's capture (and, from M4.T01 PR-C, recall) paths.
+    #[must_use]
+    pub fn authorizer(&self) -> &Arc<dyn Authorizer> {
+        &self.authorizer
     }
 
     /// Open an in-memory memory: a fresh store sized to the embedder's dimension,

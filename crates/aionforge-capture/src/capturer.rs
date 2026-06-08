@@ -12,6 +12,7 @@
 use std::future::Future;
 use std::sync::Arc;
 
+use aionforge_domain::authz::{AuthorizationError, Authorizer, Principal};
 use aionforge_domain::blocks::{Identity, Stats};
 use aionforge_domain::contracts::{Capture, Embedder, PrivacyFilter};
 use aionforge_domain::embedding::Embedding;
@@ -34,13 +35,15 @@ const CAPTURE_IMPORTANCE: f64 = 0.5;
 /// nearest active one without scanning deeply on the hot path (04 §1 step 2).
 const NEAR_DUPLICATE_CANDIDATES: usize = 8;
 
-/// The fast capture path over a shared [`Store`], a privacy filter, and an embedder.
+/// The fast capture path over a shared [`Store`], a privacy filter, an embedder, and the namespace
+/// authority that confines writes (06 §1).
 #[derive(Debug, Clone)]
 pub struct Capturer<F, E> {
     store: Arc<Store>,
     filter: F,
     embedder: E,
     config: CaptureConfig,
+    authorizer: Arc<dyn Authorizer>,
 }
 
 impl<F, E> Capturer<F, E>
@@ -48,14 +51,22 @@ where
     F: PrivacyFilter,
     E: Embedder,
 {
-    /// Build a capturer over a shared store, a privacy filter, and an embedder.
+    /// Build a capturer over a shared store, a privacy filter, an embedder, and the namespace
+    /// authority. The authority validates the resolved write namespace before any state is written.
     #[must_use]
-    pub fn new(store: Arc<Store>, filter: F, embedder: E, config: CaptureConfig) -> Self {
+    pub fn new(
+        store: Arc<Store>,
+        filter: F,
+        embedder: E,
+        config: CaptureConfig,
+        authorizer: Arc<dyn Authorizer>,
+    ) -> Self {
         Self {
             store,
             filter,
             embedder,
             config,
+            authorizer,
         }
     }
 
@@ -72,6 +83,18 @@ where
         //    redacted form is the dedup key and the embedder never sees secrets.
         let content_hash = ContentHash::of(outcome.cleaned.as_bytes());
         let namespace = enforce_namespace(&request);
+
+        // 3. Namespace authorization (06 §1). The resolved target is validated against the writer's
+        //    principal: an untrusted write was already forced to the private namespace above, so it
+        //    always passes; a trusted write to a team the agent does not belong to, or to
+        //    global/system, is refused. A refusal records a `namespace_denied` audit and writes no
+        //    memory, so nothing the agent is not permitted to write ever lands.
+        let principal = Principal::new(request.agent_id.clone(), request.teams.clone());
+        if let Err(denial) = self.authorizer.authorize_write(&principal, &namespace) {
+            self.store
+                .commit_audit(&namespace_denied_audit(&request, &namespace, &denial))?;
+            return Err(CaptureError::Unauthorized(denial));
+        }
 
         if let Some(existing) = self.store.episode_id_by_content_hash(&content_hash)? {
             return Ok(CaptureReceipt {
@@ -260,6 +283,34 @@ fn enforce_namespace(request: &CaptureRequest) -> Namespace {
         request.namespace.clone().unwrap_or(private)
     } else {
         private
+    }
+}
+
+/// The `namespace_denied` audit for a refused write (06 §1, 07 §T9): the cross-namespace write
+/// attempt, recorded in the `system` namespace with the agent, the requested namespace, and the
+/// deny reason. The subject is the agent itself — a rejected write produces no memory subject.
+fn namespace_denied_audit(
+    request: &CaptureRequest,
+    target: &Namespace,
+    denial: &AuthorizationError,
+) -> AuditEvent {
+    AuditEvent {
+        identity: Identity {
+            id: Id::generate(),
+            ingested_at: request.captured_at.clone(),
+            namespace: Namespace::System,
+            expired_at: None,
+        },
+        kind: AuditKind::NamespaceDenied,
+        subject_id: request.agent_id.clone(),
+        actor_id: request.agent_id.clone(),
+        payload: serde_json::json!({
+            "requested_namespace": target.to_string(),
+            "reason": denial.reason.as_str(),
+            "agent": denial.agent,
+        }),
+        signature: String::new(),
+        occurred_at: request.captured_at.clone(),
     }
 }
 

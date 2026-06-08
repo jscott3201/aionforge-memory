@@ -79,6 +79,7 @@ async fn open_capture_then_search_round_trips() {
             content: "the user prefers graph databases".to_string(),
             role: Role::User,
             agent_id: agent.clone(),
+            teams: Vec::new(),
             session_id: None,
             captured_at: now(),
             writer: WriterContext {
@@ -122,6 +123,7 @@ async fn an_exact_duplicate_is_not_recaptured() {
         content: content.to_string(),
         role: Role::User,
         agent_id: agent.clone(),
+        teams: Vec::new(),
         session_id: None,
         captured_at: now(),
         writer: WriterContext {

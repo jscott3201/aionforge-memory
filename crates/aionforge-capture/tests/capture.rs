@@ -121,6 +121,7 @@ fn request(content: &str, agent: &Id) -> CaptureRequest {
         content: content.to_string(),
         role: Role::User,
         agent_id: agent.clone(),
+        teams: Vec::new(),
         session_id: None,
         captured_at: ts(),
         writer: WriterContext {
@@ -145,6 +146,7 @@ fn capturer(
         CaptureFilter::with_defaults().expect("default filter"),
         embedder,
         config,
+        Arc::new(aionforge_domain::authz::DefaultAuthorizer),
     )
 }
 
@@ -162,6 +164,18 @@ fn episode_count(store: &Store) -> usize {
     match store
         .execute(&BoundQuery::new("MATCH (e:Episode) RETURN e.id AS id"))
         .expect("count episodes")
+    {
+        QueryResult::Rows(rows) => rows.row_count(),
+        _ => 0,
+    }
+}
+
+fn namespace_denied_audit_count(store: &Store) -> usize {
+    match store
+        .execute(&BoundQuery::new(
+            "MATCH (a:AuditEvent) WHERE a.kind = 'namespace_denied' RETURN a.id AS id",
+        ))
+        .expect("count namespace_denied audits")
     {
         QueryResult::Rows(rows) => rows.row_count(),
         _ => 0,
@@ -434,7 +448,7 @@ async fn an_untrusted_write_is_forced_into_the_private_namespace() {
 }
 
 #[tokio::test]
-async fn a_trusted_write_honors_the_requested_namespace() {
+async fn a_trusted_write_to_a_member_team_is_honored() {
     let store = store();
     let agent = Id::generate();
     let cap = capturer(
@@ -443,8 +457,10 @@ async fn a_trusted_write_honors_the_requested_namespace() {
         CaptureConfig::default(),
     );
 
+    // The agent is a member of "squad", so a trusted write to that team is authorized and honored.
     let mut req = request("trusted content", &agent);
     req.trusted = true;
+    req.teams = vec!["squad".to_string()];
     req.namespace = Some(Namespace::Team("squad".to_string()));
 
     let receipt = cap.capture(req).await.expect("capture");
@@ -453,6 +469,91 @@ async fn a_trusted_write_honors_the_requested_namespace() {
     assert_eq!(
         episode_field(&store, &receipt.episode_id, "namespace").as_deref(),
         Some("team:squad"),
+    );
+}
+
+#[tokio::test]
+async fn a_trusted_write_to_a_non_member_team_is_refused_and_audited() {
+    let store = store();
+    let agent = Id::generate();
+    let cap = capturer(
+        store.clone(),
+        FakeEmbedder::new(&[]),
+        CaptureConfig::default(),
+    );
+
+    // The agent is NOT a member of "squad", so the trusted write is refused (06 §1).
+    let mut req = request("forbidden content", &agent);
+    req.trusted = true;
+    req.namespace = Some(Namespace::Team("squad".to_string()));
+
+    let err = cap.capture(req).await.expect_err("must be refused");
+    assert!(
+        matches!(err, aionforge_capture::CaptureError::Unauthorized(_)),
+        "the write is refused as unauthorized, got {err:?}"
+    );
+    // No episode landed, and the attempt was recorded as a namespace_denied audit.
+    assert_eq!(
+        episode_count(&store),
+        0,
+        "nothing the agent may not write lands"
+    );
+    assert_eq!(
+        namespace_denied_audit_count(&store),
+        1,
+        "the cross-namespace attempt is audited"
+    );
+}
+
+#[tokio::test]
+async fn a_trusted_write_to_global_is_refused() {
+    let store = store();
+    let agent = Id::generate();
+    let cap = capturer(
+        store.clone(),
+        FakeEmbedder::new(&[]),
+        CaptureConfig::default(),
+    );
+
+    let mut req = request("global content", &agent);
+    req.trusted = true;
+    req.namespace = Some(Namespace::Global);
+
+    let err = cap
+        .capture(req)
+        .await
+        .expect_err("global is never directly writable");
+    assert!(matches!(
+        err,
+        aionforge_capture::CaptureError::Unauthorized(_)
+    ));
+    assert_eq!(episode_count(&store), 0);
+}
+
+#[tokio::test]
+async fn an_untrusted_write_requesting_a_team_is_confined_not_refused() {
+    let store = store();
+    let agent = Id::generate();
+    let cap = capturer(
+        store.clone(),
+        FakeEmbedder::new(&[]),
+        CaptureConfig::default(),
+    );
+
+    // Untrusted writes are forced to the private namespace BEFORE authorization, so a requested
+    // team is silently confined (not refused) and the write succeeds in agent:<self>.
+    let mut req = request("untrusted content", &agent);
+    req.trusted = false;
+    req.teams = vec!["squad".to_string()];
+    req.namespace = Some(Namespace::Team("squad".to_string()));
+
+    let receipt = cap
+        .capture(req)
+        .await
+        .expect("untrusted write is confined, not refused");
+    assert_eq!(
+        receipt.namespace,
+        Namespace::Agent(agent.as_str().to_string())
     );
 }
 

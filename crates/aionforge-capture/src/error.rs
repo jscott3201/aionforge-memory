@@ -16,6 +16,12 @@ pub enum CaptureError {
     /// A store read, the commit, or a translation failed.
     #[error("the capture store operation failed")]
     Store(#[from] aionforge_store::StoreError),
+
+    /// The write was refused by namespace authorization: the agent is not permitted to write the
+    /// target namespace (06 §1). The attempt is recorded as a `namespace_denied` audit before this
+    /// error is returned.
+    #[error("the capture write was not authorized: {0}")]
+    Unauthorized(#[from] aionforge_domain::authz::AuthorizationError),
 }
 
 impl CaptureError {

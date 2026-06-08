@@ -20,6 +20,10 @@ pub struct CaptureRequest {
     pub role: Role,
     /// The authoring agent.
     pub agent_id: Id,
+    /// The teams the authoring agent belongs to (06 §1). Asserted by the host; used to authorize a
+    /// trusted write to a team namespace. Empty for the common single-agent case; an untrusted
+    /// write is confined to the private namespace regardless.
+    pub teams: Vec<String>,
     /// The owning session, if any.
     pub session_id: Option<Id>,
     /// When the event is recorded.
