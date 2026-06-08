@@ -15,6 +15,7 @@ mod config;
 mod consolidation;
 mod convert;
 mod dedup;
+mod distill;
 mod entity;
 mod episode;
 mod error;
