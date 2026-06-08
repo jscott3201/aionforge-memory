@@ -288,7 +288,7 @@ async fn search_tool_verbose_adds_per_hit_detail() {
 #[tokio::test]
 async fn capture_tool_rejects_a_bad_agent_id() {
     let memory = memory();
-    let err = capture_tool(&memory, capture_params("x", "not-a-ulid"), &now())
+    let err = capture_tool(&memory, capture_params("x", "not-a-uuid"), &now())
         .await
         .expect_err("should reject");
     assert!(err.starts_with("ERR_INVALID_AGENT_ID"), "{err}");

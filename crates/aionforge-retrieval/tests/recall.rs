@@ -165,8 +165,8 @@ fn seed_basic(store: &Store, content: &str, embedding: [f32; 4]) {
     );
 }
 
-/// A fixed, deterministic agent id for the test reader "alice". Agent ids are ULIDs, so the
-/// reader and the data she owns share this one identity (her namespace is `agent:<this ulid>`).
+/// A fixed, deterministic agent id for the test reader "alice". Agent ids are UUIDs, so the
+/// reader and the data she owns share this one identity (her namespace is `agent:<this uuid>`).
 fn alice_id() -> Id {
     Id::from_content_hash(b"alice-the-test-reader")
 }
@@ -729,7 +729,7 @@ async fn compact_verbose_escapes_a_hostile_namespace() {
     // A team name is a host-supplied string with no character constraints, so a hostile one
     // could carry an attribute-breaking quote. The verbose compact view renders the namespace
     // as an attribute, so it must be escaped just like the fact predicate (07 §4). Agent ids are
-    // ULIDs and cannot be hostile, so a team name is the realistic vector now.
+    // UUIDs and cannot be hostile, so a team name is the realistic vector now.
     let hostile_team = "x\" onload=\"evil";
     seed(
         &store,
