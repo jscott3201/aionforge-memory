@@ -53,6 +53,19 @@ version and stamps the time. A version's procedure is immutable; only its reliab
 stats move. Outcomes are addressed by the skill's stable id, so a deprecated version can
 still report a late outcome.
 
+## Recording failures (bad patterns)
+
+A failure worth remembering is more than a counter tick — it is a *failure mode*. `record_failure(skill_id, description)` is the companion to `record_outcome` for those: in
+one atomic commit it bumps the skill's failure counter *and* stores a `BadPattern` — a
+negative procedural memory describing what went wrong — linked to the skill by a
+`HAS_FAILURE` edge. The description is embedded so the failure can later be matched
+against new problems; if the embedder is down, the call fails closed rather than store a
+pattern that could never resurface.
+
+Bad patterns are negative procedural memory: immutable once written, specific to the
+skill they were observed against, and surfaced with that skill so a known failure is
+visible *before* the skill is reused.
+
 ## Retrieving skills
 
 `retrieve_skills(problem, k)` is a dedicated procedural-recall path, separate from the
@@ -69,17 +82,25 @@ problem match re-weighted by proven reliability.
    `1.0`, and the weight moves toward the empirical rate as outcomes accumulate. This is
    the same Beta model the trust scoring uses, so reliability and trust stay on one
    footing.
-3. **Active only.** Deprecated and soft-forgotten (expired) versions are history and
+3. **Bad-pattern penalty.** Each candidate's score is then multiplied by
+   `1 / (1 + weight · count)`, where `count` is how many of the skill's recorded failure
+   modes look like the current problem (their embedding's cosine similarity to the query
+   clears a threshold). A skill with a known failure mode that matches what you are about
+   to ask sinks below an equally-matched clean one — but a failure mode unrelated to this
+   problem does not hold the skill back.
+4. **Active only.** Deprecated and soft-forgotten (expired) versions are history and
    never surface.
-4. **Degrade, don't fail.** If the embedder is down at query time, retrieval falls back
+5. **Degrade, don't fail.** If the embedder is down at query time, retrieval falls back
    to the description's BM25 index — the lexical recall floor — instead of returning
-   nothing.
+   nothing. The bad-pattern penalty is skipped (no query vector to compare against), but
+   the patterns still surface so the failure modes stay visible.
 
-The result is a list of `RankedSkill`, each carrying the skill plus the score split into
-its two factors (`similarity` and `reliability`) so a caller can see why a skill
-surfaced. Over-fetching (a configurable multiple of `k`) before the reliability
-re-ranking lets a proven, slightly-less-similar skill rise above an unproven exact
-match. Ties break by skill id, so the order is reproducible.
+The result is a list of `RankedSkill`, each carrying the skill, the score split into its
+factors (`similarity` and `reliability`) so a caller can see why a skill surfaced, and
+the skill's failure modes (`bad_patterns`) ordered by how relevant each is to the query.
+Over-fetching (a configurable multiple of `k`) before the re-ranking lets a proven,
+slightly-less-similar skill rise above an unproven exact match. Ties break by skill id,
+so the order is reproducible.
 
 ## API surface
 
@@ -88,6 +109,7 @@ The contract lives in `aionforge_domain::contracts::ProceduralMemory`:
 ```rust
 fn save_skill(&self, skill: Skill) -> impl Future<Output = Result<Id, Self::Error>> + Send;
 fn record_outcome(&self, skill_id: Id, success: bool) -> impl Future<Output = Result<(), Self::Error>> + Send;
+fn record_failure(&self, skill_id: Id, description: String) -> impl Future<Output = Result<Id, Self::Error>> + Send;
 fn retrieve_skills(&self, problem: String, k: usize) -> impl Future<Output = Result<Vec<RankedSkill>, Self::Error>> + Send;
 ```
 
@@ -95,8 +117,9 @@ fn retrieve_skills(&self, problem: String, k: usize) -> impl Future<Output = Res
 over the embedder seam (it names the embedding contract, not a concrete client) and
 takes an injected clock so stored times are deterministic and never read from an ambient
 source. `ProceduralConfig` exposes the retrieval and reliability knobs — the RRF
-constant, the per-signal weights, the candidate over-fetch multiplier, and the Beta
-prior — all range-checked at construction.
+constant, the per-signal weights, the candidate over-fetch multiplier, the Beta prior,
+and the bad-pattern penalty weight and relevance threshold — all range-checked at
+construction.
 
 ## Where it sits
 
