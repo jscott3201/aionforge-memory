@@ -7,8 +7,9 @@ about the same thing resolve. The rule that governs that resolution is built so 
 does not depend on the order the writes happened to be processed in.
 
 This page covers how a **functional fact** — a fact whose predicate holds at most one value
-at a time, like "based in" — converges. Contested multi-valued beliefs and the full
-type-by-type picture are covered as those parts land.
+at a time, like "based in" — converges, and how a **contested belief** — two mutually
+exclusive values for the same thing — is resolved. The full type-by-type picture is covered
+as the remaining parts land.
 
 ## One current value, chosen the same way every time
 
@@ -61,3 +62,32 @@ backfilled and processed second. The older NYC assertion is born already superse
 takes its place in history with a closed window, and SF stays the single current value — the
 same result as if the two had arrived in event order. Processing order changed; the answer did
 not.
+
+## Contested beliefs
+
+Some predicates aren't functional but still can't hold two values at once — a thing is either
+up or down, not both. When two assertions like that conflict, it's a **contradiction**, and it
+is handled differently from a supersession: neither fact is retired. Both are kept, and a
+`CONTRADICTS` edge is recorded between them so the conflict can be found and reconciled later.
+
+What recall does have to settle is which of the two it surfaces, and it settles that the same
+way regardless of processing order. One side is the **victim**: it keeps its place in the
+graph but is held out of recall. The victim is the **lower-trust** side — a contradicting
+claim the system is less sure of loses to one it trusts more. When the two are equally
+trusted, the tie is broken by the same canonical object order the functional slot uses. Either
+way the choice is a function of the two assertions alone — their trust and their values, never
+which one happened to be written first — so the same pair resolves to the same surviving value
+in any order.
+
+When either side is trusted highly enough, the victim is also **quarantined** — flagged with
+an audit signal so the conflict is surfaced for review, not just silently held back. A
+higher-trust assertion can quarantine a lower-trust one that was already there, which is the
+point: a confident correction should win over a doubtful incumbent, no matter which arrived
+first.
+
+One consequence is worth naming plainly. When two equally trusted claims contradict each
+other, recall still resolves to one of them, chosen by the object-order tiebreak — a
+deterministic choice, but not a meaningful one. The losing claim isn't lost: it stays in the
+graph, the `CONTRADICTS` edge records the conflict, and a reader looking to reconcile can find
+both. But default recall shows one. Surfacing both equally contested values directly in recall
+would be a larger change to how the current-state set is computed, and is left for later.
