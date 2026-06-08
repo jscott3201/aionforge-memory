@@ -79,6 +79,12 @@ pub enum AuditKind {
     /// An episode cluster was summarized into a note (or a summary was skipped to bound
     /// lost detail; the payload's outcome distinguishes the two).
     Summarize,
+    /// An episode cluster was distilled into a note by the optional, off-by-default LLM
+    /// distiller (M3.T08) — the LLM-backed counterpart to [`Summarize`](AuditKind::Summarize),
+    /// kept distinct so distillation lineage and the consolidating model family stay queryable
+    /// for the cross-family guard (07 §T3, M6.T01). The payload records the model identity,
+    /// endpoint, seed, and outcome (written, rejected-lossy, or declined).
+    Distill,
     /// Note links were evolved.
     LinkEvolve,
     /// A skill was induced from experience.
