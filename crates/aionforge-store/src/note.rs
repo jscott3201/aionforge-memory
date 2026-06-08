@@ -171,13 +171,18 @@ pub(crate) fn from_properties(props: &PropertyMap) -> Result<Note, StoreError> {
 /// like a supersession endpoint — one created in this same txn from `fact_nodes`, a
 /// committed one from the index. An unresolvable source is a pass bug: degrade gracefully,
 /// dropping just that lineage edge (logged) so one bad key cannot wedge the whole commit.
+///
+/// Returns the node of each note in input order, so a caller that must wire something else to
+/// the note it just wrote (the off-cursor distiller's `AuditEvent -AUDIT-> Note` provenance
+/// edge, [`crate::distill`]) need not re-probe. The cursor path ignores the return.
 pub(crate) fn materialize_notes(
     mutator: &mut Mutator<'_, '_>,
     notes: &[MaterializedNote],
     fact_nodes: &HashMap<String, NodeId>,
     canonical_id: &HashMap<Id, Id>,
     now: &Timestamp,
-) -> Result<(), StoreError> {
+) -> Result<Vec<NodeId>, StoreError> {
+    let mut note_nodes = Vec::with_capacity(notes.len());
     for materialized in notes {
         let note_node = match find_existing_note(mutator.read(), &materialized.note.identity.id)? {
             Some(node) => node, // already written by a prior run; reuse it (idempotent replay)
@@ -204,8 +209,9 @@ pub(crate) fn materialize_notes(
                 derived_from_props(now)?,
             )?;
         }
+        note_nodes.push(note_node);
     }
-    Ok(())
+    Ok(note_nodes)
 }
 
 /// Find a summary note already written with this content-addressed id, returning its node.

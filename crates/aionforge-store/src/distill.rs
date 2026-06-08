@@ -12,17 +12,30 @@
 //! not: write [`Note`](aionforge_domain::nodes::associative::Note) nodes and their lineage
 //! **without** an episode flip or a cursor advance. A distilled note's id is content-addressed
 //! over its source set under the distiller's own rule version, so it lands in an id-space
-//! disjoint from the rule summaries — the two tiers coexist and a replay is a no-op. The
-//! `Note` schema carries no model-identity field (02 §4.6), so the consolidating model's
-//! identity, endpoint, and seed are recorded in the paired [`AuditEvent`] payload (the
-//! `distill` audit kind), which the cross-family guard reads for lineage (07 §T3, M6.T01).
+//! disjoint from the rule summaries — the two tiers coexist and a replay is a no-op.
+//!
+//! ## Provenance
+//!
+//! The `Note` schema carries no model-identity field (02 §4.6), so the consolidating model's
+//! identity, endpoint, and seed travel in a paired [`AuditEvent`] payload under the `distill`
+//! audit kind. For a written note the audit is wired `AuditEvent -AUDIT-> Note`, so "which model
+//! produced this note" is a single hop — exactly what the cross-family guard traces (07 §T3,
+//! M6.T01), and unambiguous even when a note rolls up facts about several entities. A call that
+//! produced no note (the detail-retention guard rejected a lossy summary, or the distiller
+//! declined) is still audited — "for every call" (M3.T08) — and anchored `AUDIT -> Entity` on
+//! the cluster subject instead.
+//!
+//! The audit `payload` is the same open `serde_json::Value` every audit kind uses; this surface
+//! writes it verbatim and never inspects it. Constructing it from only non-secret fields (the
+//! declared model family/version, the endpoint, the pinned seed — never the API key) is the
+//! distiller's contract, upheld where the payload is built (M3.T08 PR-B).
 
 use std::collections::HashMap;
 
 use aionforge_domain::edges::Audit;
 use aionforge_domain::nodes::forensic::AuditEvent;
 use aionforge_domain::time::Timestamp;
-use selene_core::PropertyMap;
+use selene_core::{NodeId, PropertyMap};
 
 use crate::dedup::entity_node_by_id;
 use crate::error::StoreError;
@@ -30,22 +43,37 @@ use crate::materialize::ensure_edge;
 use crate::note::{MaterializedNote, materialize_notes};
 use crate::store::Store;
 
+/// A distilled note paired with the audit recording the call that produced it (M3.T08).
+///
+/// Pairing is structural so the provenance audit can be wired straight to the note it describes
+/// (`AuditEvent -AUDIT-> Note`): one note, one producing call, one queryable provenance edge.
+#[derive(Debug, Clone)]
+pub struct DistilledNoteWrite {
+    /// The distilled note to write, with its `DERIVED_FROM` source facts.
+    pub note: MaterializedNote,
+    /// The `distill` audit recording the call's model identity, endpoint, seed, and outcome.
+    pub audit: AuditEvent,
+}
+
 impl Store {
     /// Materialize a batch of distilled notes and their provenance audits in one fresh write
     /// transaction, entirely off the consolidation cursor (M3.T08).
     ///
-    /// Each note is content-addressed and deduped by id, so a re-run writes no second copy and a
-    /// crash mid-batch is safe to retry. Every source fact is already committed (the distiller
-    /// reads the current graph, not an in-flight episode), so note lineage resolves through the
-    /// committed index — the in-transaction fact map and the canonical remap are empty here. The
-    /// note's `Note -DERIVED_FROM-> Fact` edges are wired by the shared note materializer.
+    /// `written` carries the notes the distiller produced, each paired with the audit of the call
+    /// that produced it. Each note is content-addressed and deduped by id, so a re-run writes no
+    /// second copy and a crash mid-batch is safe to retry. Every source fact is already committed
+    /// (the distiller reads the current graph, not an in-flight episode), so note lineage resolves
+    /// through the committed index — the in-transaction fact map and the canonical remap are empty
+    /// here. The shared note materializer wires each `Note -DERIVED_FROM-> Fact` edge; this
+    /// surface then wires the paired `AuditEvent -AUDIT-> Note` so the consolidating model is one
+    /// hop from the note for the cross-family guard (07 §T3, M6.T01).
     ///
-    /// Each `AuditEvent` records one distillation call's full provenance (model identity,
-    /// endpoint, seed, and outcome) in its payload; it is written deduped by its content-addressed
-    /// id and wired `AuditEvent -AUDIT-> Entity` to the subject it distilled. The audit's
-    /// `subject_id` names that entity; if it is somehow absent from the committed graph the audit
-    /// node is still written — the provenance lives in the payload, not the edge — and only the
-    /// edge is skipped (logged), so one stale subject cannot wedge the batch.
+    /// `declined` carries the audits of calls that produced no note — a lossy summary the
+    /// detail-retention guard rejected, or a cluster the distiller declined — so that every call
+    /// is recorded (M3.T08). Lacking a note, each is anchored `AUDIT -> Entity` on its subject;
+    /// if that entity is somehow absent from the committed graph the audit node is still written
+    /// (the provenance is the payload, not the edge) and only the edge is skipped, logged, so one
+    /// stale subject cannot wedge the batch.
     ///
     /// This never reads or writes any episode, cursor, or `consolidation_state`: distillation is
     /// invisible to the scheduler, and the canonical consolidation path is untouched whether this
@@ -56,45 +84,52 @@ impl Store {
     /// rolls back the whole batch — the graph is left exactly as it was, with no partial notes.
     pub fn materialize_distilled_notes(
         &self,
-        notes: &[MaterializedNote],
-        audits: &[AuditEvent],
+        written: &[DistilledNoteWrite],
+        declined: &[AuditEvent],
         now: &Timestamp,
     ) -> Result<(), StoreError> {
-        if notes.is_empty() && audits.is_empty() {
+        if written.is_empty() && declined.is_empty() {
             return Ok(());
         }
 
         // All source facts are committed, so resolution falls through to the index: an empty
         // in-transaction fact map and an empty canonical remap (mirrors the cursor path's note
         // step, minus the episode-local facts it has and this off-cursor batch does not).
-        let empty_fact_nodes: HashMap<String, selene_core::NodeId> = HashMap::new();
+        let empty_fact_nodes: HashMap<String, NodeId> = HashMap::new();
         let empty_canonical: HashMap<aionforge_domain::ids::Id, aionforge_domain::ids::Id> =
             HashMap::new();
+        let notes: Vec<MaterializedNote> = written.iter().map(|w| w.note.clone()).collect();
 
         let mut txn = self.graph().begin_write();
         {
             let mut mutator = txn.mutator();
 
             // Notes + `DERIVED_FROM` lineage (deduped by content-addressed id; an unresolvable
-            // source drops just that edge, logged, like the cursor path).
-            materialize_notes(
+            // source drops just that edge, logged, like the cursor path). The returned node of
+            // each note, in order, is what we wire its provenance audit to.
+            let note_nodes = materialize_notes(
                 &mut mutator,
-                notes,
+                &notes,
                 &empty_fact_nodes,
                 &empty_canonical,
                 now,
             )?;
 
-            // Provenance audits: node deduped by content-addressed id, then `AUDIT -> Entity`.
-            for event in audits {
-                let audit_node =
-                    match crate::audit::find_existing(mutator.read(), &event.identity.id)? {
-                        Some(node) => node,
-                        None => {
-                            let (labels, props) = crate::audit::to_node(event)?;
-                            mutator.create_node(labels, props)?
-                        }
-                    };
+            // Provenance for each written note: audit node (deduped by id), then `AUDIT -> Note`.
+            for (write, note_node) in written.iter().zip(note_nodes) {
+                let audit_node = upsert_audit(&mut mutator, &write.audit)?;
+                ensure_edge(
+                    &mut mutator,
+                    Audit::LABEL,
+                    audit_node,
+                    note_node,
+                    PropertyMap::from_pairs(Vec::new())?,
+                )?;
+            }
+
+            // Calls that produced no note: audit recorded anyway, anchored on the subject entity.
+            for event in declined {
+                let audit_node = upsert_audit(&mut mutator, event)?;
                 match entity_node_by_id(mutator.read(), &event.subject_id)? {
                     Some(subject_node) => ensure_edge(
                         &mut mutator,
@@ -106,12 +141,27 @@ impl Store {
                     None => tracing::warn!(
                         audit = event.identity.id.as_str(),
                         subject = event.subject_id.as_str(),
-                        "distillation: audit subject entity not found; skipping AUDIT edge"
+                        "distillation: declined-call audit subject entity not found; skipping AUDIT edge"
                     ),
                 }
             }
         }
         txn.commit()?;
         Ok(())
+    }
+}
+
+/// Find the audit node carrying this event's content-addressed id, or create it. Dedup by id
+/// (UNIQUE) makes a replay reuse the node rather than collide — mirrors the cursor audit path.
+fn upsert_audit(
+    mutator: &mut selene_graph::Mutator<'_, '_>,
+    event: &AuditEvent,
+) -> Result<NodeId, StoreError> {
+    match crate::audit::find_existing(mutator.read(), &event.identity.id)? {
+        Some(node) => Ok(node),
+        None => {
+            let (labels, props) = crate::audit::to_node(event)?;
+            Ok(mutator.create_node(labels, props)?)
+        }
     }
 }
