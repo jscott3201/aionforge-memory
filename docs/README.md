@@ -24,6 +24,9 @@ This is reference and guides, not planning or changelogs.
 - [Namespace authorization](namespace-authorization.md) — who can write where: the caller-asserted
   principal, the own-private / member-team write policy, refused-and-audited denials, and the
   visible set that bounds reads.
+- [Provenance signing](provenance-signing.md) — the off-by-default signed-write gate: the host signs
+  and the substrate verifies, the host-supplied episode id and its collision guard, writer enrollment,
+  the clock-skew window, and the audited refusals — all with the unsigned path untouched.
 
 ## Consolidation
 

@@ -117,6 +117,55 @@ fn commit_capture_writes_the_bundle_and_round_trips() {
 }
 
 #[test]
+fn a_duplicate_episode_id_is_rejected_by_the_unique_constraint() {
+    // The backstop behind the signed-write collision pre-check (M4.T03): even if the
+    // pre-check were bypassed, `Episode.id` is `UNIQUE` in the DDL and enforced at commit,
+    // so a second episode reusing an id cannot land.
+    let store = store();
+    let first = episode("the first content");
+    let id = first.identity.id;
+    store
+        .commit_capture(
+            &first,
+            &provenance(&id, &first.agent_id),
+            &audit(&id, &first.agent_id),
+        )
+        .expect("first commit");
+
+    // The pre-check sees the id as taken.
+    assert!(store.episode_exists(&id).expect("probe"));
+
+    // A second episode reusing that id over different content is rejected at commit, not
+    // written as a duplicate.
+    let mut second = episode("a different content under the same id");
+    second.identity.id = id;
+    assert!(
+        store
+            .commit_capture(
+                &second,
+                &provenance(&id, &second.agent_id),
+                &audit(&id, &second.agent_id),
+            )
+            .is_err(),
+        "a duplicate Episode.id must be rejected by the UNIQUE constraint at commit"
+    );
+
+    // Exactly one episode still carries the id; the rejected write left nothing behind.
+    let count = match store
+        .execute(
+            &BoundQuery::new("MATCH (e:Episode) WHERE e.id = $id RETURN e.id AS id")
+                .bind_uuid("id", id)
+                .expect("bind"),
+        )
+        .expect("count")
+    {
+        QueryResult::Rows(rows) => rows.row_count(),
+        _ => 0,
+    };
+    assert_eq!(count, 1, "no duplicate episode landed");
+}
+
+#[test]
 fn commit_capture_wires_the_edges() {
     let store = store();
     let ep = episode("an event worth proving");

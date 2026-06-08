@@ -242,6 +242,43 @@ impl Store {
         }
     }
 
+    /// Whether any episode — live or soft-forgotten — already carries this domain id.
+    ///
+    /// The signed-write collision pre-check (06 §3, M4.T03): a signed write adopts a
+    /// host-supplied subject id as its episode id. `Episode.id` is `UNIQUE` in the DDL
+    /// (`catalog`), enforced at commit, so a duplicate id can never actually land — a second
+    /// `commit_capture` with the same id fails the write. This probe sits in front of that
+    /// constraint: on the common path it lets the capture path reject a reused id with a clean,
+    /// audited collision *before* spending an embedder round-trip and before the commit fails
+    /// with an opaque store error. (The exact-duplicate probe is no help here — it keys on
+    /// `content_hash`, not `id`, so it misses a reused id over different content.) `Episode.id`
+    /// is scalar-indexed, so this is a probe, not a scan, and the index must exist for the
+    /// probe to mean anything: `nodes_with_property_eq` returns `None` (read here as "absent")
+    /// when no index is registered, so without it the pre-check silently no-ops and the
+    /// commit-time `UNIQUE` is the only line left. Soft-forgotten episodes (`expired_at` set)
+    /// still hold their id, so they count: the id stays taken.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the id cannot be encoded for the lookup.
+    pub fn episode_exists(&self, id: &Id) -> Result<bool, StoreError> {
+        let snapshot = self.graph.read();
+        let label = db_string(Episode::LABEL)?;
+        let prop = db_string("id")?;
+        let value = crate::convert::id_value(id)?;
+        let Some(rows) = snapshot.nodes_with_property_eq(&label, &prop, &value) else {
+            return Ok(false);
+        };
+        for row in rows.iter() {
+            let Some(node) = snapshot.node_id_for_row(selene_graph::RowIndex::new(row)) else {
+                continue;
+            };
+            if snapshot.node_properties(node).is_some() {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     /// Execute a parameter-bound GQL statement.
     ///
     /// The query's source is fixed and trusted; every caller value travels as a

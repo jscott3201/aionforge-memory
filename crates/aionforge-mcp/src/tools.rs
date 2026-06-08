@@ -132,6 +132,9 @@ pub async fn capture_tool<E: Embedder>(
             transport: Some("mcp".to_string()),
             request_id: None,
             trust: params.trust.unwrap_or(0.5),
+            // MCP captures are unsigned; signed-write deployments reject them until the MCP
+            // transport carries a host signature (out of scope for M4.T03).
+            signed: None,
         },
         // MCP captures are untrusted, so the episode is confined to the writer's
         // private namespace (04 §1, 06 §1).

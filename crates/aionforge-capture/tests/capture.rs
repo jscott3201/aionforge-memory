@@ -130,6 +130,7 @@ fn request(content: &str, agent: &Id) -> CaptureRequest {
             transport: Some("library".to_string()),
             request_id: None,
             trust: 0.8,
+            signed: None,
         },
         trusted: false,
         namespace: None,

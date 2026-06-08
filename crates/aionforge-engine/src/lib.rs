@@ -14,7 +14,7 @@
 
 use std::sync::Arc;
 
-use aionforge_capture::Capturer;
+use aionforge_capture::{Capturer, ProvenanceGate};
 use aionforge_consolidate::{
     Consolidator, Distiller, FactExtractionPass, LinkEvolvePass, SkillInductionPass,
 };
@@ -25,9 +25,16 @@ use aionforge_domain::namespace::Namespace;
 use aionforge_domain::time::Timestamp;
 use aionforge_retrieval::HybridRetriever;
 use aionforge_security::{CaptureFilter, SecurityError};
+use aionforge_trust::{Ed25519Verifier, SignedWriteGate, StoreKeyResolver, SystemWallClock};
+
+/// The widest sane clock-skew tolerance for signed writes (five minutes, 06 §3). Mirrors the
+/// `aionforge-config` ceiling; the engine keeps its own copy because it takes no config
+/// dependency.
+const MAX_CLOCK_SKEW_TOLERANCE_MS: u64 = 300_000;
 
 pub use aionforge_capture::{
-    CaptureConfig, CaptureReceipt, CaptureRequest, CaptureVerdict, EmbeddingOutcome, WriterContext,
+    CaptureConfig, CaptureError, CaptureReceipt, CaptureRequest, CaptureVerdict, EmbeddingOutcome,
+    SignedProvenance, WriterContext,
 };
 pub use aionforge_consolidate::{
     ConsolidationConfig, ConsolidationHandle, ConsolidationLag, DISTILL_RULE_VERSION,
@@ -53,6 +60,60 @@ pub struct MemoryConfig {
     pub capture: CaptureConfig,
     /// Retrieval tuning.
     pub retriever: RetrieverConfig,
+    /// Signed-write gating (06 §3). Off by default; when `signed_writes` is set the engine
+    /// builds an Ed25519 provenance gate over the store's registered agent keys. The host maps
+    /// `aionforge-config`'s `SecurityConfig` into this, so the engine takes no config dependency.
+    pub security: SecurityGate,
+}
+
+/// The engine's signed-write gating posture (06 §3, M4.T03).
+///
+/// The host maps `aionforge-config`'s `SecurityConfig` into this struct, so the engine stays
+/// free of a config dependency. Default is off, so an unconfigured `Memory` composes its
+/// capture path exactly as before — no gate, no crypto, the unsigned fast path.
+///
+/// `SecurityConfig.redaction` has no counterpart here on purpose: redaction is enforced by the
+/// capture privacy filter, not the provenance gate, so the host's `SecurityConfig` ->
+/// `SecurityGate` mapping carries only `signed_writes` and `clock_skew_tolerance_ms`.
+#[derive(Debug, Clone)]
+pub struct SecurityGate {
+    /// Whether every capture write must carry a verified Ed25519 provenance signature.
+    pub signed_writes: bool,
+    /// The clock-skew tolerance in milliseconds for signed writes; validated to lie in
+    /// `(0, 300_000]` when `signed_writes` is on.
+    pub clock_skew_tolerance_ms: u64,
+}
+
+impl Default for SecurityGate {
+    fn default() -> Self {
+        Self {
+            signed_writes: false,
+            clock_skew_tolerance_ms: 60_000,
+        }
+    }
+}
+
+impl SecurityGate {
+    /// Check the skew bound when signed writes are on (06 §3). Mirrors the `aionforge-config`
+    /// rule so the engine validates its own copy regardless of how the host populated it.
+    fn validate(&self) -> Result<(), String> {
+        if self.signed_writes {
+            if self.clock_skew_tolerance_ms == 0 {
+                return Err(
+                    "security.clock_skew_tolerance_ms must be greater than zero when signed \
+                     writes are on"
+                        .to_string(),
+                );
+            }
+            if self.clock_skew_tolerance_ms > MAX_CLOCK_SKEW_TOLERANCE_MS {
+                return Err(
+                    "security.clock_skew_tolerance_ms must be at most 300000 (five minutes)"
+                        .to_string(),
+                );
+            }
+        }
+        Ok(())
+    }
 }
 
 /// The Aionforge Memory facade over a shared store and an embedder.
@@ -92,6 +153,7 @@ impl<E: Embedder> Memory<E> {
         authorizer: Arc<dyn Authorizer>,
     ) -> Result<Self, EngineError> {
         config.capture.validate().map_err(EngineError::Config)?;
+        config.security.validate().map_err(EngineError::Config)?;
         let embedder = Arc::new(embedder);
         let filter = CaptureFilter::with_defaults().map_err(EngineError::filter)?;
         let capturer = Capturer::new(
@@ -101,6 +163,20 @@ impl<E: Embedder> Memory<E> {
             config.capture,
             Arc::clone(&authorizer),
         );
+        // Signed writes (06 §3): when on, gate the capture path with an Ed25519 provenance gate
+        // over the store's registered agent keys. This is the single place crypto meets the
+        // capture path; the capturer itself stays crypto-free. Off ⇒ no gate, unsigned fast path.
+        let capturer = if config.security.signed_writes {
+            let gate: Arc<dyn ProvenanceGate> = Arc::new(SignedWriteGate::new(
+                Ed25519Verifier,
+                Arc::new(StoreKeyResolver::new(Arc::clone(&store))),
+                Arc::new(SystemWallClock),
+                config.security.clock_skew_tolerance_ms,
+            ));
+            capturer.with_gate(gate)
+        } else {
+            capturer
+        };
         let retriever = HybridRetriever::with_authorizer(
             Arc::clone(&store),
             Arc::clone(&embedder),

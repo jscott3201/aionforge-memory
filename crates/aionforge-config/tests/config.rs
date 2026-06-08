@@ -162,6 +162,41 @@ fn a_disabled_embedder_skips_endpoint_validation() {
 }
 
 #[test]
+fn signed_writes_bound_the_clock_skew_tolerance() {
+    // Off by default: the tolerance is inert and never validated.
+    let mut config = Config::default();
+    config.security.signed_writes = false;
+    config.security.clock_skew_tolerance_ms = 0;
+    config
+        .validate()
+        .expect("an off signed-writes policy ignores the tolerance");
+
+    // On: a zero window would reject every write (skew is always >= 0), so it is a config error.
+    let mut config = Config::default();
+    config.security.signed_writes = true;
+    config.security.clock_skew_tolerance_ms = 0;
+    assert!(
+        matches!(config.validate(), Err(ConfigError::Invalid { key, .. }) if key == "security.clock_skew_tolerance_ms"),
+        "a zero tolerance with signed writes on is rejected"
+    );
+
+    // On: above the five-minute ceiling is rejected.
+    let mut config = Config::default();
+    config.security.signed_writes = true;
+    config.security.clock_skew_tolerance_ms = 300_001;
+    assert!(
+        matches!(config.validate(), Err(ConfigError::Invalid { key, .. }) if key == "security.clock_skew_tolerance_ms"),
+        "a tolerance above the ceiling is rejected"
+    );
+
+    // On: the ceiling itself is allowed.
+    let mut config = Config::default();
+    config.security.signed_writes = true;
+    config.security.clock_skew_tolerance_ms = 300_000;
+    config.validate().expect("the ceiling itself is allowed");
+}
+
+#[test]
 fn plain_http_is_rejected_unless_loopback() {
     let allowed = [
         "http://localhost:1234/v1",

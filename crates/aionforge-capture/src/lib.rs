@@ -19,8 +19,9 @@ mod error;
 mod receipt;
 mod request;
 
+pub use aionforge_domain::gate::ProvenanceGate;
 pub use capturer::Capturer;
 pub use config::CaptureConfig;
 pub use error::CaptureError;
 pub use receipt::{CaptureReceipt, CaptureVerdict, EmbeddingOutcome};
-pub use request::{CaptureRequest, WriterContext};
+pub use request::{CaptureRequest, SignedProvenance, WriterContext};

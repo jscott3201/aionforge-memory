@@ -30,6 +30,7 @@
 //!             transport: Some("library".to_string()),
 //!             request_id: None,
 //!             trust: 0.9,
+//!             signed: None,
 //!         },
 //!         trusted: false,
 //!         namespace: None,
