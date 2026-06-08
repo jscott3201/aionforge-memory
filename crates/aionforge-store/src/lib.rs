@@ -28,6 +28,7 @@ mod migrate;
 mod note;
 mod provenance;
 mod providers;
+mod relates_to;
 mod schema;
 mod search;
 mod skill;
@@ -47,9 +48,10 @@ pub use materialize::{
 pub use migrate::{MigrationPlan, MigrationReport, PendingChange};
 pub use note::MaterializedNote;
 pub use providers::CandidateStateInfo;
+pub use relates_to::{LinkEdgeWrite, RelatesToLink};
 pub use schema::{EdgeTypeShape, NodeTypeShape, PropertyKind, PropertyShape, SchemaSnapshot};
 pub use search::{CandidateSet, ExpandDirection, ExpandEdge, SearchHit, SearchKind, SetOp};
 pub use skill_induction::InducedSkillWrite;
 pub use store::{CaptureWriteIds, Store};
 
-pub use selene_core::{NodeId, Value};
+pub use selene_core::{EdgeId, NodeId, Value};
