@@ -25,6 +25,12 @@ This is reference and guides, not planning or changelogs.
   principal, the own-private / member-team write policy, refused-and-audited denials, and the
   visible set that bounds reads.
 
+## Consolidation
+
+- [Concurrent merge](concurrent-merge.md) — how concurrent writes about the same thing come together
+  into one state: a functional fact converges to a single current value chosen by event time then
+  object, so the outcome does not depend on processing order, and the loser is kept in history.
+
 ## Substrate
 
 - [Identifiers](identifiers.md) — how ids work: time-ordered UUIDv7 for generated records,
