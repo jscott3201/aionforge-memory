@@ -182,13 +182,30 @@ fn namespace_denied_audit_count(store: &Store) -> usize {
     }
 }
 
-/// A scalar field of the single `namespace_denied` audit (the payload round-trip itself is asserted
-/// at L0 in the store's `commit_audit` test).
+/// A scalar field of the single `namespace_denied` audit.
 fn namespace_denied_audit_field(store: &Store, field: &str) -> Option<String> {
     // `field` is a trusted static identifier from the test; the kind literal is a constant.
     let source =
         format!("MATCH (a:AuditEvent) WHERE a.kind = 'namespace_denied' RETURN a.{field} AS v"); // gql-ident-ok
     first_string(store, BoundQuery::new(source))
+}
+
+/// The decoded JSON payload of the single `namespace_denied` audit, so the capture flow's own
+/// `namespace_denied_audit` construction — its `requested_namespace`, `reason`, and `agent` —
+/// is asserted end-to-end, not only at the L0 round-trip where the audit is built by hand.
+fn namespace_denied_audit_payload(store: &Store) -> serde_json::Value {
+    match store
+        .execute(&BoundQuery::new(
+            "MATCH (a:AuditEvent) WHERE a.kind = 'namespace_denied' RETURN a.payload AS p",
+        ))
+        .expect("payload query")
+    {
+        QueryResult::Rows(rows) => match rows.value(0, 0) {
+            Some(Value::Json(json)) => json.as_serde().clone(),
+            other => panic!("expected a JSON payload, got {other:?}"),
+        },
+        other => panic!("expected rows, got {other:?}"),
+    }
 }
 
 fn episode_field(store: &Store, id: &Id, field: &str) -> Option<String> {
@@ -502,7 +519,7 @@ async fn a_trusted_write_to_a_non_member_team_is_refused_and_audited() {
         "the write is refused as unauthorized, got {err:?}"
     );
     // No episode landed, and the attempt was recorded as a namespace_denied audit whose subject is
-    // the agent and which lives in the system namespace (the payload is asserted at L0).
+    // the agent and which lives in the system namespace.
     assert_eq!(
         episode_count(&store),
         0,
@@ -523,6 +540,12 @@ async fn a_trusted_write_to_a_non_member_team_is_refused_and_audited() {
         Some("system"),
         "the audit lives in the system namespace"
     );
+    // The payload carries the requested namespace, the deny reason, and the agent — built by the
+    // capture flow itself, so this asserts that construction end-to-end.
+    let payload = namespace_denied_audit_payload(&store);
+    assert_eq!(payload["requested_namespace"], "team:squad");
+    assert_eq!(payload["reason"], "not a member of the team");
+    assert_eq!(payload["agent"], agent.as_str());
 }
 
 #[tokio::test]
@@ -555,6 +578,47 @@ async fn a_trusted_write_to_global_or_system_is_refused_and_audited() {
             "the {target} attempt is audited"
         );
     }
+}
+
+#[tokio::test]
+async fn a_trusted_write_to_another_agents_private_namespace_is_refused_and_audited() {
+    let store = store();
+    let bob = Id::generate();
+    let alice = Id::generate();
+    let cap = capturer(
+        store.clone(),
+        FakeEmbedder::new(&[]),
+        CaptureConfig::default(),
+    );
+
+    // Bob makes a trusted write aimed at Alice's private namespace. An agent may write only its own
+    // private space, so this is refused as `NotOwnPrivate` (06 §1) — the wall between agents' private
+    // memory. This is the cross-agent case the unit policy test covers, now exercised through capture.
+    let mut req = request("peeking at alice", &bob);
+    req.trusted = true;
+    req.namespace = Some(Namespace::Agent(alice.as_str().to_string()));
+
+    let err = cap
+        .capture(req)
+        .await
+        .expect_err("another agent's private space is off-limits");
+    assert!(
+        matches!(err, aionforge_capture::CaptureError::Unauthorized(_)),
+        "refused as unauthorized, got {err:?}"
+    );
+    assert_eq!(episode_count(&store), 0, "nothing lands in alice's space");
+    assert_eq!(namespace_denied_audit_count(&store), 1);
+    assert_eq!(
+        namespace_denied_audit_field(&store, "subject_id").as_deref(),
+        Some(bob.as_str()),
+        "the rejected writer, not the target, is the audit subject"
+    );
+    let payload = namespace_denied_audit_payload(&store);
+    assert_eq!(
+        payload["requested_namespace"],
+        format!("agent:{}", alice.as_str())
+    );
+    assert_eq!(payload["reason"], "not the agent's own private namespace");
 }
 
 #[tokio::test]

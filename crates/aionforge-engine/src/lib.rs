@@ -112,7 +112,9 @@ impl<E: Embedder> Memory<E> {
         })
     }
 
-    /// The namespace authority backing this memory's capture (and, from M4.T01 PR-C, recall) paths.
+    /// The namespace authority every capture write is checked against — the single seam a host
+    /// overrides through [`Memory::with_authorizer`]. Recall scopes its own reads by namespace
+    /// today; folding that read filter onto this authority is a later step.
     #[must_use]
     pub fn authorizer(&self) -> &Arc<dyn Authorizer> {
         &self.authorizer
