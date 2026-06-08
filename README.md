@@ -41,6 +41,10 @@ We'd rather say that plainly up front than oversell it.
 - **Everything goes through the engine.** Storage, BM25 text search, dense vectors,
   and graph algorithms are all selene-db. No second search engine, no separate vector
   store.
+- **Bring your own model, one at a time.** Embeddings and the optional chat model go
+  through OpenAI-compatible / Anthropic clients (local or hosted); a deployment declares a
+  single provider and model, with no cost-first auto-routing, so the responding model stays
+  verifiable. The substrate runs no inference itself.
 - **Time is first-class, and nothing gets thrown away.** Facts record when they were
   true and when we learned them. A correction supersedes the old fact instead of
   overwriting it. Hard deletion is its own deliberate, audited path.
