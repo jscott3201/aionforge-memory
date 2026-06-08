@@ -75,15 +75,16 @@ subject.
 
 ## Reads
 
-Reads are bounded by namespace as well. A recall returns memory from the global space and
-from the viewer's own namespace; another agent's private memory never surfaces — it is left
-out of the results rather than returned and redacted.
+Reads are bounded by the same authority as writes. A recall takes the reading `Principal`
+and asks the `Authorizer` for its **visible set** — the global space, the agent's own private
+namespace, and the teams it belongs to, never System. A memory surfaces only if its namespace
+is in that set; anything outside it is left out of the results rather than returned and
+redacted, so a recall never even hints that hidden memory exists.
 
-The `Authorizer` also computes a principal's **visible set** — the full read boundary the
-policy intends: the global space, the agent's own, and its member teams, never System. That
-is the same shape as the write rules above. The recall path scopes reads itself today (global
-and own namespace); routing it through this visible set, so a viewer reads from its member
-teams too, is the matching read-side step that lands alongside team-aware retrieval.
+The visible set is computed once per query, so the check is a single set-membership test per
+candidate. Because one `Authorizer` answers both questions, a custom policy injected through
+`Memory::with_authorizer` governs reads and writes together: there is no way to widen what an
+agent can read without also changing the authority that gates what it can write.
 
 ## Injecting a policy
 
