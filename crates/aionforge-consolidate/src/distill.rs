@@ -36,18 +36,28 @@ use aionforge_store::{CandidateSet, DistilledNoteWrite, FactKey, MaterializedNot
 
 use crate::audit::{DistillProvenance, distill_actor_id, distill_audit};
 use crate::config::SummarizationConfig;
-use crate::summarize::{build_clusters, check_detail_retention, note_id};
+use crate::summarize::{RetentionOutcome, build_clusters, check_detail_retention, note_id};
 
 /// How the off-cursor distiller is tuned. **Off by default** — `enabled` is the binding gate, so
 /// a deployment that never sets it pays nothing and writes no distilled notes (M3.T08).
+///
+/// `endpoint` and `seed` are **provenance to record, not behavior to drive** — they describe the
+/// completer the injected summarizer was built against, which the `Summarizer` seam does not
+/// expose. The caller therefore supplies them here from the same `CompleterConfig` it used to build
+/// the completer (the endpoint base URL and the client's pinned seed), so the `distill` audit can
+/// record the full model provenance for the cross-family guard. Keeping them in sync with the
+/// completer is the caller's responsibility; a mismatch only misrecords provenance, it cannot
+/// change what the model returns.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DistillationConfig {
     /// Whether distillation runs at all. **Default `false`.**
     pub enabled: bool,
-    /// The completion endpoint recorded in every call's provenance (the base URL, not a secret).
-    /// Supplied by the caller from its completer configuration; `None` leaves it unrecorded.
+    /// The completion endpoint to record in every call's provenance (the base URL — never a
+    /// secret; the API key lives only in the completer). Supplied by the caller from its completer
+    /// configuration; `None` leaves it unrecorded.
     pub endpoint: Option<String>,
-    /// The pinned sampling seed recorded in every call's provenance.
+    /// The pinned sampling seed to record in every call's provenance. Supplied by the caller from
+    /// the completer's configured seed; `None` leaves it unrecorded.
     pub seed: Option<i64>,
     /// The most clusters one run will distill (a bound on the model calls a single invocation
     /// can make; the rest wait for the next run).
@@ -221,12 +231,22 @@ impl<S: Summarizer, E: Embedder> Distiller<S, E> {
                 cluster,
                 output,
                 id,
+                retention,
             });
         }
 
         // Embed the surviving note bodies in one batch so the distilled notes are vector-searchable.
         let contents: Vec<String> = pending.iter().map(|p| p.output.content.clone()).collect();
         let embeddings = self.embed(contents).await?;
+        // Fail closed on a slot-count mismatch (the embedder contract is one vector per input):
+        // a short batch would otherwise silently drop the tail notes when zipped.
+        if embeddings.len() != pending.len() {
+            return Err(DistillError::Embed(format!(
+                "embedder returned {} vectors for {} note bodies",
+                embeddings.len(),
+                pending.len()
+            )));
+        }
         let model = self.embedder.model().clone();
 
         let mut written: Vec<DistilledNoteWrite> = Vec::with_capacity(pending.len());
@@ -235,6 +255,7 @@ impl<S: Summarizer, E: Embedder> Distiller<S, E> {
                 cluster,
                 output,
                 id,
+                retention,
             } = pending;
             let source_facts = cluster
                 .facts
@@ -250,7 +271,7 @@ impl<S: Summarizer, E: Embedder> Distiller<S, E> {
                 &cluster,
                 &provenance,
                 "written",
-                None,
+                Some(&retention),
                 Some(&id),
                 namespace,
                 now,
@@ -345,6 +366,9 @@ struct Pending {
     cluster: SummarizationCluster,
     output: SummaryOutput,
     id: Id,
+    /// The guard outcome that admitted it, recorded in the written-note audit for parity with the
+    /// rejected-call audits (the metrics that show *why* the note passed).
+    retention: RetentionOutcome,
 }
 
 /// The identity block for a distilled note: a fresh transaction time, the namespace, and the

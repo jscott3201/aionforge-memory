@@ -217,6 +217,10 @@ impl<E: Embedder + 'static> Memory<E> {
     /// never stall or corrupt the cursor. `now` is supplied by the caller; the facade keeps no
     /// ambient clock, so distilled-note transaction time is deterministic.
     ///
+    /// The caller is responsible for populating `config.endpoint` and `config.seed` from the same
+    /// completer configuration that built `summarizer` — they are recorded in each call's
+    /// provenance audit (the `Summarizer` seam does not expose them), never used to drive behavior.
+    ///
     /// # Errors
     /// Returns [`EngineError::Distillation`] if a store read, the note-body embedding, or the
     /// final write fails. A model that is unavailable or returns nothing usable is not an error.

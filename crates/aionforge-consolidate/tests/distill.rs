@@ -589,3 +589,111 @@ async fn distilled_notes_coexist_with_cursor_rule_summaries_in_a_disjoint_id_spa
         "the distilled note coexists with the rule summary (disjoint id-spaces)"
     );
 }
+
+const TEAM_EPISODE: &str = "Alice works on Aionforge. Alice is based in NYC. Alice prefers Rust. \
+                            Bob works on Aionforge. Bob is based in Seattle. Bob prefers Go.";
+
+#[tokio::test]
+async fn a_multi_subject_batch_distills_each_subject_into_its_own_note() {
+    let store = store();
+    let namespace = Namespace::Agent("team".to_string());
+    populate_facts(&store, TEAM_EPISODE, &namespace).await;
+
+    let distiller = Distiller::new(
+        mock(Behavior::Echo),
+        Arc::new(AxisEmbedder::new()),
+        enabled_config(),
+    );
+    let report = distiller
+        .distill(&store, &namespace, &now())
+        .await
+        .expect("distill");
+
+    assert_eq!(report.clusters_seen, 2, "Alice and Bob each form a cluster");
+    assert_eq!(report.notes_written, 2, "one distilled note per subject");
+    assert_eq!(note_count(&store), 2);
+    assert_eq!(
+        audit_to_note_edges(&store),
+        2,
+        "each note has its own provenance edge (the batch embeds and wires all of them)"
+    );
+}
+
+#[tokio::test]
+async fn distillation_stays_within_its_namespace() {
+    // Alice's facts live in namespace A, Bob's in namespace B. Distilling A must touch only A.
+    let store = store();
+    let ns_a = Namespace::Agent("alice".to_string());
+    let ns_b = Namespace::Agent("bob".to_string());
+    populate_facts(&store, ALICE_EPISODE, &ns_a).await;
+    populate_facts(
+        &store,
+        "Bob works on Aionforge. Bob is based in Seattle. Bob prefers Go.",
+        &ns_b,
+    )
+    .await;
+
+    let distiller = Distiller::new(
+        mock(Behavior::Echo),
+        Arc::new(AxisEmbedder::new()),
+        enabled_config(),
+    );
+    let report = distiller
+        .distill(&store, &ns_a, &now())
+        .await
+        .expect("distill");
+
+    assert_eq!(
+        report.clusters_seen, 1,
+        "only the queried namespace's subject is seen"
+    );
+    assert_eq!(report.notes_written, 1, "one note, for Alice");
+    assert_eq!(note_count(&store), 1, "Bob's namespace is untouched");
+}
+
+#[tokio::test]
+async fn a_flapping_outcome_records_a_fresh_call_and_then_writes_the_note() {
+    // The model is unavailable on the first run (declined, no note) and recovers on the second
+    // (written). The audit id includes the outcome, so the two calls are both recorded; the second
+    // run writes the note for the same fact set and wires exactly one provenance edge.
+    let store = store();
+    let namespace = Namespace::Agent("alice".to_string());
+    populate_facts(&store, ALICE_EPISODE, &namespace).await;
+
+    let down = Distiller::new(
+        mock(Behavior::Unavailable),
+        Arc::new(AxisEmbedder::new()),
+        enabled_config(),
+    );
+    let first = down
+        .distill(&store, &namespace, &now())
+        .await
+        .expect("first run");
+    assert_eq!(first.declined, 1, "the unavailable call is recorded");
+    assert_eq!(note_count(&store), 0, "no note while the model is down");
+
+    let up = Distiller::new(
+        mock(Behavior::Echo),
+        Arc::new(AxisEmbedder::new()),
+        enabled_config(),
+    );
+    let second = up
+        .distill(&store, &namespace, &now())
+        .await
+        .expect("second run");
+    assert_eq!(
+        second.notes_written, 1,
+        "the recovered model writes the note"
+    );
+    assert_eq!(note_count(&store), 1);
+    assert_eq!(
+        distill_audit_count(&store),
+        2,
+        "both calls are audited (declined, then written) — the audit id includes the outcome"
+    );
+    assert_eq!(
+        audit_to_note_edges(&store),
+        1,
+        "only the written call wires a provenance edge to the note"
+    );
+}
