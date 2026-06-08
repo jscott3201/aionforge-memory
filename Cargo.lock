@@ -2454,7 +2454,7 @@ dependencies = [
 [[package]]
 name = "selene-algorithms"
 version = "1.1.0"
-source = "git+ssh://git@github.com/jscott3201/selene-db.git?branch=development#0f3a1c520b3f4233c95b31d903043a370b782a17"
+source = "git+ssh://git@github.com/jscott3201/selene-db.git?branch=development#00d2fd0a0434aeb424711530e84c7ce6d88c8d81"
 dependencies = [
  "parking_lot",
  "rayon",
@@ -2469,7 +2469,7 @@ dependencies = [
 [[package]]
 name = "selene-core"
 version = "1.1.0"
-source = "git+ssh://git@github.com/jscott3201/selene-db.git?branch=development#0f3a1c520b3f4233c95b31d903043a370b782a17"
+source = "git+ssh://git@github.com/jscott3201/selene-db.git?branch=development#00d2fd0a0434aeb424711530e84c7ce6d88c8d81"
 dependencies = [
  "bytes",
  "jiff",
@@ -2488,7 +2488,7 @@ dependencies = [
 [[package]]
 name = "selene-gql"
 version = "1.1.0"
-source = "git+ssh://git@github.com/jscott3201/selene-db.git?branch=development#0f3a1c520b3f4233c95b31d903043a370b782a17"
+source = "git+ssh://git@github.com/jscott3201/selene-db.git?branch=development#00d2fd0a0434aeb424711530e84c7ce6d88c8d81"
 dependencies = [
  "jiff",
  "lru",
@@ -2514,7 +2514,7 @@ dependencies = [
 [[package]]
 name = "selene-graph"
 version = "1.1.0"
-source = "git+ssh://git@github.com/jscott3201/selene-db.git?branch=development#0f3a1c520b3f4233c95b31d903043a370b782a17"
+source = "git+ssh://git@github.com/jscott3201/selene-db.git?branch=development#00d2fd0a0434aeb424711530e84c7ce6d88c8d81"
 dependencies = [
  "arc-swap",
  "imbl",
@@ -2539,7 +2539,7 @@ dependencies = [
 [[package]]
 name = "selene-persist"
 version = "1.1.0"
-source = "git+ssh://git@github.com/jscott3201/selene-db.git?branch=development#0f3a1c520b3f4233c95b31d903043a370b782a17"
+source = "git+ssh://git@github.com/jscott3201/selene-db.git?branch=development#00d2fd0a0434aeb424711530e84c7ce6d88c8d81"
 dependencies = [
  "blake3",
  "miette",
