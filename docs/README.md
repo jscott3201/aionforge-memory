@@ -6,6 +6,7 @@ This is reference and guides, not planning or changelogs.
 ## Subsystems
 
 - [Procedural memory](procedural-memory.md) — skills stored as data: versioning,
-  reliability, and reliability-weighted retrieval.
+  reliability, reliability-weighted retrieval, bad-pattern avoidance, and conservative
+  off-by-default skill induction.
 
 More subsystem guides land here as each one is built.

@@ -46,7 +46,8 @@ We'd rather say that plainly up front than oversell it.
   overwriting it. Hard deletion is its own deliberate, audited path.
 - **Writes split into two lanes.** Capture is fast, on the order of milliseconds, so
   it never blocks the agent. The slower work (pulling out facts, resolving entities,
-  summarizing) happens in the background.
+  summarizing, and — only when turned on — inducing a reusable skill from a procedure an
+  agent keeps repeating) happens in the background.
 - **Retrieval picks its strategy per query.** Lexical, dense, graph, recency, and
   trust signals get rank-fused, and graph expansion only kicks in for the queries it
   actually helps.

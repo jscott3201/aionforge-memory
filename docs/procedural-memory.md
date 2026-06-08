@@ -66,6 +66,59 @@ Bad patterns are negative procedural memory: immutable once written, specific to
 skill they were observed against, and surfaced with that skill so a known failure is
 visible *before* the skill is reused.
 
+## Induced skills
+
+Most skills are authored: an agent (or its host) writes them and saves them. The
+substrate can also **induce** a skill during consolidation — but conservatively, and
+**off by default**. Induction is the substrate noticing that an agent keeps doing the
+same thing and capturing it as a reusable procedure, without ever inventing or executing
+one.
+
+Induction runs as a separate consolidation pass, so an installation that does not opt in
+carries no induction footprint at all. When enabled, a single episode is induced into a
+skill only when **every** conservative gate holds:
+
+- **Off by default.** It runs only when `induction.enabled` is set.
+- **A produced procedure.** Only an assistant or tool episode is a candidate — never a
+  user message or a system message.
+- **The agent's own namespace.** The episode must live in a private (`agent:`) namespace,
+  and the induced skill is confined to exactly that namespace. This is a checked
+  precondition, not just an inherited field, so team, global, and system memory never
+  induce.
+- **Reuse evidence.** The episode's exact content must have recurred at least a configured
+  number of times (default three) within a bounded recent window in that namespace.
+  Repetition is the deterministic stand-in for "this procedure is worth keeping": there is
+  no executor and no recorded-outcome signal at this layer (those arrive with the optional
+  model-backed distillation work), so what the substrate can see is that the agent came
+  back to the same procedure again and again.
+- **Enough substance.** The content must clear a small lexical floor — a minimum length
+  and a minimum number of distinct words — so a repeated one-liner or an error log never
+  becomes a skill.
+
+An induced skill is transparent by construction: its body is the recurring episode's text
+**verbatim** — there is no summarization or extraction step, so there is nothing for the
+substrate to get subtly wrong, and an operator auditing it sees exactly the procedure the
+agent repeated. It is flagged `induced`, starts with a neutral reliability prior and zero
+successes (it earns its track record like any skill), is recorded with an `induce_skill`
+audit, and links back to its source episode by `DERIVED_FROM`. Because the M3 inducer is a
+pure rule with no embedder, an induced skill is retrieved by its description's BM25 surface
+(the lexical recall floor) rather than by vector similarity.
+
+Two safety lines are worth stating plainly. The substrate **never executes** a skill — an
+induced body is inert data, and induction introduces no executor. And an induced skill is
+**never auto-promoted** across a trust boundary; it stays private to the agent that
+produced it. Promotion to a shared namespace is a separate, attested path (multi-agent
+trust) and is out of scope here. These together are the mitigation for poisoned procedural
+memory: even a deliberately-repeated bad procedure stays private, never runs, and only ever
+surfaces if it actually matches a later problem.
+
+Induction is **idempotent**. An induced skill's id is content-addressed over its namespace,
+the recurring content, and the inducer's rule version, and it is written in the same atomic
+transaction as the episode's consolidation flip. Re-consolidating the same episode (after a
+crash, say) reconstructs the same id and writes nothing the second time. Bumping the
+inducer's rule version changes the id, which cuts a fresh version under the same name and
+deprecates the prior one — deprecate-never-delete, exactly like an authored skill.
+
 ## Retrieving skills
 
 `retrieve_skills(problem, k)` is a dedicated procedural-recall path, separate from the
@@ -128,3 +181,9 @@ deprecation, audit construction, change detection, and the reliability-weighted
 ranking — over the layer-0 store's versioned-skill surface, which provides the atomic
 write primitives and the indexed reads. Only the store names the underlying graph
 engine; this layer speaks domain types.
+
+Induction lives in the consolidation subsystem, not here: it is a separate, off-by-default
+consolidation pass over the same layer-0 skill surface, built on a `SkillInducer` seam
+(the deterministic `RuleInducer` in M3, a model-backed inducer in the optional distillation
+layer) and tuned by an `InductionConfig`. It writes induced skills atomically with the
+episode flip, so a crash commits both or neither.
