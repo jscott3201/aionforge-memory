@@ -7,12 +7,13 @@ use std::sync::Arc;
 use aionforge_domain::edges::{About, Audit, Contradicts, HasProvenance, SupersededBy};
 use aionforge_domain::embedding::Embedding;
 use aionforge_domain::ids::{ContentHash, Id};
+use aionforge_domain::namespace::Namespace;
 use aionforge_domain::nodes::associative::Note;
 use aionforge_domain::nodes::episodic::Episode;
 use aionforge_domain::nodes::forensic::{AuditEvent, ProvenanceRecord};
 use aionforge_domain::nodes::semantic::{Entity, Fact};
 use aionforge_domain::time::Timestamp;
-use selene_core::{GraphId, NodeId, PropertyMap, db_string};
+use selene_core::{GraphId, NodeId, PropertyMap, Value, db_string};
 use selene_gql::{BindingTable, BuiltinProcedureRegistry, Session, StatementOutput};
 use selene_graph::{DEFAULT_WAL_FILE_NAME, GraphTypeDef, SeleneGraph, SharedGraph, WalConfig};
 
@@ -314,6 +315,38 @@ impl Store {
                 None => Ok(None),
             },
             _ => Ok(None),
+        }
+    }
+
+    /// How many live episodes in `namespace` carry this exact `content_hash`, capped at
+    /// `window` (05 §1, M3.T06).
+    ///
+    /// The reuse-evidence probe behind conservative skill induction: a procedure an agent
+    /// re-emitted byte-for-byte is counted by its `content_hash`, an indexed `STRING` column, so
+    /// this is an index probe, not a scan. The `LIMIT $window` bounds the work a high-volume
+    /// agent can ask of one consolidation pass and is the only count that matters (the induction
+    /// threshold is far below the window). Only active episodes count — a soft-forgotten one
+    /// (`expired_at` set, 02 §3) is not evidence — and the `namespace` filter keeps the count
+    /// inside the agent-private trust boundary the induced skill will live in.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the query fails.
+    pub fn count_recent_episodes_by_content_hash(
+        &self,
+        namespace: &Namespace,
+        content_hash: &ContentHash,
+        window: usize,
+    ) -> Result<usize, StoreError> {
+        let query = BoundQuery::new(
+            "MATCH (e:Episode) WHERE e.content_hash = $h AND e.namespace = $ns \
+             AND e.expired_at IS NULL RETURN e.id AS id LIMIT $w",
+        )
+        .bind_str("h", content_hash.as_str())?
+        .bind_str("ns", &namespace.to_string())?
+        .bind("w", Value::Uint(window as u64))?;
+        match self.execute(&query)? {
+            QueryResult::Rows(rows) => Ok(rows.row_count()),
+            _ => Ok(0),
         }
     }
 

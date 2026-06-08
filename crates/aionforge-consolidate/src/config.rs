@@ -157,9 +157,52 @@ impl Default for SummarizationConfig {
     }
 }
 
-/// The tuning the fact-extraction pass needs: entity resolution, supersession detection,
-/// and summarization. Bundled so the facade and the pass take one config, not a widening
-/// list.
+/// How the skill-induction pass decides whether a recurring episode becomes an induced skill
+/// (05 §1, M3.T06).
+///
+/// Conservative by construction and **off by default**: nothing is induced unless `enabled` is
+/// set, and even then only a procedural-role episode whose exact content has recurred at least
+/// `repetition_threshold` times (the reuse evidence) within a bounded window, and which clears
+/// the lexical-structure floor, is induced. Carries no floats, so it derives `Eq`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InductionConfig {
+    /// Whether induction runs at all. **Default `false`** — the binding off-by-default gate.
+    pub enabled: bool,
+    /// The most recent same-content episodes the recurrence probe counts (also the query
+    /// `LIMIT`, so it bounds the work a high-volume agent can ask of one pass).
+    pub recurrence_window: usize,
+    /// The fewest exact-content recurrences (reuse evidence) before an episode is induced.
+    pub repetition_threshold: usize,
+    /// The fewest distinct whitespace tokens the content must carry to be worth inducing
+    /// (rejects a repeated short utterance or a one-line error log).
+    pub min_distinct_tokens: usize,
+    /// The fewest characters the content must carry to be induced.
+    pub min_body_chars: usize,
+    /// The most characters an induced body may carry (bounds the stored procedure size; a
+    /// longer episode is conservatively not induced rather than truncated).
+    pub max_body_chars: usize,
+    /// The prefix on every induced skill name (the rest is a content hash), so induced skills
+    /// are visibly namespaced apart from authored ones.
+    pub name_prefix: String,
+}
+
+impl Default for InductionConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            recurrence_window: 50,
+            repetition_threshold: 3,
+            min_distinct_tokens: 5,
+            min_body_chars: 16,
+            max_body_chars: 4096,
+            name_prefix: "induced/".to_string(),
+        }
+    }
+}
+
+/// The tuning the consolidation passes need: entity resolution, supersession detection,
+/// summarization, and skill induction. Bundled so the facade and the passes take one config,
+/// not a widening list.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct PassConfig {
     /// Entity-resolution tuning.
@@ -168,4 +211,6 @@ pub struct PassConfig {
     pub detection: DetectionConfig,
     /// Summary-note tuning.
     pub summarization: SummarizationConfig,
+    /// Skill-induction tuning (off by default).
+    pub induction: InductionConfig,
 }

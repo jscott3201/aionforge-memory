@@ -384,3 +384,93 @@ impl<S: Summarizer + ?Sized> Summarizer for std::sync::Arc<S> {
         (**self).identity()
     }
 }
+
+/// The identity of the inducer that auto-derived a skill during consolidation (05 §1, M3.T06).
+///
+/// Mirrors [`SummarizerIdentity`]: recorded so a later cross-family guard can tell which model
+/// family (or rule set) induced a skill, and so re-running the same rule version reproduces the
+/// same content-addressed skill id. The `rule_version` also keys the induced skill's id, so a
+/// bump cuts a fresh induced version under the same name rather than colliding with the old one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InducerIdentity {
+    /// Inducer model family, if model-backed (`None` for a pure rule inducer).
+    pub model_family: Option<String>,
+    /// Inducer model version, if model-backed.
+    pub model_version: Option<String>,
+    /// Version of the induction rule set that produced the skill.
+    pub rule_version: String,
+}
+
+/// The reuse evidence the consolidation pass gathered for one episode, handed to the
+/// [`SkillInducer`] (05 §1, M3.T06).
+///
+/// The pass owns the evidence policy — how many times the procedure recurred, over what window,
+/// in which namespace — and computes the count from the committed graph; the inducer only turns
+/// the episode into an inert candidate procedure. Keeping the count out here lets a model-backed
+/// inducer condition on the strength of the evidence without re-querying the store.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InductionContext {
+    /// How many live episodes in the namespace carried this exact content (the reuse evidence).
+    pub recurrence_count: usize,
+}
+
+/// What a [`SkillInducer`] rendered from a recurring episode: an inert candidate procedure
+/// (05 §1, M3.T06).
+///
+/// Only the procedure itself — the id, name, version, namespace, and `induced` flag are the
+/// pass's policy (kept out of the inducer exactly as the note id is kept out of the
+/// [`Summarizer`]), so the inducer cannot mint an id, escape its namespace, or clear the
+/// `induced` flag. The body is stored as data and is **never executed** by the substrate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InducedSkill {
+    /// A human-readable description; the BM25 recall surface for the induced skill.
+    pub description: String,
+    /// Language tag of the body.
+    pub language: String,
+    /// The procedure itself, stored as data (never executed).
+    pub body: String,
+}
+
+/// The skill-induction seam (05 §1): conservatively derive a reusable procedure from a
+/// recurring episode, off by default.
+///
+/// Conservative by contract: `induce` returns `None` to decline an episode it will not turn
+/// into a skill, so a thin or unsuitable episode yields no artifact — and the pass gates the
+/// call on reuse evidence (repetition), a procedural role, and the private namespace before the
+/// inducer is ever consulted. The production implementation would be model-backed (deferred to
+/// the optional M3.S3 distillation layer); M3 ships a deterministic rule inducer (its
+/// [`Error`](SkillInducer::Error) is [`Infallible`](std::convert::Infallible)) so consolidation
+/// stays hermetic and the induced skill id stays reproducible. An induced skill is confined to
+/// the private namespace and never auto-promoted across a trust boundary.
+pub trait SkillInducer: Send + Sync {
+    /// The typed error this seam surfaces.
+    type Error: std::error::Error + Send + Sync + 'static;
+
+    /// Render a recurring episode into a candidate procedure, or `None` to decline it.
+    fn induce(
+        &self,
+        episode: &Episode,
+        cx: &InductionContext,
+    ) -> impl Future<Output = Result<Option<InducedSkill>, Self::Error>> + Send;
+
+    /// The identity recorded into every induced skill's provenance.
+    fn identity(&self) -> &InducerIdentity;
+}
+
+/// A shared inducer is itself an inducer (mirrors the [`Summarizer`] forwarding), so one
+/// instance can back the consolidation pass without being cloned.
+impl<I: SkillInducer + ?Sized> SkillInducer for std::sync::Arc<I> {
+    type Error = I::Error;
+
+    fn induce(
+        &self,
+        episode: &Episode,
+        cx: &InductionContext,
+    ) -> impl Future<Output = Result<Option<InducedSkill>, Self::Error>> + Send {
+        (**self).induce(episode, cx)
+    }
+
+    fn identity(&self) -> &InducerIdentity {
+        (**self).identity()
+    }
+}

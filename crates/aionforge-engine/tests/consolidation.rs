@@ -15,7 +15,7 @@ use aionforge_domain::nodes::episodic::Role;
 use aionforge_domain::time::Timestamp;
 use aionforge_engine::{
     CaptureRequest, CaptureVerdict, ConsolidationConfig, EngineError, Memory, MemoryConfig,
-    PassConfig, RuleExtractor, RuleSummarizer, WriterContext,
+    PassConfig, RuleExtractor, RuleInducer, RuleSummarizer, WriterContext,
 };
 use aionforge_store::{BoundQuery, QueryResult};
 
@@ -119,6 +119,7 @@ async fn capture_then_start_consolidation_derives_a_fact() {
     let handle = memory.start_consolidation(
         RuleExtractor::with_default_rules(),
         RuleSummarizer::with_default_rules(),
+        RuleInducer::with_default_rules(),
         ConsolidationConfig {
             tick_interval: Duration::from_millis(25),
             ..ConsolidationConfig::default()

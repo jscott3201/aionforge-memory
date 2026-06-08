@@ -34,7 +34,8 @@ use selene_graph::{Mutator, SeleneGraph};
 use crate::convert::{enum_value, timestamp_value};
 use crate::error::StoreError;
 use crate::note::MaterializedNote;
-use crate::{audit, dedup, entity, fact, note};
+use crate::skill_induction::InducedSkillWrite;
+use crate::{audit, dedup, entity, fact, note, skill_induction};
 
 /// A fact to materialize, with the bi-temporal window for its `ABOUT` edge.
 ///
@@ -123,6 +124,8 @@ pub struct ConsolidationArtifacts {
     pub contradictions: Vec<Contradiction>,
     /// Conservative summary notes to write, each with its source-fact lineage (M2.T06).
     pub notes: Vec<MaterializedNote>,
+    /// Skills conservatively induced from a recurring episode (off by default, M3.T06).
+    pub induced_skills: Vec<InducedSkillWrite>,
     /// Audit events recording the pass's decisions (e.g. `canonicalize`, `quarantine`).
     pub audit_events: Vec<AuditEvent>,
 }
@@ -137,6 +140,7 @@ impl ConsolidationArtifacts {
             && self.supersessions.is_empty()
             && self.contradictions.is_empty()
             && self.notes.is_empty()
+            && self.induced_skills.is_empty()
             && self.audit_events.is_empty()
     }
 
@@ -148,6 +152,7 @@ impl ConsolidationArtifacts {
         self.supersessions.extend(other.supersessions);
         self.contradictions.extend(other.contradictions);
         self.notes.extend(other.notes);
+        self.induced_skills.extend(other.induced_skills);
         self.audit_events.extend(other.audit_events);
     }
 }
@@ -331,6 +336,17 @@ pub(crate) fn materialize_into(
     //      replay is a no-op) and wire its `Note -DERIVED_FROM-> Fact` lineage. The note
     //      step lives in `note.rs` with the note translation it depends on.
     note::materialize_notes(mutator, &artifacts.notes, &fact_nodes, &canonical_id, now)?;
+
+    // 3.6. Induced skills (M3.T06, off by default): write each content-addressed skill (deduped
+    //      by id so a replay is a no-op), deprecate the prior version of its name, wire the
+    //      AUDIT provenance, and link `Skill -DERIVED_FROM-> Episode`. The step lives in
+    //      `skill_induction.rs` with the induced-skill write type it depends on.
+    skill_induction::materialize_induced_skills(
+        mutator,
+        &artifacts.induced_skills,
+        episode_node_id,
+        now,
+    )?;
 
     // 4. Audit the pass's decisions (forensic): node + AUDIT edge to episode. Audit ids are
     //    content-derived (consolidate `audit` module), so this is deduped by id — a replay of

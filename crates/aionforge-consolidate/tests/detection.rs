@@ -14,8 +14,9 @@ use std::future::Future;
 use std::sync::Arc;
 
 use aionforge_consolidate::{
-    ConsolidationConfig, Consolidator, DetectionConfig, FactExtractionPass, ObjectRule, PassConfig,
-    PredicateRule, ResolutionConfig, Rule, RuleExtractor, RuleSummarizer, SummarizationConfig,
+    ConsolidationConfig, Consolidator, DetectionConfig, FactExtractionPass, InductionConfig,
+    ObjectRule, PassConfig, PredicateRule, ResolutionConfig, Rule, RuleExtractor, RuleSummarizer,
+    SummarizationConfig,
 };
 use aionforge_domain::blocks::{Identity, Stats};
 use aionforge_domain::contracts::Embedder;
@@ -286,6 +287,7 @@ fn status_extractor_and_config() -> (RuleExtractor, PassConfig) {
             resolution: ResolutionConfig::default(),
             detection,
             summarization: SummarizationConfig::default(),
+            induction: InductionConfig::default(),
         },
     )
 }

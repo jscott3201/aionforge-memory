@@ -15,8 +15,10 @@
 use std::sync::Arc;
 
 use aionforge_capture::Capturer;
-use aionforge_consolidate::{Consolidator, FactExtractionPass};
-use aionforge_domain::contracts::{Capture, Embedder, FactExtractor, Retriever, Summarizer};
+use aionforge_consolidate::{Consolidator, FactExtractionPass, SkillInductionPass};
+use aionforge_domain::contracts::{
+    Capture, Embedder, FactExtractor, Retriever, SkillInducer, Summarizer,
+};
 use aionforge_domain::time::Timestamp;
 use aionforge_retrieval::HybridRetriever;
 use aionforge_security::{CaptureFilter, SecurityError};
@@ -25,9 +27,9 @@ pub use aionforge_capture::{
     CaptureConfig, CaptureReceipt, CaptureRequest, CaptureVerdict, EmbeddingOutcome, WriterContext,
 };
 pub use aionforge_consolidate::{
-    ConsolidationConfig, ConsolidationHandle, ConsolidationLag, DetectionConfig, ObjectRule,
-    PassConfig, PredicateRule, ResolutionConfig, Rule, RuleExtractor, RuleSummarizer,
-    SummarizationConfig,
+    ConsolidationConfig, ConsolidationHandle, ConsolidationLag, DetectionConfig, InductionConfig,
+    ObjectRule, PassConfig, PredicateRule, ResolutionConfig, Rule, RuleExtractor, RuleInducer,
+    RuleSummarizer, SummarizationConfig,
 };
 pub use aionforge_retrieval::{
     EpisodeEntry, FactEntry, QueryClass, RecallBundle, RecallExplanation, RecallOptions,
@@ -162,27 +164,37 @@ impl<E: Embedder + 'static> Memory<E> {
     ///
     /// The pass shares this memory's embedder, so derived entities, facts,
     /// and notes are embedded with the same model as capture and retrieval. The injected
-    /// [`FactExtractor`] and [`Summarizer`] are the deterministic [`RuleExtractor`] /
-    /// [`RuleSummarizer`] in tests and the model-backed clients in production (M4).
-    pub fn start_consolidation<X, Sz>(
+    /// [`FactExtractor`], [`Summarizer`], and [`SkillInducer`] are the deterministic
+    /// [`RuleExtractor`] / [`RuleSummarizer`] / [`RuleInducer`] in tests and the model-backed
+    /// clients in production (M4 / the optional M3.S3 distillation layer).
+    ///
+    /// Skill induction is registered as a second pass but is **off unless
+    /// `pass_config.induction.enabled`** is set; a disabled pass is skipped by the scheduler and
+    /// absent from the cursor, so the default posture is extraction-only.
+    pub fn start_consolidation<X, Sz, I>(
         &self,
         extractor: X,
         summarizer: Sz,
+        inducer: I,
         config: ConsolidationConfig,
         pass_config: PassConfig,
     ) -> ConsolidationHandle
     where
         X: FactExtractor + 'static,
         Sz: Summarizer + 'static,
+        I: SkillInducer + 'static,
     {
-        let pass = FactExtractionPass::new(
+        let induction_config = pass_config.induction.clone();
+        let extraction = FactExtractionPass::new(
             Arc::new(extractor),
             Arc::clone(&self.embedder),
             Arc::new(summarizer),
             pass_config,
         );
+        let induction = SkillInductionPass::new(Arc::new(inducer), induction_config);
         let mut consolidator = Consolidator::new(Arc::clone(&self.store), config);
-        consolidator.register(Box::new(pass));
+        consolidator.register(Box::new(extraction));
+        consolidator.register(Box::new(induction));
         consolidator.start()
     }
 }

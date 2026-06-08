@@ -204,6 +204,90 @@ pub(crate) fn from_properties(props: &PropertyMap) -> Result<Skill, StoreError> 
     })
 }
 
+/// The node carrying this `Skill.id` against a read snapshot (`id` is indexed → at most one).
+///
+/// The snapshot-based core of [`Store::skill_node_by_id`], also used by the consolidation
+/// induced-skill materializer to dedup inside the open flip transaction (via `mutator.read()`).
+pub(crate) fn skill_node_id_in(
+    snapshot: &SeleneGraph,
+    id: &Id,
+) -> Result<Option<NodeId>, StoreError> {
+    let label = db_string(Skill::LABEL)?;
+    let prop = db_string(ID)?;
+    let value = id_value(id)?;
+    let Some(rows) = snapshot.nodes_with_property_eq(&label, &prop, &value) else {
+        return Ok(None);
+    };
+    Ok(rows
+        .iter()
+        .find_map(|row| snapshot.node_id_for_row(RowIndex::new(row))))
+}
+
+/// The active (non-deprecated) version of skill `name` against a read snapshot, with its node.
+///
+/// The snapshot-based core of [`Store::active_skill`]; the induced-skill materializer reuses it
+/// to find the prior version to deprecate inside the open flip transaction.
+pub(crate) fn active_skill_in(
+    snapshot: &SeleneGraph,
+    name: &str,
+) -> Result<Option<(NodeId, Skill)>, StoreError> {
+    for node in skill_nodes_by_name(snapshot, name)? {
+        if let Some(props) = snapshot.node_properties(node) {
+            let skill = from_properties(props)?;
+            if skill.deprecated_at.is_none() {
+                return Ok(Some((node, skill)));
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// Write a new skill version onto a caller-supplied transaction, deprecate-never-delete.
+///
+/// The shared mechanical core of [`Store::save_skill`] and the consolidation induced-skill
+/// materializer ([`crate::skill_induction`]): create the `Skill` node, stamp the prior active
+/// version's `deprecated_at` (so at most one version per name is active), and write each
+/// `AuditEvent -AUDIT-> Skill` provenance edge — all on the one mutator the caller owns, so an
+/// induced skill commits in the same atomic flip as the episode that produced it. The caller
+/// owns version monotonicity, the audit set, and (for induction) the dedup probe.
+///
+/// # Errors
+/// Returns [`StoreError`] if translation or any mutation fails.
+pub(crate) fn write_skill_into(
+    mutator: &mut Mutator,
+    skill: &Skill,
+    deprecate_prior: Option<NodeId>,
+    audits: &[AuditEvent],
+) -> Result<NodeId, StoreError> {
+    let (labels, props) = to_node(skill)?;
+    let audit_label = db_string(Audit::LABEL)?;
+    let skill_node = mutator.create_node(labels, props)?;
+    if let Some(prior) = deprecate_prior {
+        mutator.update_node(
+            prior,
+            LabelDiff::new([], [])?,
+            PropertyDiff::new(
+                [(
+                    db_string(DEPRECATED_AT)?,
+                    timestamp_value(&skill.identity.ingested_at),
+                )],
+                [],
+            )?,
+        )?;
+    }
+    for event in audits {
+        let (audit_labels, audit_props) = crate::audit::to_node(event)?;
+        let audit_node = mutator.create_node(audit_labels, audit_props)?;
+        mutator.create_edge(
+            audit_label.clone(),
+            audit_node,
+            skill_node,
+            PropertyMap::from_pairs(Vec::new())?,
+        )?;
+    }
+    Ok(skill_node)
+}
+
 /// The node ids of every `Skill` with this `name` (`name` is scalar-indexed, so a probe).
 fn skill_nodes_by_name(snapshot: &SeleneGraph, name: &str) -> Result<Vec<NodeId>, StoreError> {
     let label = db_string(Skill::LABEL)?;
@@ -298,36 +382,10 @@ impl Store {
         deprecate_prior: Option<NodeId>,
         audits: &[AuditEvent],
     ) -> Result<NodeId, StoreError> {
-        let (labels, props) = to_node(skill)?;
-        let audit_label = db_string(Audit::LABEL)?;
         let mut txn = self.graph().begin_write();
         let skill_node = {
             let mut mutator = txn.mutator();
-            let skill_node = mutator.create_node(labels, props)?;
-            if let Some(prior) = deprecate_prior {
-                mutator.update_node(
-                    prior,
-                    LabelDiff::new([], [])?,
-                    PropertyDiff::new(
-                        [(
-                            db_string(DEPRECATED_AT)?,
-                            timestamp_value(&skill.identity.ingested_at),
-                        )],
-                        [],
-                    )?,
-                )?;
-            }
-            for event in audits {
-                let (audit_labels, audit_props) = crate::audit::to_node(event)?;
-                let audit_node = mutator.create_node(audit_labels, audit_props)?;
-                mutator.create_edge(
-                    audit_label.clone(),
-                    audit_node,
-                    skill_node,
-                    PropertyMap::from_pairs(Vec::new())?,
-                )?;
-            }
-            skill_node
+            write_skill_into(&mut mutator, skill, deprecate_prior, audits)?
         };
         txn.commit()?;
         Ok(skill_node)
@@ -403,19 +461,7 @@ impl Store {
     /// # Errors
     /// Returns [`StoreError`] if the lookup fails.
     pub fn skill_node_by_id(&self, id: &Id) -> Result<Option<NodeId>, StoreError> {
-        let snapshot = self.graph().read();
-        let label = db_string(Skill::LABEL)?;
-        let prop = db_string(ID)?;
-        let value = id_value(id)?;
-        let Some(rows) = snapshot.nodes_with_property_eq(&label, &prop, &value) else {
-            return Ok(None);
-        };
-        for row in rows.iter() {
-            if let Some(node) = snapshot.node_id_for_row(RowIndex::new(row)) {
-                return Ok(Some(node));
-            }
-        }
-        Ok(None)
+        skill_node_id_in(&self.graph().read(), id)
     }
 
     /// The active (non-deprecated) version of the skill named `name`, with its node id.
@@ -428,16 +474,7 @@ impl Store {
     /// # Errors
     /// Returns [`StoreError`] if the lookup fails or a stored skill cannot be decoded.
     pub fn active_skill(&self, name: &str) -> Result<Option<(NodeId, Skill)>, StoreError> {
-        let snapshot = self.graph().read();
-        for node in skill_nodes_by_name(&snapshot, name)? {
-            if let Some(props) = snapshot.node_properties(node) {
-                let skill = from_properties(props)?;
-                if skill.deprecated_at.is_none() {
-                    return Ok(Some((node, skill)));
-                }
-            }
-        }
-        Ok(None)
+        active_skill_in(&self.graph().read(), name)
     }
 
     /// Every version of the skill named `name`, in ascending `version` order.

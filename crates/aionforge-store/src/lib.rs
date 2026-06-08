@@ -30,6 +30,7 @@ mod providers;
 mod schema;
 mod search;
 mod skill;
+mod skill_induction;
 mod store;
 
 pub use catalog::SCHEMA_VERSION;
@@ -46,6 +47,7 @@ pub use note::MaterializedNote;
 pub use providers::CandidateStateInfo;
 pub use schema::{EdgeTypeShape, NodeTypeShape, PropertyKind, PropertyShape, SchemaSnapshot};
 pub use search::{CandidateSet, ExpandDirection, ExpandEdge, SearchHit, SearchKind, SetOp};
+pub use skill_induction::InducedSkillWrite;
 pub use store::{CaptureWriteIds, Store};
 
 pub use selene_core::{NodeId, Value};

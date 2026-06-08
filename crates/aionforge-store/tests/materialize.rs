@@ -7,12 +7,14 @@ use aionforge_domain::edges::About;
 use aionforge_domain::ids::{ContentHash, Id};
 use aionforge_domain::namespace::Namespace;
 use aionforge_domain::nodes::episodic::{ConsolidationState, Episode, Role};
+use aionforge_domain::nodes::procedural::Skill;
 use aionforge_domain::nodes::semantic::{Entity, Fact, FactStatus};
 use aionforge_domain::time::{BiTemporal, Timestamp};
 use aionforge_domain::value::ObjectValue;
 use aionforge_store::{
     BoundQuery, ConsolidationArtifacts, ConsolidationCursor, Contradiction, FactKey,
-    MaterializedFact, NodeId, QueryResult, Store, StoreConfig, Supersession, Value,
+    InducedSkillWrite, MaterializedFact, NodeId, QueryResult, Store, StoreConfig, Supersession,
+    Value,
 };
 
 fn ts(text: &str) -> Timestamp {
@@ -620,4 +622,155 @@ fn materialize_contradiction_quarantines_the_source_and_is_idempotent() {
         "replay adds no second CONTRADICTS edge"
     );
     assert_eq!(fact_status(&store, &conflicting.identity.id), "quarantined");
+}
+
+// --- Induced skills (M3.T06) ---------------------------------------------------------------
+
+/// A minimal induced skill for the materializer: `induced = true`, content-addressed id, and a
+/// `source_hash` derived from the body (so a different body is a different hash).
+fn induced_skill(id_key: &str, name: &str, body: &str) -> Skill {
+    Skill {
+        identity: identity(Id::from_content_hash(id_key.as_bytes())),
+        stats: stats(),
+        name: name.to_string(),
+        version: 1,
+        description: "induced procedure".to_string(),
+        problem_embedding: None,
+        embedder_model: None,
+        language: "text".to_string(),
+        body: body.to_string(),
+        params: serde_json::Value::Null,
+        preconditions: None,
+        postconditions: None,
+        capabilities: Vec::new(),
+        success_count: 0,
+        failure_count: 0,
+        mean_latency_ms: None,
+        source_hash: ContentHash::of(body.as_bytes()),
+        last_success_at: None,
+        last_failure_at: None,
+        deprecated_at: None,
+        induced: true,
+    }
+}
+
+#[test]
+fn induced_skill_is_materialized_with_episode_lineage_and_replays_to_a_no_op() {
+    let store = store();
+    let (ep_node, episode) = insert_episode(&store);
+
+    let skill = induced_skill(
+        "induced-1",
+        "induced/abc123",
+        "do the thing\nthen the next thing",
+    );
+    let mut artifacts = ConsolidationArtifacts::default();
+    artifacts.induced_skills = vec![InducedSkillWrite {
+        skill: skill.clone(),
+        deprecate_prior: None,
+        audits: Vec::new(),
+    }];
+
+    store
+        .commit_consolidation_episode(
+            ep_node,
+            ConsolidationState::Raw,
+            ConsolidationState::Consolidated,
+            &cursor_at(&episode),
+            &now(),
+            &artifacts,
+        )
+        .expect("commit induced skill");
+
+    let stored = store
+        .skill_by_id(&skill.identity.id)
+        .expect("read skill")
+        .expect("the induced skill is persisted");
+    assert!(
+        stored.induced,
+        "the materialized skill keeps its induced flag"
+    );
+    assert_eq!(stored.body, skill.body, "the body round-trips verbatim");
+
+    // Provenance edge: the induced skill derives from the source episode.
+    let lineage = BoundQuery::new(
+        "MATCH (s:Skill {id: $sid})-[:DERIVED_FROM]->(e:Episode) RETURN e.id AS id",
+    )
+    .bind_str("sid", skill.identity.id.as_str())
+    .expect("bind sid");
+    let QueryResult::Rows(rows) = store.execute(&lineage).expect("lineage query") else {
+        panic!("expected rows");
+    };
+    assert_eq!(
+        rows.row_count(),
+        1,
+        "exactly one DERIVED_FROM edge to the episode"
+    );
+
+    // Replay the same artifacts (the crash-recovery path): the id already exists → skip, no dup.
+    reset_to_raw(&store);
+    store
+        .commit_consolidation_episode(
+            ep_node,
+            ConsolidationState::Raw,
+            ConsolidationState::Consolidated,
+            &cursor_at(&episode),
+            &now(),
+            &artifacts,
+        )
+        .expect("replay commit is a no-op");
+    let again = store.execute(&BoundQuery::new("MATCH (s:Skill) RETURN s.id AS id"));
+    let QueryResult::Rows(rows) = again.expect("count skills") else {
+        panic!("expected rows");
+    };
+    assert_eq!(
+        rows.row_count(),
+        1,
+        "replay materializes no second induced skill"
+    );
+}
+
+#[test]
+fn two_bodies_under_one_induced_name_fail_closed() {
+    let store = store();
+    let (ep_node, episode) = insert_episode(&store);
+
+    // Same name, different bodies → different source_hash → an inducer invariant violation.
+    let mut artifacts = ConsolidationArtifacts::default();
+    artifacts.induced_skills = vec![
+        InducedSkillWrite {
+            skill: induced_skill("induced-a", "induced/dup", "body alpha alpha alpha"),
+            deprecate_prior: None,
+            audits: Vec::new(),
+        },
+        InducedSkillWrite {
+            skill: induced_skill("induced-b", "induced/dup", "body beta beta beta"),
+            deprecate_prior: None,
+            audits: Vec::new(),
+        },
+    ];
+
+    let result = store.commit_consolidation_episode(
+        ep_node,
+        ConsolidationState::Raw,
+        ConsolidationState::Consolidated,
+        &cursor_at(&episode),
+        &now(),
+        &artifacts,
+    );
+    assert!(
+        result.is_err(),
+        "a dup-name conflict fails the commit closed"
+    );
+
+    // The transaction rolled back: no induced skill was written, and the episode is still raw.
+    let skills = store.execute(&BoundQuery::new("MATCH (s:Skill) RETURN s.id AS id"));
+    let QueryResult::Rows(rows) = skills.expect("count skills") else {
+        panic!("expected rows");
+    };
+    assert_eq!(
+        rows.row_count(),
+        0,
+        "nothing is published when the guard fires"
+    );
 }
