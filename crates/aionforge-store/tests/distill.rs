@@ -66,7 +66,7 @@ fn identity(id: Id) -> Identity {
 fn insert_entity(store: &Store, name: &str) -> (Id, NodeId) {
     let id = Id::generate();
     let entity = Entity {
-        identity: identity(id.clone()),
+        identity: identity(id),
         stats: stats(),
         canonical_name: name.to_string(),
         entity_type: "Person".to_string(),
@@ -84,7 +84,7 @@ fn fact(subject_id: &Id, predicate: &str, object: ObjectValue, statement: &str) 
     Fact {
         identity: identity(Id::generate()),
         stats: stats(),
-        subject_id: subject_id.clone(),
+        subject_id: *subject_id,
         predicate: predicate.to_string(),
         object,
         confidence: 0.9,
@@ -115,7 +115,7 @@ fn open_window(from: &str) -> About {
 
 fn fact_key(subject_id: &Id, predicate: &str, object: ObjectValue) -> FactKey {
     FactKey {
-        subject_id: subject_id.clone(),
+        subject_id: *subject_id,
         predicate: predicate.to_string(),
         object,
     }
@@ -141,7 +141,7 @@ fn distill_audit(id: Id, subject_id: &Id, outcome: &str) -> AuditEvent {
     AuditEvent {
         identity: identity(id),
         kind: AuditKind::Distill,
-        subject_id: subject_id.clone(),
+        subject_id: *subject_id,
         actor_id: Id::from_content_hash(b"distiller/llm-distill-v1"),
         payload: serde_json::json!({
             "outcome": outcome,
@@ -157,7 +157,7 @@ fn distill_audit(id: Id, subject_id: &Id, outcome: &str) -> AuditEvent {
 
 fn note_count_by_id(store: &Store, id: &Id) -> usize {
     let query = BoundQuery::new("MATCH (n:Note) WHERE n.id = $id RETURN n.id AS id")
-        .bind_str("id", id.as_str())
+        .bind_uuid("id", id)
         .expect("bind id");
     match store.execute(&query).expect("note count") {
         QueryResult::Rows(rows) => rows.row_count(),
@@ -167,7 +167,7 @@ fn note_count_by_id(store: &Store, id: &Id) -> usize {
 
 fn audit_count_by_id(store: &Store, id: &Id) -> usize {
     let query = BoundQuery::new("MATCH (a:AuditEvent) WHERE a.id = $id RETURN a.id AS id")
-        .bind_str("id", id.as_str())
+        .bind_uuid("id", id)
         .expect("bind id");
     match store.execute(&query).expect("audit count") {
         QueryResult::Rows(rows) => rows.row_count(),
@@ -180,11 +180,11 @@ fn note_id_for_audit(store: &Store, audit_id: &Id) -> Option<String> {
     let query = BoundQuery::new(
         "MATCH (a:AuditEvent)-[:AUDIT]->(n:Note) WHERE a.id = $id RETURN n.id AS id",
     )
-    .bind_str("id", audit_id.as_str())
+    .bind_uuid("id", audit_id)
     .expect("bind id");
     match store.execute(&query).expect("audit->note") {
         QueryResult::Rows(rows) => match rows.value(0, 0) {
-            Some(Value::String(s)) => Some(s.to_string()),
+            Some(Value::Uuid(u)) => Some(u.to_string()),
             _ => None,
         },
         _ => None,
@@ -226,7 +226,7 @@ fn audit_to_entity_edges(store: &Store) -> u64 {
 
 fn fact_count_by_id(store: &Store, id: &Id) -> usize {
     let query = BoundQuery::new("MATCH (f:Fact) WHERE f.id = $id RETURN f.id AS id")
-        .bind_str("id", id.as_str())
+        .bind_uuid("id", id)
         .expect("bind id");
     match store.execute(&query).expect("fact count") {
         QueryResult::Rows(rows) => rows.row_count(),
@@ -276,7 +276,7 @@ fn a_written_note_carries_lineage_and_audit_to_note_provenance_idempotently() {
                 ),
             ],
         },
-        audit: distill_audit(audit_id.clone(), &subject_id, "written"),
+        audit: distill_audit(audit_id, &subject_id, "written"),
     }];
 
     store
@@ -297,8 +297,8 @@ fn a_written_note_carries_lineage_and_audit_to_note_provenance_idempotently() {
         "a written note is not anchored on an entity"
     );
     assert_eq!(
-        note_id_for_audit(&store, &audit_id).as_deref(),
-        Some(note.identity.id.as_str()),
+        note_id_for_audit(&store, &audit_id),
+        Some(note.identity.id.to_string()),
         "the audit points to its own note (single-hop provenance for the cross-family guard)"
     );
     // The canonical source facts are untouched — distillation is non-lossy and non-canonical.
@@ -359,7 +359,7 @@ fn a_multi_note_batch_wires_each_audit_to_its_own_note() {
                     ObjectValue::Text("Aionforge".to_string()),
                 )],
             },
-            audit: distill_audit(alice_audit.clone(), &alice_id, "written"),
+            audit: distill_audit(alice_audit, &alice_id, "written"),
         },
         DistilledNoteWrite {
             note: MaterializedNote {
@@ -370,7 +370,7 @@ fn a_multi_note_batch_wires_each_audit_to_its_own_note() {
                     ObjectValue::Text("Aionforge".to_string()),
                 )],
             },
-            audit: distill_audit(bob_audit.clone(), &bob_id, "written"),
+            audit: distill_audit(bob_audit, &bob_id, "written"),
         },
     ];
 
@@ -384,13 +384,13 @@ fn a_multi_note_batch_wires_each_audit_to_its_own_note() {
         "one provenance edge per note"
     );
     assert_eq!(
-        note_id_for_audit(&store, &alice_audit).as_deref(),
-        Some(alice_note.identity.id.as_str()),
+        note_id_for_audit(&store, &alice_audit),
+        Some(alice_note.identity.id.to_string()),
         "alice's audit points to alice's note, not bob's"
     );
     assert_eq!(
-        note_id_for_audit(&store, &bob_audit).as_deref(),
-        Some(bob_note.identity.id.as_str()),
+        note_id_for_audit(&store, &bob_audit),
+        Some(bob_note.identity.id.to_string()),
         "bob's audit points to bob's note"
     );
 
@@ -428,7 +428,7 @@ fn a_note_with_an_unresolvable_source_is_written_with_the_edge_dropped() {
                 ObjectValue::Text("Nowhere".to_string()),
             )],
         },
-        audit: distill_audit(audit_id.clone(), &subject_id, "written"),
+        audit: distill_audit(audit_id, &subject_id, "written"),
     }];
 
     store
@@ -459,11 +459,7 @@ fn a_declined_call_is_audited_and_anchored_on_its_subject_entity() {
     let store = store();
     let (subject_id, _subject_node) = insert_entity(&store, "Alice");
     let audit_id = Id::from_content_hash(b"alice-declined-audit");
-    let declined = vec![distill_audit(
-        audit_id.clone(),
-        &subject_id,
-        "rejected_lossy",
-    )];
+    let declined = vec![distill_audit(audit_id, &subject_id, "rejected_lossy")];
 
     store
         .materialize_distilled_notes(&[], &declined, &now())
@@ -491,7 +487,7 @@ fn a_declined_audit_with_an_absent_subject_still_records_without_an_edge() {
     let store = store();
     let absent_subject = Id::from_content_hash(b"never-committed-entity");
     let audit_id = Id::from_content_hash(b"orphan-declined-audit");
-    let declined = vec![distill_audit(audit_id.clone(), &absent_subject, "declined")];
+    let declined = vec![distill_audit(audit_id, &absent_subject, "declined")];
 
     store
         .materialize_distilled_notes(&[], &declined, &now())

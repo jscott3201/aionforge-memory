@@ -20,7 +20,7 @@ use common::{FakeEmbedder, NOW, service, skill, skill_no_embedding, store, ts};
 fn audit_edges_into(store: &Store, skill_id: &Id) -> usize {
     let query =
         BoundQuery::new("MATCH (a:AuditEvent)-[:AUDIT]->(s:Skill {id: $sid}) RETURN a.id AS id")
-            .bind_str("sid", skill_id.as_str())
+            .bind_uuid("sid", skill_id)
             .expect("bind skill id");
     match store.execute(&query).expect("audit query") {
         QueryResult::Rows(rows) => rows.row_count(),
@@ -34,7 +34,7 @@ fn version_diff_payload(store: &Store, skill_id: &Id) -> serde_json::Value {
         "MATCH (a:AuditEvent)-[:AUDIT]->(s:Skill {id: $sid}) \
          WHERE a.kind = $kind RETURN a.payload AS payload",
     )
-    .bind_str("sid", skill_id.as_str())
+    .bind_uuid("sid", skill_id)
     .expect("bind skill id")
     .bind_str("kind", "skill_version_diff")
     .expect("bind kind");
@@ -216,10 +216,8 @@ async fn outcomes_reweight_retrieval_order() {
         .expect("loser");
 
     for _ in 0..5 {
-        svc.record_outcome(winner.clone(), true).await.expect("win");
-        svc.record_outcome(loser.clone(), false)
-            .await
-            .expect("loss");
+        svc.record_outcome(winner, true).await.expect("win");
+        svc.record_outcome(loser, false).await.expect("loss");
     }
 
     let hits = svc
@@ -449,11 +447,9 @@ async fn a_noop_resave_after_outcomes_preserves_the_counters() {
         .save_skill(skill("kappa", "body", "kappa", &[], [1.0, 0.0, 0.0, 0.0]))
         .await
         .expect("first save");
-    svc.record_outcome(id.clone(), true).await.expect("success");
-    svc.record_outcome(id.clone(), true).await.expect("success");
-    svc.record_outcome(id.clone(), false)
-        .await
-        .expect("failure");
+    svc.record_outcome(id, true).await.expect("success");
+    svc.record_outcome(id, true).await.expect("success");
+    svc.record_outcome(id, false).await.expect("failure");
 
     // An unchanged re-save is a no-op, so the earned reliability must survive — the reset only
     // happens when a genuinely new version is cut.
@@ -500,7 +496,7 @@ async fn over_fetch_lets_a_proven_skill_outrank_an_unproven_near_match() {
     .expect("unproven");
 
     for _ in 0..10 {
-        svc.record_outcome(proven.clone(), true).await.expect("win");
+        svc.record_outcome(proven, true).await.expect("win");
     }
 
     let hits = svc

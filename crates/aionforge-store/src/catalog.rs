@@ -45,7 +45,7 @@ pub(crate) const NODE_TYPES: &[TypeDdl] = &[
     TypeDdl {
         name: "Episode",
         ddl: r#"CREATE NODE TYPE IF NOT EXISTS :Episode (
-            id :: STRING NOT NULL UNIQUE IMMUTABLE,
+            id :: UUID NOT NULL UNIQUE IMMUTABLE,
             ingested_at :: ZONED DATETIME NOT NULL IMMUTABLE,
             namespace :: STRING NOT NULL,
             expired_at :: ZONED DATETIME,
@@ -59,8 +59,8 @@ pub(crate) const NODE_TYPES: &[TypeDdl] = &[
             content :: STRING NOT NULL,
             role :: STRING NOT NULL,
             captured_at :: ZONED DATETIME NOT NULL IMMUTABLE,
-            agent_id :: STRING NOT NULL,
-            session_id :: STRING,
+            agent_id :: UUID NOT NULL,
+            session_id :: UUID,
             content_hash :: STRING NOT NULL,
             embedding_v1 :: VECTOR,
             embedder_model :: STRING,
@@ -71,7 +71,7 @@ pub(crate) const NODE_TYPES: &[TypeDdl] = &[
     TypeDdl {
         name: "Fact",
         ddl: r#"CREATE NODE TYPE IF NOT EXISTS :Fact (
-            id :: STRING NOT NULL UNIQUE IMMUTABLE,
+            id :: UUID NOT NULL UNIQUE IMMUTABLE,
             ingested_at :: ZONED DATETIME NOT NULL IMMUTABLE,
             namespace :: STRING NOT NULL,
             expired_at :: ZONED DATETIME,
@@ -82,10 +82,10 @@ pub(crate) const NODE_TYPES: &[TypeDdl] = &[
             referenced_count :: UINT NOT NULL,
             surprise :: FLOAT NOT NULL,
             is_pinned :: BOOLEAN NOT NULL DEFAULT FALSE,
-            subject_id :: STRING NOT NULL,
+            subject_id :: UUID NOT NULL,
             predicate :: STRING NOT NULL,
             object_kind :: STRING NOT NULL,
-            object_entity_id :: STRING,
+            object_entity_id :: UUID,
             object_value :: JSON,
             confidence :: FLOAT NOT NULL,
             status :: STRING NOT NULL DEFAULT 'active',
@@ -98,7 +98,7 @@ pub(crate) const NODE_TYPES: &[TypeDdl] = &[
     TypeDdl {
         name: "Entity",
         ddl: r#"CREATE NODE TYPE IF NOT EXISTS :Entity (
-            id :: STRING NOT NULL UNIQUE IMMUTABLE,
+            id :: UUID NOT NULL UNIQUE IMMUTABLE,
             ingested_at :: ZONED DATETIME NOT NULL IMMUTABLE,
             namespace :: STRING NOT NULL,
             expired_at :: ZONED DATETIME,
@@ -121,7 +121,7 @@ pub(crate) const NODE_TYPES: &[TypeDdl] = &[
     TypeDdl {
         name: "Skill",
         ddl: r#"CREATE NODE TYPE IF NOT EXISTS :Skill (
-            id :: STRING NOT NULL UNIQUE IMMUTABLE,
+            id :: UUID NOT NULL UNIQUE IMMUTABLE,
             ingested_at :: ZONED DATETIME NOT NULL IMMUTABLE,
             namespace :: STRING NOT NULL,
             expired_at :: ZONED DATETIME,
@@ -156,7 +156,7 @@ pub(crate) const NODE_TYPES: &[TypeDdl] = &[
     TypeDdl {
         name: "BadPattern",
         ddl: r#"CREATE NODE TYPE IF NOT EXISTS :BadPattern (
-            id :: STRING NOT NULL UNIQUE IMMUTABLE,
+            id :: UUID NOT NULL UNIQUE IMMUTABLE,
             ingested_at :: ZONED DATETIME NOT NULL IMMUTABLE,
             namespace :: STRING NOT NULL,
             expired_at :: ZONED DATETIME,
@@ -176,7 +176,7 @@ pub(crate) const NODE_TYPES: &[TypeDdl] = &[
     TypeDdl {
         name: "Note",
         ddl: r#"CREATE NODE TYPE IF NOT EXISTS :Note (
-            id :: STRING NOT NULL UNIQUE IMMUTABLE,
+            id :: UUID NOT NULL UNIQUE IMMUTABLE,
             ingested_at :: ZONED DATETIME NOT NULL IMMUTABLE,
             namespace :: STRING NOT NULL,
             expired_at :: ZONED DATETIME,
@@ -192,13 +192,13 @@ pub(crate) const NODE_TYPES: &[TypeDdl] = &[
             keywords :: LIST<STRING>,
             embedding_v1 :: VECTOR,
             embedder_model :: STRING,
-            derived_from_episode :: STRING
+            derived_from_episode :: UUID
         ) STRICT"#,
     },
     TypeDdl {
         name: "CoreBlock",
         ddl: r#"CREATE NODE TYPE IF NOT EXISTS :CoreBlock (
-            id :: STRING NOT NULL UNIQUE IMMUTABLE,
+            id :: UUID NOT NULL UNIQUE IMMUTABLE,
             ingested_at :: ZONED DATETIME NOT NULL IMMUTABLE,
             namespace :: STRING NOT NULL,
             expired_at :: ZONED DATETIME,
@@ -220,7 +220,7 @@ pub(crate) const NODE_TYPES: &[TypeDdl] = &[
     TypeDdl {
         name: "Agent",
         ddl: r#"CREATE NODE TYPE IF NOT EXISTS :Agent (
-            id :: STRING NOT NULL UNIQUE IMMUTABLE,
+            id :: UUID NOT NULL UNIQUE IMMUTABLE,
             ingested_at :: ZONED DATETIME NOT NULL IMMUTABLE,
             namespace :: STRING NOT NULL,
             expired_at :: ZONED DATETIME,
@@ -234,27 +234,27 @@ pub(crate) const NODE_TYPES: &[TypeDdl] = &[
     TypeDdl {
         name: "Session",
         ddl: r#"CREATE NODE TYPE IF NOT EXISTS :Session (
-            id :: STRING NOT NULL UNIQUE IMMUTABLE,
+            id :: UUID NOT NULL UNIQUE IMMUTABLE,
             ingested_at :: ZONED DATETIME NOT NULL IMMUTABLE,
             namespace :: STRING NOT NULL,
             expired_at :: ZONED DATETIME,
             started_at :: ZONED DATETIME NOT NULL,
             ended_at :: ZONED DATETIME,
-            owner_agent_id :: STRING NOT NULL,
+            owner_agent_id :: UUID NOT NULL,
             metadata :: JSON NOT NULL
         ) STRICT"#,
     },
     TypeDdl {
         name: "ProvenanceRecord",
         ddl: r#"CREATE NODE TYPE IF NOT EXISTS :ProvenanceRecord (
-            id :: STRING NOT NULL UNIQUE IMMUTABLE,
+            id :: UUID NOT NULL UNIQUE IMMUTABLE,
             ingested_at :: ZONED DATETIME NOT NULL IMMUTABLE,
             namespace :: STRING NOT NULL,
             expired_at :: ZONED DATETIME,
-            subject_id :: STRING NOT NULL,
-            writer_agent_id :: STRING NOT NULL,
+            subject_id :: UUID NOT NULL,
+            writer_agent_id :: UUID NOT NULL,
             signature :: STRING NOT NULL IMMUTABLE,
-            source_episode_ids :: LIST<STRING>,
+            source_episode_ids :: LIST<UUID>,
             model_family :: STRING NOT NULL,
             model_version :: STRING,
             trust_at_write :: FLOAT NOT NULL
@@ -263,13 +263,13 @@ pub(crate) const NODE_TYPES: &[TypeDdl] = &[
     TypeDdl {
         name: "AuditEvent",
         ddl: r#"CREATE NODE TYPE IF NOT EXISTS :AuditEvent (
-            id :: STRING NOT NULL UNIQUE IMMUTABLE,
+            id :: UUID NOT NULL UNIQUE IMMUTABLE,
             ingested_at :: ZONED DATETIME NOT NULL IMMUTABLE,
             namespace :: STRING NOT NULL,
             expired_at :: ZONED DATETIME,
             kind :: STRING NOT NULL,
-            subject_id :: STRING NOT NULL,
-            actor_id :: STRING NOT NULL,
+            subject_id :: UUID NOT NULL,
+            actor_id :: UUID NOT NULL,
             payload :: JSON NOT NULL,
             signature :: STRING NOT NULL IMMUTABLE,
             occurred_at :: ZONED DATETIME NOT NULL IMMUTABLE
@@ -278,27 +278,27 @@ pub(crate) const NODE_TYPES: &[TypeDdl] = &[
     TypeDdl {
         name: "Promotion",
         ddl: r#"CREATE NODE TYPE IF NOT EXISTS :Promotion (
-            id :: STRING NOT NULL UNIQUE IMMUTABLE,
+            id :: UUID NOT NULL UNIQUE IMMUTABLE,
             ingested_at :: ZONED DATETIME NOT NULL IMMUTABLE,
             namespace :: STRING NOT NULL,
             expired_at :: ZONED DATETIME,
-            candidate_fact_id :: STRING NOT NULL,
+            candidate_fact_id :: UUID NOT NULL,
             posterior :: FLOAT NOT NULL,
             k :: UINT NOT NULL,
             status :: STRING NOT NULL,
             resolved_at :: ZONED DATETIME,
-            promoted_fact_id :: STRING
+            promoted_fact_id :: UUID
         ) STRICT"#,
     },
     TypeDdl {
         name: "ConsolidationCursor",
         ddl: r#"CREATE NODE TYPE IF NOT EXISTS :ConsolidationCursor (
-            id :: STRING NOT NULL UNIQUE IMMUTABLE,
+            id :: UUID NOT NULL UNIQUE IMMUTABLE,
             ingested_at :: ZONED DATETIME NOT NULL IMMUTABLE,
             namespace :: STRING NOT NULL,
             expired_at :: ZONED DATETIME,
             last_position :: STRING NOT NULL,
-            last_episode_id :: STRING,
+            last_episode_id :: UUID,
             last_processed_at :: ZONED DATETIME,
             rule_versions :: JSON NOT NULL
         ) STRICT"#,
@@ -306,7 +306,7 @@ pub(crate) const NODE_TYPES: &[TypeDdl] = &[
     TypeDdl {
         name: "SchemaVersion",
         ddl: r#"CREATE NODE TYPE IF NOT EXISTS :SchemaVersion (
-            id :: STRING NOT NULL UNIQUE IMMUTABLE,
+            id :: UUID NOT NULL UNIQUE IMMUTABLE,
             ingested_at :: ZONED DATETIME NOT NULL IMMUTABLE,
             namespace :: STRING NOT NULL,
             expired_at :: ZONED DATETIME,
@@ -317,7 +317,7 @@ pub(crate) const NODE_TYPES: &[TypeDdl] = &[
     TypeDdl {
         name: "Scope",
         ddl: r#"CREATE NODE TYPE IF NOT EXISTS :Scope (
-            id :: STRING NOT NULL UNIQUE IMMUTABLE,
+            id :: UUID NOT NULL UNIQUE IMMUTABLE,
             ingested_at :: ZONED DATETIME NOT NULL IMMUTABLE,
             namespace :: STRING NOT NULL,
             expired_at :: ZONED DATETIME,
@@ -328,7 +328,7 @@ pub(crate) const NODE_TYPES: &[TypeDdl] = &[
     TypeDdl {
         name: "RecencyWindow",
         ddl: r#"CREATE NODE TYPE IF NOT EXISTS :RecencyWindow (
-            id :: STRING NOT NULL UNIQUE IMMUTABLE,
+            id :: UUID NOT NULL UNIQUE IMMUTABLE,
             ingested_at :: ZONED DATETIME NOT NULL IMMUTABLE,
             namespace :: STRING NOT NULL,
             expired_at :: ZONED DATETIME,
@@ -340,7 +340,7 @@ pub(crate) const NODE_TYPES: &[TypeDdl] = &[
     TypeDdl {
         name: "ValidityAnchor",
         ddl: r#"CREATE NODE TYPE IF NOT EXISTS :ValidityAnchor (
-            id :: STRING NOT NULL UNIQUE IMMUTABLE,
+            id :: UUID NOT NULL UNIQUE IMMUTABLE,
             ingested_at :: ZONED DATETIME NOT NULL IMMUTABLE,
             namespace :: STRING NOT NULL,
             expired_at :: ZONED DATETIME,

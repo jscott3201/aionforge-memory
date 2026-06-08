@@ -180,7 +180,7 @@ fn identity(id: Id) -> Identity {
 fn entity(store: &Store, name: &str, embedding: [f32; 4]) -> (Id, NodeId) {
     let id = Id::generate();
     let ent = Entity {
-        identity: identity(id.clone()),
+        identity: identity(id),
         stats: stats(),
         canonical_name: name.to_string(),
         entity_type: "Concept".to_string(),
@@ -203,9 +203,9 @@ fn assert_fact(
 ) -> (Id, NodeId) {
     let id = Id::generate();
     let f = Fact {
-        identity: identity(id.clone()),
+        identity: identity(id),
         stats: stats(),
-        subject_id: subject.clone(),
+        subject_id: *subject,
         predicate: "rel".to_string(),
         object: ObjectValue::Text(statement.to_string()),
         confidence: 0.9,
@@ -235,9 +235,9 @@ fn support(store: &Store, from: &Id, to: &Id) {
         "MATCH (a:Fact {id: $from}), (b:Fact {id: $to}) \
          INSERT (a)-[:SUPPORTS {weight: $weight}]->(b)",
     )
-    .bind_str("from", from.as_str())
+    .bind_uuid("from", from)
     .unwrap()
-    .bind_str("to", to.as_str())
+    .bind_uuid("to", to)
     .unwrap()
     .bind("weight", Value::Float(1.0))
     .unwrap();

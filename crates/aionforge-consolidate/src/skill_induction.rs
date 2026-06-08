@@ -195,7 +195,7 @@ impl<I: SkillInducer + 'static> ConsolidationPass for SkillInductionPass<I> {
         // Gate 3: the lexical-structure floor — trivial or noise content is not a skill.
         if !structure_ok(&episode.content, &self.config) {
             tracing::debug!(
-                episode = episode.identity.id.as_str(),
+                episode = %episode.identity.id,
                 "induction: content below the structure floor; not inducing"
             );
             return Ok(PassOutput::default());
@@ -229,7 +229,7 @@ impl<I: SkillInducer + 'static> ConsolidationPass for SkillInductionPass<I> {
             Ok(Some(induced)) => induced,
             Ok(None) => {
                 tracing::debug!(
-                    episode = episode.identity.id.as_str(),
+                    episode = %episode.identity.id,
                     "induction: inducer declined; not inducing"
                 );
                 return Ok(PassOutput::default());

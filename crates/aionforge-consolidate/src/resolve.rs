@@ -87,7 +87,7 @@ impl CorefTable {
             .filter(|entry| entry.is_new)
             .map(|entry| {
                 (
-                    entry.id.clone(),
+                    entry.id,
                     entry.canonical_name.clone(),
                     entry.entity_type.clone(),
                     entry.aliases.clone(),
@@ -114,7 +114,7 @@ impl CorefTable {
             };
             if exact || subsumes {
                 fold_alias(entry, name);
-                return Some(entry.id.clone());
+                return Some(entry.id);
             }
         }
         None
@@ -183,7 +183,7 @@ pub(crate) fn resolve_surface(
     // 2. Exact name/alias gate over the BM25 entity index.
     if let Some(hit) = exact_entity(store, config, namespace, name, &surface.entity_type)? {
         coref.insert_existing(
-            hit.id.clone(),
+            hit.id,
             hit.canonical_name.clone(),
             surface.entity_type.clone(),
             name,
@@ -201,7 +201,7 @@ pub(crate) fn resolve_surface(
     // 3. Embedding clustering over the entity vector index.
     if let Some(hit) = nearest_entity(store, config, namespace, &surface.entity_type, embedding)? {
         coref.insert_existing(
-            hit.id.clone(),
+            hit.id,
             hit.canonical_name.clone(),
             surface.entity_type.clone(),
             name,
@@ -218,7 +218,7 @@ pub(crate) fn resolve_surface(
 
     // 4. New entity (conservative default).
     let id = new_entity_id(namespace, &surface.entity_type, name);
-    coref.insert_new(id.clone(), name.to_string(), surface.entity_type.clone());
+    coref.insert_new(id, name.to_string(), surface.entity_type.clone());
     Ok(Resolution {
         id,
         canonical_name: name.to_string(),
@@ -254,7 +254,7 @@ fn exact_entity(
         if entity.identity.namespace != *namespace || entity.entity_type != entity_type {
             continue;
         }
-        candidates.push(entity.identity.id.as_str().to_string());
+        candidates.push(entity.identity.id.to_string());
         let normalized = normalize(name);
         let matches = normalize(&entity.canonical_name) == normalized
             || entity.aliases.iter().any(|a| normalize(a) == normalized);
@@ -288,7 +288,7 @@ fn nearest_entity(
         if entity.identity.namespace != *namespace || entity.entity_type != entity_type {
             continue;
         }
-        candidates.push(entity.identity.id.as_str().to_string());
+        candidates.push(entity.identity.id.to_string());
         if hit.score <= config.merge_threshold {
             return Ok(Some(EntityHit {
                 id: entity.identity.id,

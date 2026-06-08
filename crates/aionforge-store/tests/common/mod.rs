@@ -160,8 +160,7 @@ pub fn current_fact_ids(store: &Store) -> BTreeSet<String> {
                 .expect("member is a live Fact")
                 .identity
                 .id
-                .as_str()
-                .to_owned()
+                .to_string()
         })
         .collect()
 }
@@ -183,11 +182,11 @@ pub fn assert_about(store: &Store, subject: &Entity, f: &Fact, window: &About) -
 // value is a bound parameter; only the trusted static labels sit in the source.
 
 /// Insert a minimal valid `Scope` (every `NOT NULL` field bound).
-pub fn insert_scope(store: &Store, id: &str) {
+pub fn insert_scope(store: &Store, id: &Id) {
     let query = BoundQuery::new(
         "INSERT (s:Scope {id: $id, ingested_at: $ts, namespace: $ns, name: $name, scope_kind: $kind})",
     )
-    .bind_str("id", id)
+    .bind_uuid("id", id)
     .unwrap()
     .bind("ts", zdt())
     .unwrap()
@@ -201,11 +200,11 @@ pub fn insert_scope(store: &Store, id: &str) {
 }
 
 /// Insert a minimal valid `RecencyWindow` (every `NOT NULL` field bound).
-pub fn insert_recency_window(store: &Store, id: &str) {
+pub fn insert_recency_window(store: &Store, id: &Id) {
     let query = BoundQuery::new(
         "INSERT (w:RecencyWindow {id: $id, ingested_at: $ts, namespace: $ns, label: $label})",
     )
-    .bind_str("id", id)
+    .bind_uuid("id", id)
     .unwrap()
     .bind("ts", zdt())
     .unwrap()
@@ -217,21 +216,21 @@ pub fn insert_recency_window(store: &Store, id: &str) {
 }
 
 /// Insert a minimal valid `ProvenanceRecord` (every `NOT NULL` field bound).
-pub fn insert_provenance(store: &Store, id: &str, subject: &str) {
+pub fn insert_provenance(store: &Store, id: &Id, subject: &Id) {
     let query = BoundQuery::new(
         "INSERT (p:ProvenanceRecord {id: $id, ingested_at: $ts, namespace: $ns, \
          subject_id: $subj, writer_agent_id: $writer, signature: $sig, \
          model_family: $mf, trust_at_write: $tw})",
     )
-    .bind_str("id", id)
+    .bind_uuid("id", id)
     .unwrap()
     .bind("ts", zdt())
     .unwrap()
     .bind_str("ns", "agent:alice")
     .unwrap()
-    .bind_str("subj", subject)
+    .bind_uuid("subj", subject)
     .unwrap()
-    .bind_str("writer", "agent:alice")
+    .bind_uuid("writer", Id::from_content_hash(b"agent:alice"))
     .unwrap()
     .bind_str("sig", "signature-bytes")
     .unwrap()
@@ -243,11 +242,11 @@ pub fn insert_provenance(store: &Store, id: &str, subject: &str) {
 }
 
 /// Insert a property-free edge of fixed `source` between two ids bound as parameters.
-pub fn insert_edge(store: &Store, source: &str, from: &str, to: &str) {
+pub fn insert_edge(store: &Store, source: &str, from: &Id, to: &Id) {
     let query = BoundQuery::new(source)
-        .bind_str("from", from)
+        .bind_uuid("from", from)
         .unwrap()
-        .bind_str("to", to)
+        .bind_uuid("to", to)
         .unwrap();
     store.execute(&query).expect("insert edge");
 }

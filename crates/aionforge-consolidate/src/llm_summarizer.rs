@@ -135,7 +135,7 @@ fn render_fact(fact: &Fact) -> String {
     }
     let object = match &fact.object {
         ObjectValue::Text(text) => text.clone(),
-        ObjectValue::Entity(id) => id.as_str().to_string(),
+        ObjectValue::Entity(id) => id.to_string(),
         ObjectValue::Number(n) => n.to_string(),
         ObjectValue::Bool(b) => b.to_string(),
         ObjectValue::DateTime(ts) => ts.to_string(),

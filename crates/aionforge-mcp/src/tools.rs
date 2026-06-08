@@ -33,9 +33,9 @@ pub struct CaptureToolParams {
     /// The raw event content to remember.
     #[schemars(description = "The raw event content to remember.")]
     pub content: String,
-    /// The authoring agent's id (a ULID). The memory is private to this agent.
+    /// The authoring agent's id (a UUID). The memory is private to this agent.
     #[schemars(
-        description = "The authoring agent's id (a ULID). The memory is private to this agent."
+        description = "The authoring agent's id (a UUID). The memory is private to this agent."
     )]
     pub agent_id: String,
     /// The producing role: user, assistant, tool, system, or event (default user).
@@ -43,8 +43,8 @@ pub struct CaptureToolParams {
         description = "Producing role: user, assistant, tool, system, or event (default user)."
     )]
     pub role: Option<String>,
-    /// The owning session id (a ULID), if any.
-    #[schemars(description = "The owning session id (a ULID), if any.")]
+    /// The owning session id (a UUID), if any.
+    #[schemars(description = "The owning session id (a UUID), if any.")]
     pub session_id: Option<String>,
     /// Writer trust in [0, 1] (default 0.5).
     #[schemars(description = "Writer trust in [0, 1] (default 0.5).")]
@@ -90,14 +90,14 @@ pub async fn capture_tool<E: Embedder>(
     now: &Timestamp,
 ) -> Result<String, String> {
     let agent_id = Id::parse(&params.agent_id)
-        .map_err(|_| "ERR_INVALID_AGENT_ID: agent_id must be a ULID".to_string())?;
+        .map_err(|_| "ERR_INVALID_AGENT_ID: agent_id must be a UUID".to_string())?;
     let role = parse_role(params.role.as_deref())?;
     let session_id = params
         .session_id
         .as_deref()
         .map(Id::parse)
         .transpose()
-        .map_err(|_| "ERR_INVALID_SESSION_ID: session_id must be a ULID".to_string())?;
+        .map_err(|_| "ERR_INVALID_SESSION_ID: session_id must be a UUID".to_string())?;
     let captured_at = match params.captured_at.as_deref() {
         Some(raw) => parse_captured_at(raw)?,
         None => now.clone(),
@@ -154,7 +154,7 @@ pub async fn search_tool<E: Embedder>(
         return Err("ERR_INVALID_VIEWER: a reader must be an agent (agent:<id>)".to_string());
     };
     let agent = Id::parse(&agent_id)
-        .map_err(|_| "ERR_INVALID_VIEWER: viewer agent id must be a ULID".to_string())?;
+        .map_err(|_| "ERR_INVALID_VIEWER: viewer agent id must be a UUID".to_string())?;
     // Team membership from the MCP request context is wired in M4.T01 PR-E; for now a reader
     // sees only the global space and its own private namespace.
     let principal = Principal::agent(agent);

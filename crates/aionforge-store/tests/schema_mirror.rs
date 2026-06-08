@@ -46,7 +46,7 @@ fn req_imm(name: &'static str, kind: K) -> Prop {
 /// Identity block carried by every kind (§3).
 fn identity() -> Vec<Prop> {
     vec![
-        prop("id", K::String, true, true, true),
+        prop("id", K::Uuid, true, true, true),
         req_imm("ingested_at", K::ZonedDateTime),
         req("namespace", K::String),
         opt("expired_at", K::ZonedDateTime),
@@ -106,8 +106,8 @@ fn expected_nodes() -> Vec<(&'static str, Vec<Prop>)> {
                 req("content", K::String),
                 req("role", K::String),
                 req_imm("captured_at", K::ZonedDateTime),
-                req("agent_id", K::String),
-                opt("session_id", K::String),
+                req("agent_id", K::Uuid),
+                opt("session_id", K::Uuid),
                 req("content_hash", K::String),
                 opt("embedding_v1", K::Vector),
                 opt("embedder_model", K::String),
@@ -118,10 +118,10 @@ fn expected_nodes() -> Vec<(&'static str, Vec<Prop>)> {
         (
             "Fact",
             memory(vec![
-                req("subject_id", K::String),
+                req("subject_id", K::Uuid),
                 req("predicate", K::String),
                 req("object_kind", K::String),
-                opt("object_entity_id", K::String),
+                opt("object_entity_id", K::Uuid),
                 opt("object_value", K::Json),
                 req("confidence", K::Float),
                 req("status", K::String),
@@ -184,7 +184,7 @@ fn expected_nodes() -> Vec<(&'static str, Vec<Prop>)> {
                 opt("keywords", K::List),
                 opt("embedding_v1", K::Vector),
                 opt("embedder_model", K::String),
-                opt("derived_from_episode", K::String),
+                opt("derived_from_episode", K::Uuid),
             ]),
         ),
         (
@@ -213,15 +213,15 @@ fn expected_nodes() -> Vec<(&'static str, Vec<Prop>)> {
             reduced(vec![
                 req("started_at", K::ZonedDateTime),
                 opt("ended_at", K::ZonedDateTime),
-                req("owner_agent_id", K::String),
+                req("owner_agent_id", K::Uuid),
                 req("metadata", K::Json),
             ]),
         ),
         (
             "ProvenanceRecord",
             reduced(vec![
-                req("subject_id", K::String),
-                req("writer_agent_id", K::String),
+                req("subject_id", K::Uuid),
+                req("writer_agent_id", K::Uuid),
                 req_imm("signature", K::String),
                 opt("source_episode_ids", K::List),
                 req("model_family", K::String),
@@ -233,8 +233,8 @@ fn expected_nodes() -> Vec<(&'static str, Vec<Prop>)> {
             "AuditEvent",
             reduced(vec![
                 req("kind", K::String),
-                req("subject_id", K::String),
-                req("actor_id", K::String),
+                req("subject_id", K::Uuid),
+                req("actor_id", K::Uuid),
                 req("payload", K::Json),
                 req_imm("signature", K::String),
                 req_imm("occurred_at", K::ZonedDateTime),
@@ -243,19 +243,19 @@ fn expected_nodes() -> Vec<(&'static str, Vec<Prop>)> {
         (
             "Promotion",
             reduced(vec![
-                req("candidate_fact_id", K::String),
+                req("candidate_fact_id", K::Uuid),
                 req("posterior", K::Float),
                 req("k", K::Uint),
                 req("status", K::String),
                 opt("resolved_at", K::ZonedDateTime),
-                opt("promoted_fact_id", K::String),
+                opt("promoted_fact_id", K::Uuid),
             ]),
         ),
         (
             "ConsolidationCursor",
             reduced(vec![
                 req("last_position", K::String),
-                opt("last_episode_id", K::String),
+                opt("last_episode_id", K::Uuid),
                 opt("last_processed_at", K::ZonedDateTime),
                 req("rule_versions", K::Json),
             ]),

@@ -4,7 +4,7 @@
 //! deserializes through `serde_json` without loss — including `ZONED DATETIME`
 //! nanosecond precision, `VECTOR` (`f32`) component fidelity, the adjacently-tagged
 //! [`ObjectValue`], and the namespace string form. Strategies generate only values
-//! the domain types admit (finite floats, non-empty embeddings, valid ULIDs, JSON
+//! the domain types admit (finite floats, non-empty embeddings, valid UUIDs, JSON
 //! with finite numbers), so a round-trip failure is a real serialization defect.
 //!
 //! The leaf, value, and enum strategies plus the `round_trip` helper live in

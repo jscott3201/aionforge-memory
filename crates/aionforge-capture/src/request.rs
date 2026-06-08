@@ -11,7 +11,7 @@ use aionforge_domain::time::Timestamp;
 /// time and transaction time coincide on the fast path. Every *stored* timestamp on
 /// the path is taken from this field rather than read from the system clock, matching
 /// the store's caller-supplied-time convention. Record identifiers are still minted
-/// as fresh ULIDs (sortable by mint time), the one source of write-time uniqueness.
+/// as fresh UUIDv7s (sortable by mint time), the one source of write-time uniqueness.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CaptureRequest {
     /// The raw event body, before privacy filtering.

@@ -25,4 +25,9 @@ This is reference and guides, not planning or changelogs.
   principal, the own-private / member-team write policy, refused-and-audited denials, and the
   visible set that bounds reads.
 
+## Substrate
+
+- [Identifiers](identifiers.md) — how ids work: time-ordered UUIDv7 for generated records,
+  deterministic UUIDv8 for content-addressed ones, stored as native UUID values.
+
 More subsystem guides land here as each one is built.

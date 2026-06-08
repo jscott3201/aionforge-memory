@@ -242,7 +242,7 @@ impl<C: Clock> Consolidator<C> {
         // expected state the guard accepts.
         let cursor = ConsolidationCursor {
             last_position: ConsolidationCursor::watermark_for(&item.episode),
-            last_episode_id: Some(item.episode.identity.id.clone()),
+            last_episode_id: Some(item.episode.identity.id),
             last_processed_at: Some(now.clone()),
             rule_versions,
         };
@@ -269,7 +269,7 @@ impl<C: Clock> Consolidator<C> {
         error: &PassError,
         now: &Timestamp,
     ) -> Result<EpisodeOutcome, ConsolidationError> {
-        let episode_id = item.episode.identity.id.as_str();
+        let episode_id = &item.episode.identity.id;
         let attempts = self
             .store
             .count_consolidation_failures(&item.episode.identity.id)?
@@ -280,7 +280,7 @@ impl<C: Clock> Consolidator<C> {
             .record_consolidation_failure(item.node_id, &audit, fatal)?;
         if fatal {
             tracing::error!(
-                episode = episode_id,
+                episode = %episode_id,
                 pass = pass_name,
                 attempts,
                 "consolidation pass failed fatally; episode marked failed"
@@ -288,7 +288,7 @@ impl<C: Clock> Consolidator<C> {
             Ok(EpisodeOutcome::Failed)
         } else {
             tracing::warn!(
-                episode = episode_id,
+                episode = %episode_id,
                 pass = pass_name,
                 attempts,
                 "consolidation pass failed transiently; will retry"
@@ -320,7 +320,7 @@ impl<C: Clock> Consolidator<C> {
                 expired_at: None,
             },
             kind: AuditKind::ConsolidationFailed,
-            subject_id: episode.identity.id.clone(),
+            subject_id: episode.identity.id,
             actor_id: scheduler_actor_id(&self.rule_versions()),
             payload: serde_json::json!({
                 "pass": pass_name,
@@ -337,9 +337,7 @@ impl<C: Clock> Consolidator<C> {
 /// The deterministic id of a `consolidation_failed` audit: keyed on the episode and the attempt
 /// number, so each attempt has a stable, unique id and a replay is idempotent.
 fn failure_audit_id(episode_id: &Id, attempt: u32) -> Id {
-    Id::from_content_hash(
-        format!("consolidation_failed|{}|{attempt}", episode_id.as_str()).as_bytes(),
-    )
+    Id::from_content_hash(format!("consolidation_failed|{episode_id}|{attempt}").as_bytes())
 }
 
 /// The deterministic actor id for the consolidation scheduler, derived from the enabled passes'

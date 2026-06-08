@@ -63,8 +63,8 @@ fn provenance(subject: &Id, writer: &Id) -> ProvenanceRecord {
             namespace: Namespace::Agent("alice".to_string()),
             expired_at: None,
         },
-        subject_id: subject.clone(),
-        writer_agent_id: writer.clone(),
+        subject_id: *subject,
+        writer_agent_id: *writer,
         signature: String::new(),
         source_episode_ids: Vec::new(),
         model_family: "test-embedder".to_string(),
@@ -82,8 +82,8 @@ fn audit(subject: &Id, actor: &Id) -> AuditEvent {
             expired_at: None,
         },
         kind: AuditKind::Capture,
-        subject_id: subject.clone(),
-        actor_id: actor.clone(),
+        subject_id: *subject,
+        actor_id: *actor,
         payload: serde_json::json!({ "dedup": "new" }),
         signature: String::new(),
         occurred_at: ts("2026-06-06T09:30:00-05:00[America/Chicago]"),
@@ -131,11 +131,11 @@ fn commit_capture_wires_the_edges() {
                 "MATCH (e:Episode)-[:HAS_PROVENANCE]->(p:ProvenanceRecord) \
                  WHERE e.id = $id RETURN p.id AS id",
             )
-            .bind_str("id", ep.identity.id.as_str())
+            .bind_uuid("id", ep.identity.id)
             .expect("bind"),
         )
         .expect("provenance edge query");
-    assert_eq!(first_id(&prov).as_deref(), Some(pv.identity.id.as_str()));
+    assert_eq!(first_id(&prov), Some(pv.identity.id.to_string()));
 
     // AuditEvent -AUDIT-> Episode
     let audit_rows = store
@@ -144,14 +144,11 @@ fn commit_capture_wires_the_edges() {
                 "MATCH (a:AuditEvent)-[:AUDIT]->(e:Episode) \
                  WHERE e.id = $id RETURN a.id AS id",
             )
-            .bind_str("id", ep.identity.id.as_str())
+            .bind_uuid("id", ep.identity.id)
             .expect("bind"),
         )
         .expect("audit edge query");
-    assert_eq!(
-        first_id(&audit_rows).as_deref(),
-        Some(au.identity.id.as_str())
-    );
+    assert_eq!(first_id(&audit_rows), Some(au.identity.id.to_string()));
 }
 
 #[test]
@@ -176,7 +173,7 @@ fn content_hash_probe_finds_committed_and_misses_unknown() {
 fn first_id(result: &QueryResult) -> Option<String> {
     match result {
         QueryResult::Rows(rows) => match rows.value(0, 0) {
-            Some(Value::String(s)) => Some(s.as_str().to_string()),
+            Some(Value::Uuid(u)) => Some(u.to_string()),
             _ => None,
         },
         _ => None,
@@ -195,7 +192,7 @@ fn commit_audit_writes_a_standalone_event_that_round_trips() {
     event.payload = serde_json::json!({
         "requested_namespace": "team:squad",
         "reason": "not a member of the team",
-        "agent": agent.as_str(),
+        "agent": agent.to_string(),
     });
 
     let node_id = store.commit_audit(&event).expect("commit_audit");
@@ -211,7 +208,7 @@ fn commit_audit_writes_a_standalone_event_that_round_trips() {
     assert_eq!(read.identity.namespace, Namespace::System);
     assert_eq!(read.payload["requested_namespace"], "team:squad");
     assert_eq!(read.payload["reason"], "not a member of the team");
-    assert_eq!(read.payload["agent"], agent.as_str());
+    assert_eq!(read.payload["agent"], agent.to_string());
 
     // It is discoverable by the scalar `kind` index, and no Episode or AUDIT edge was written.
     assert_eq!(

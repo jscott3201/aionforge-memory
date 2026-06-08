@@ -100,9 +100,9 @@ fn edge_count(store: &Store, label: &str, a: &Id, b: &Id) -> u64 {
     let query = BoundQuery::new(format!(
         "MATCH (a:Fact)-[r:{label}]->(b:Fact) WHERE a.id = $a AND b.id = $b RETURN count(r) AS n"
     ))
-    .bind_str("a", a.as_str())
+    .bind_uuid("a", a)
     .expect("bind a")
-    .bind_str("b", b.as_str())
+    .bind_uuid("b", b)
     .expect("bind b");
     match store.execute(&query).expect("count edges") {
         QueryResult::Rows(rows) => match rows.value(0, 0) {
@@ -140,7 +140,7 @@ fn an_entity_object_fact_round_trips() {
     let fact = fact(
         Id::generate(),
         "depends_on",
-        ObjectValue::Entity(target.identity.id.clone()),
+        ObjectValue::Entity(target.identity.id),
         "the project depends on rustls",
     );
     let node = store.insert_fact(&fact).expect("insert");
@@ -157,7 +157,7 @@ fn assert_fact_wires_the_about_validity_window() {
     let subject = entity("graphs");
     let subject_node = store.insert_entity(&subject).expect("insert entity");
     let f = fact(
-        subject.identity.id.clone(),
+        subject.identity.id,
         "is_a",
         ObjectValue::Text("data structure".to_string()),
         "a graph is a data structure",
@@ -183,13 +183,13 @@ fn supersession_preserves_the_prior_fact_and_closes_its_window() {
     let subject_node = store.insert_entity(&subject).expect("insert entity");
 
     let old = fact(
-        subject.identity.id.clone(),
+        subject.identity.id,
         "capital_of",
         ObjectValue::Text("Bonn".to_string()),
         "the capital is Bonn",
     );
     let new = fact(
-        subject.identity.id.clone(),
+        subject.identity.id,
         "capital_of",
         ObjectValue::Text("Berlin".to_string()),
         "the capital is Berlin",
@@ -277,13 +277,13 @@ fn re_superseding_is_idempotent_but_still_rejects_a_backward_instant() {
     let subject_node = store.insert_entity(&subject).expect("insert entity");
 
     let old = fact(
-        subject.identity.id.clone(),
+        subject.identity.id,
         "capital_of",
         ObjectValue::Text("Bonn".to_string()),
         "the capital is Bonn",
     );
     let new = fact(
-        subject.identity.id.clone(),
+        subject.identity.id,
         "capital_of",
         ObjectValue::Text("Berlin".to_string()),
         "the capital is Berlin",
@@ -352,13 +352,13 @@ fn contradiction_preserves_both_facts_and_quarantines_the_source() {
     let subject = entity("temperature");
     let subject_node = store.insert_entity(&subject).expect("insert entity");
     let a = fact(
-        subject.identity.id.clone(),
+        subject.identity.id,
         "is",
         ObjectValue::Text("hot".to_string()),
         "it is hot",
     );
     let b = fact(
-        subject.identity.id.clone(),
+        subject.identity.id,
         "is",
         ObjectValue::Text("cold".to_string()),
         "it is cold",
@@ -415,7 +415,7 @@ fn assert_fact_rejects_an_unordered_window() {
     let subject = entity("thing");
     let subject_node = store.insert_entity(&subject).expect("insert entity");
     let f = fact(
-        subject.identity.id.clone(),
+        subject.identity.id,
         "is",
         ObjectValue::Bool(true),
         "backwards",
@@ -442,18 +442,8 @@ fn supersession_before_the_facts_valid_from_is_rejected() {
     let store = store();
     let subject = entity("subj");
     let subject_node = store.insert_entity(&subject).expect("insert entity");
-    let old = fact(
-        subject.identity.id.clone(),
-        "p",
-        ObjectValue::Number(1.0),
-        "old",
-    );
-    let new = fact(
-        subject.identity.id.clone(),
-        "p",
-        ObjectValue::Number(2.0),
-        "new",
-    );
+    let old = fact(subject.identity.id, "p", ObjectValue::Number(1.0), "old");
+    let new = fact(subject.identity.id, "p", ObjectValue::Number(2.0), "new");
     let old_node = store
         .assert_fact(
             &old,
@@ -534,13 +524,13 @@ fn contradiction_without_quarantine_keeps_the_source_active() {
     let subject = entity("subj");
     let subject_node = store.insert_entity(&subject).expect("insert entity");
     let a = fact(
-        subject.identity.id.clone(),
+        subject.identity.id,
         "is",
         ObjectValue::Text("x".into()),
         "a",
     );
     let b = fact(
-        subject.identity.id.clone(),
+        subject.identity.id,
         "is",
         ObjectValue::Text("y".into()),
         "b",
@@ -587,24 +577,9 @@ fn a_supersession_chain_closes_each_window_in_order() {
     let t1 = "1949-09-07T00:00:00Z[UTC]";
     let t2 = "1990-10-03T00:00:00Z[UTC]";
 
-    let a = fact(
-        subject.identity.id.clone(),
-        "c",
-        ObjectValue::Text("A".into()),
-        "A",
-    );
-    let b = fact(
-        subject.identity.id.clone(),
-        "c",
-        ObjectValue::Text("B".into()),
-        "B",
-    );
-    let c = fact(
-        subject.identity.id.clone(),
-        "c",
-        ObjectValue::Text("C".into()),
-        "C",
-    );
+    let a = fact(subject.identity.id, "c", ObjectValue::Text("A".into()), "A");
+    let b = fact(subject.identity.id, "c", ObjectValue::Text("B".into()), "B");
+    let c = fact(subject.identity.id, "c", ObjectValue::Text("C".into()), "C");
     let a_node = store
         .assert_fact(&a, subject_node, &open_window(t0))
         .expect("a");
@@ -672,12 +647,12 @@ proptest! {
             .to_zoned(jiff::tz::TimeZone::UTC);
 
         let old = fact(
-            subject.identity.id.clone(),
+            subject.identity.id,
             "p",
             ObjectValue::Number(1.0),
             "old",
         );
-        let new = fact(subject.identity.id.clone(), "p", ObjectValue::Number(2.0), "new");
+        let new = fact(subject.identity.id, "p", ObjectValue::Number(2.0), "new");
         let about = About {
             temporal: BiTemporal {
                 valid_from: from.clone(),

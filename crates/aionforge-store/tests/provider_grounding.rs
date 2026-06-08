@@ -9,6 +9,7 @@
 mod common;
 use common::*;
 
+use aionforge_domain::ids::Id;
 use aionforge_domain::value::ObjectValue;
 use aionforge_store::CandidateSet;
 
@@ -21,13 +22,13 @@ fn provenance_current_support_facts_includes_grounded_facts() {
     let subject = entity("release");
     let subject_node = store.insert_entity(&subject).expect("insert entity");
     let grounded = fact(
-        subject.identity.id.clone(),
+        subject.identity.id,
         "shipped_on",
         ObjectValue::Text("friday".to_string()),
         "the release shipped on friday",
     );
     let supporter = fact(
-        subject.identity.id.clone(),
+        subject.identity.id,
         "noted_by",
         ObjectValue::Text("changelog".to_string()),
         "the changelog records the ship date",
@@ -55,20 +56,21 @@ fn provenance_current_support_facts_includes_grounded_facts() {
     );
 
     // Ground it: supporter -SUPPORTS-> grounded, and grounded -HAS_PROVENANCE-> record.
-    insert_provenance(&store, "prov-1", grounded.identity.id.as_str());
+    let prov_id = Id::generate();
+    insert_provenance(&store, &prov_id, &grounded.identity.id);
     insert_edge(
         &store,
         "MATCH (a:Fact {id: $from}), (b:Fact {id: $to}) \
          INSERT (a)-[:SUPPORTS {weight: 1.0}]->(b)",
-        supporter.identity.id.as_str(),
-        grounded.identity.id.as_str(),
+        &supporter.identity.id,
+        &grounded.identity.id,
     );
     insert_edge(
         &store,
         "MATCH (a:Fact {id: $from}), (b:ProvenanceRecord {id: $to}) \
          INSERT (a)-[:HAS_PROVENANCE]->(b)",
-        grounded.identity.id.as_str(),
-        "prov-1",
+        &grounded.identity.id,
+        &prov_id,
     );
 
     let after = members(&store, CandidateSet::ProvenanceCurrentSupportFacts);
@@ -95,13 +97,13 @@ fn scope_membership_contains_only_the_scoped_node() {
     let subject = entity("topic");
     let subject_node = store.insert_entity(&subject).expect("insert entity");
     let scoped = fact(
-        subject.identity.id.clone(),
+        subject.identity.id,
         "is",
         ObjectValue::Text("in-scope".to_string()),
         "this fact is in scope",
     );
     let unscoped = fact(
-        subject.identity.id.clone(),
+        subject.identity.id,
         "is",
         ObjectValue::Text("out-of-scope".to_string()),
         "this fact is not in scope",
@@ -125,12 +127,13 @@ fn scope_membership_contains_only_the_scoped_node() {
         members(&store, CandidateSet::ScopeMembership).is_empty(),
         "no IN_SCOPE edges yet, so scope_membership is empty"
     );
-    insert_scope(&store, "scope-1");
+    let scope_id = Id::generate();
+    insert_scope(&store, &scope_id);
     insert_edge(
         &store,
         "MATCH (a:Fact {id: $from}), (b:Scope {id: $to}) INSERT (a)-[:IN_SCOPE]->(b)",
-        scoped.identity.id.as_str(),
-        "scope-1",
+        &scoped.identity.id,
+        &scope_id,
     );
 
     let scope_members = members(&store, CandidateSet::ScopeMembership);
@@ -151,13 +154,13 @@ fn recency_active_contains_only_the_recent_node() {
     let subject = entity("event");
     let subject_node = store.insert_entity(&subject).expect("insert entity");
     let recent = fact(
-        subject.identity.id.clone(),
+        subject.identity.id,
         "happened",
         ObjectValue::Text("now".to_string()),
         "this happened recently",
     );
     let stale = fact(
-        subject.identity.id.clone(),
+        subject.identity.id,
         "happened",
         ObjectValue::Text("long ago".to_string()),
         "this happened a while back",
@@ -181,12 +184,13 @@ fn recency_active_contains_only_the_recent_node() {
         members(&store, CandidateSet::RecencyActive).is_empty(),
         "no RECENT_IN edges yet, so recency_active is empty"
     );
-    insert_recency_window(&store, "window-1");
+    let window_id = Id::generate();
+    insert_recency_window(&store, &window_id);
     insert_edge(
         &store,
         "MATCH (a:Fact {id: $from}), (b:RecencyWindow {id: $to}) INSERT (a)-[:RECENT_IN]->(b)",
-        recent.identity.id.as_str(),
-        "window-1",
+        &recent.identity.id,
+        &window_id,
     );
 
     let recency_members = members(&store, CandidateSet::RecencyActive);

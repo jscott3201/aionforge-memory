@@ -78,7 +78,7 @@ async fn open_capture_then_search_round_trips() {
         .capture(CaptureRequest {
             content: "the user prefers graph databases".to_string(),
             role: Role::User,
-            agent_id: agent.clone(),
+            agent_id: agent,
             teams: Vec::new(),
             session_id: None,
             captured_at: now(),
@@ -98,7 +98,7 @@ async fn open_capture_then_search_round_trips() {
 
     // The reader is the writer, so its own private namespace is in its visible set and the
     // untrusted write surfaces.
-    let viewer = Principal::agent(agent.clone());
+    let viewer = Principal::agent(agent);
     let bundle = memory
         .search(RecallQuery::new("graph databases", viewer, 5))
         .await
@@ -123,7 +123,7 @@ async fn an_exact_duplicate_is_not_recaptured() {
     let request = |content: &str| CaptureRequest {
         content: content.to_string(),
         role: Role::User,
-        agent_id: agent.clone(),
+        agent_id: agent,
         teams: Vec::new(),
         session_id: None,
         captured_at: now(),
@@ -186,7 +186,7 @@ async fn a_custom_authorizer_is_honored_by_the_facade() {
             target: &Namespace,
         ) -> Result<(), aionforge_engine::AuthorizationError> {
             Err(aionforge_engine::AuthorizationError {
-                agent: principal.agent_id.as_str().to_string(),
+                agent: principal.agent_id.to_string(),
                 target: target.to_string(),
                 reason: aionforge_engine::DenyReason::NotDirectlyWritable,
             })
@@ -225,7 +225,7 @@ fn capture_request(agent: &Id, content: &str) -> CaptureRequest {
     CaptureRequest {
         content: content.to_string(),
         role: Role::User,
-        agent_id: agent.clone(),
+        agent_id: *agent,
         teams: Vec::new(),
         session_id: None,
         captured_at: now(),

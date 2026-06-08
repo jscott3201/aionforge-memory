@@ -79,7 +79,7 @@ fn seed_note_opt(store: &Store, seed: &[u8], ns: &Namespace, embedding: Option<[
     let id = Id::from_content_hash(seed);
     let note = Note {
         identity: Identity {
-            id: id.clone(),
+            id,
             ingested_at: now(),
             namespace: ns.clone(),
             expired_at: None,
@@ -100,7 +100,7 @@ fn seed_note_opt(store: &Store, seed: &[u8], ns: &Namespace, embedding: Option<[
             expired_at: None,
         },
         kind: AuditKind::Distill,
-        subject_id: id.clone(),
+        subject_id: id,
         actor_id: Id::from_content_hash(b"seed"),
         payload: serde_json::json!({"outcome": "written"}),
         signature: String::new(),
@@ -218,10 +218,10 @@ impl LinkEvolver for MockEvolver {
                 for (target, label, confidence) in specs {
                     let target_id = match target {
                         Target::Nth(n) => match candidates.get(*n) {
-                            Some(c) => c.identity.id.clone(),
+                            Some(c) => c.identity.id,
                             None => continue,
                         },
-                        Target::Explicit(id) => id.clone(),
+                        Target::Explicit(id) => *id,
                     };
                     links.push(EvolvedLink {
                         target_id,
@@ -603,7 +603,7 @@ async fn candidate_tie_breaks_are_deterministic_by_id() {
     let y = seed_note(&store, b"y", &ns, [1.0, 0.0, 0.0, 0.0]);
     // x and y are equidistant from s (identical vectors); with only one candidate slot, the tie
     // must break by the lexicographically smaller id — deterministically, every run.
-    let smaller = if x.as_str() < y.as_str() { x } else { y };
+    let smaller = if x < y { x } else { y };
     let config = LinkEvolveConfig {
         max_candidates_per_note: 1,
         ..enabled_config()

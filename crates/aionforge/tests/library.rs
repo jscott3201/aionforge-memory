@@ -72,7 +72,7 @@ async fn a_host_can_capture_and_search_through_the_library() {
         .capture(CaptureRequest {
             content: "remember to water the ferns".to_string(),
             role: Role::User,
-            agent_id: agent.clone(),
+            agent_id: agent,
             teams: Vec::new(),
             session_id: None,
             captured_at: now(),
@@ -90,7 +90,7 @@ async fn a_host_can_capture_and_search_through_the_library() {
         .expect("capture");
     assert_eq!(receipt.verdict, CaptureVerdict::New);
 
-    let viewer = Principal::agent(agent.clone());
+    let viewer = Principal::agent(agent);
     let bundle = memory
         .search(RecallQuery::new("ferns", viewer, 5))
         .await

@@ -204,7 +204,7 @@ impl Store {
                 patterns.push(from_properties(props)?);
             }
         }
-        patterns.sort_by(|a, b| a.identity.id.cmp(&b.identity.id));
+        patterns.sort_by_key(|a| a.identity.id);
         Ok(patterns)
     }
 }

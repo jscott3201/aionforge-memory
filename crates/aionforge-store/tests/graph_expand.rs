@@ -44,13 +44,13 @@ fn embedded_fact(
     embedding: [f32; 4],
 ) -> (Id, NodeId) {
     let mut f = fact(
-        subject.identity.id.clone(),
+        subject.identity.id,
         "rel",
         ObjectValue::Text(statement.to_string()),
         statement,
     );
     f.embedding = Some(Embedding::new(embedding.to_vec()).expect("valid embedding"));
-    let node = f.identity.id.clone();
+    let node = f.identity.id;
     let inserted = store
         .assert_fact(&f, subject_node, &open_window(WINDOW_FROM))
         .expect("assert fact");
@@ -63,9 +63,9 @@ fn support(store: &Store, from: &Id, to: &Id) {
         "MATCH (a:Fact {id: $from}), (b:Fact {id: $to}) \
          INSERT (a)-[:SUPPORTS {weight: $weight}]->(b)",
     )
-    .bind_str("from", from.as_str())
+    .bind_uuid("from", from)
     .unwrap()
-    .bind_str("to", to.as_str())
+    .bind_uuid("to", to)
     .unwrap()
     .bind("weight", Value::Float(1.0))
     .unwrap();
@@ -79,9 +79,9 @@ fn contradict(store: &Store, from: &Id, to: &Id) {
         "MATCH (a:Fact {id: $from}), (b:Fact {id: $to}) \
          INSERT (a)-[:CONTRADICTS {valid_from: $ts, ingested_at: $ts, detected_by: $by}]->(b)",
     )
-    .bind_str("from", from.as_str())
+    .bind_uuid("from", from)
     .unwrap()
-    .bind_str("to", to.as_str())
+    .bind_uuid("to", to)
     .unwrap()
     .bind("ts", zdt())
     .unwrap()

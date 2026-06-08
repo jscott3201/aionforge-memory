@@ -167,7 +167,7 @@ fn parse_links(reply: &str, candidate_ids: &[Id]) -> Vec<EvolvedLink> {
             continue;
         }
         links.push(EvolvedLink {
-            target_id: candidate_ids[index - 1].clone(),
+            target_id: candidate_ids[index - 1],
             relationship_label: label,
             confidence,
         });
@@ -194,7 +194,7 @@ impl<C: Completer> LinkEvolver for LLMLinkEvolver<C> {
         candidates: &[Note],
     ) -> impl Future<Output = Result<Option<Vec<EvolvedLink>>, Self::Error>> + Send {
         let request = self.request(source, candidates);
-        let candidate_ids: Vec<Id> = candidates.iter().map(|c| c.identity.id.clone()).collect();
+        let candidate_ids: Vec<Id> = candidates.iter().map(|c| c.identity.id).collect();
         async move {
             let completion = match self.completer.complete(&request).await {
                 Ok(completion) => completion,

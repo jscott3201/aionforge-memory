@@ -5,9 +5,16 @@
 //! fails loudly on a mismatch; and the candidate-state providers are registered and
 //! track Fact membership through edge changes.
 
+use aionforge_domain::ids::Id;
 use aionforge_store::{BoundQuery, DEFAULT_EMBEDDING_DIMENSION, Store, StoreConfig, Value};
 
 use jiff::Zoned;
+
+/// A stable [`Id`] for a string tag, so the synthetic id columns (now UUID-typed) still
+/// join the same way: the same tag always maps to the same UUID within and across queries.
+fn tag_id(tag: &str) -> Id {
+    Id::from_content_hash(tag.as_bytes())
+}
 
 fn now() -> Zoned {
     "2026-06-06T12:00:00-05:00[America/Chicago]"
@@ -134,7 +141,7 @@ fn insert_fact(store: &Store, id: &str, subject: &str) {
          surprise: $su, subject_id: $subj, predicate: $pred, object_kind: $ok, \
          confidence: $conf, status: $st, statement: $stmt})",
     )
-    .bind_str("id", id)
+    .bind_uuid("id", tag_id(id))
     .unwrap()
     .bind("ts", zdt())
     .unwrap()
@@ -150,7 +157,7 @@ fn insert_fact(store: &Store, id: &str, subject: &str) {
     .unwrap()
     .bind("su", Value::Float(0.0))
     .unwrap()
-    .bind_str("subj", subject)
+    .bind_uuid("subj", tag_id(subject))
     .unwrap()
     .bind_str("pred", "relates_to")
     .unwrap()
@@ -219,9 +226,9 @@ fn current_support_facts_tracks_fact_membership() {
         "MATCH (a:Fact {id: $from}), (b:Fact {id: $to}) \
          INSERT (a)-[:SUPERSEDED_BY {valid_from: $ts, ingested_at: $ts, reason: $reason}]->(b)",
     )
-    .bind_str("from", "fact-1")
+    .bind_uuid("from", tag_id("fact-1"))
     .unwrap()
-    .bind_str("to", "fact-2")
+    .bind_uuid("to", tag_id("fact-2"))
     .unwrap()
     .bind("ts", zdt())
     .unwrap()
@@ -247,9 +254,9 @@ fn current_support_facts_tracks_fact_membership() {
         "MATCH (a:Fact {id: $from}), (b:Fact {id: $to}) \
          INSERT (a)-[:CONTRADICTS {valid_from: $ts, ingested_at: $ts, detected_by: $by}]->(b)",
     )
-    .bind_str("from", "fact-3")
+    .bind_uuid("from", tag_id("fact-3"))
     .unwrap()
-    .bind_str("to", "fact-2")
+    .bind_uuid("to", tag_id("fact-2"))
     .unwrap()
     .bind("ts", zdt())
     .unwrap()
@@ -282,15 +289,15 @@ fn insert_provenance(store: &Store, id: &str, subject: &str) {
          subject_id: $subj, writer_agent_id: $writer, signature: $sig, \
          model_family: $mf, trust_at_write: $tw})",
     )
-    .bind_str("id", id)
+    .bind_uuid("id", tag_id(id))
     .unwrap()
     .bind("ts", zdt())
     .unwrap()
     .bind_str("ns", "agent:test")
     .unwrap()
-    .bind_str("subj", subject)
+    .bind_uuid("subj", tag_id(subject))
     .unwrap()
-    .bind_str("writer", "agent:test")
+    .bind_uuid("writer", tag_id("agent:test"))
     .unwrap()
     .bind_str("sig", "signature-bytes")
     .unwrap()
@@ -307,7 +314,7 @@ fn insert_scope(store: &Store, id: &str) {
         "INSERT (s:Scope {id: $id, ingested_at: $ts, namespace: $ns, \
          name: $name, scope_kind: $kind})",
     )
-    .bind_str("id", id)
+    .bind_uuid("id", tag_id(id))
     .unwrap()
     .bind("ts", zdt())
     .unwrap()
@@ -325,7 +332,7 @@ fn insert_recency_window(store: &Store, id: &str) {
     let query = BoundQuery::new(
         "INSERT (w:RecencyWindow {id: $id, ingested_at: $ts, namespace: $ns, label: $label})",
     )
-    .bind_str("id", id)
+    .bind_uuid("id", tag_id(id))
     .unwrap()
     .bind("ts", zdt())
     .unwrap()
@@ -352,9 +359,9 @@ fn provenance_current_support_facts_requires_support_and_grounding() {
         "MATCH (a:Fact {id: $from}), (b:Fact {id: $to}) \
          INSERT (a)-[:SUPPORTS {weight: $w}]->(b)",
     )
-    .bind_str("from", "fact-1")
+    .bind_uuid("from", tag_id("fact-1"))
     .unwrap()
-    .bind_str("to", "fact-2")
+    .bind_uuid("to", tag_id("fact-2"))
     .unwrap()
     .bind("w", Value::Float(1.0))
     .unwrap();
@@ -368,9 +375,9 @@ fn provenance_current_support_facts_requires_support_and_grounding() {
         "MATCH (f:Fact {id: $fid}), (p:ProvenanceRecord {id: $pid}) \
          INSERT (f)-[:HAS_PROVENANCE]->(p)",
     )
-    .bind_str("fid", "fact-2")
+    .bind_uuid("fid", tag_id("fact-2"))
     .unwrap()
-    .bind_str("pid", "prov-1")
+    .bind_uuid("pid", tag_id("prov-1"))
     .unwrap();
     store.execute(&grounds).expect("has provenance");
 
@@ -389,9 +396,9 @@ fn scope_membership_tracks_in_scope_edges() {
     let in_scope = BoundQuery::new(
         "MATCH (f:Fact {id: $fid}), (s:Scope {id: $sid}) INSERT (f)-[:IN_SCOPE]->(s)",
     )
-    .bind_str("fid", "fact-1")
+    .bind_uuid("fid", tag_id("fact-1"))
     .unwrap()
-    .bind_str("sid", "scope-1")
+    .bind_uuid("sid", tag_id("scope-1"))
     .unwrap();
     store.execute(&in_scope).expect("in scope");
 
@@ -408,9 +415,9 @@ fn recency_active_tracks_recent_in_edges() {
     let recent_in = BoundQuery::new(
         "MATCH (f:Fact {id: $fid}), (w:RecencyWindow {id: $wid}) INSERT (f)-[:RECENT_IN]->(w)",
     )
-    .bind_str("fid", "fact-1")
+    .bind_uuid("fid", tag_id("fact-1"))
     .unwrap()
-    .bind_str("wid", "window-1")
+    .bind_uuid("wid", tag_id("window-1"))
     .unwrap();
     store.execute(&recent_in).expect("recent in");
 

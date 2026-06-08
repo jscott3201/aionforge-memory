@@ -86,7 +86,7 @@ fn insert_episode(
 fn cursor_at(episode: &Episode) -> ConsolidationCursor {
     ConsolidationCursor {
         last_position: ConsolidationCursor::watermark_for(episode),
-        last_episode_id: Some(episode.identity.id.clone()),
+        last_episode_id: Some(episode.identity.id),
         last_processed_at: Some(now()),
         rule_versions: json!({ "noop": 1 }),
     }
@@ -157,13 +157,10 @@ fn discovery_is_oldest_first_skips_consolidated_and_respects_the_limit() {
 
     // Oldest first, limited.
     let batch = store.discover_consolidation_work(2).expect("discover");
-    let ids: Vec<&str> = batch
-        .iter()
-        .map(|w| w.episode.identity.id.as_str())
-        .collect();
+    let ids: Vec<Id> = batch.iter().map(|w| w.episode.identity.id).collect();
     assert_eq!(
         ids,
-        vec![e1.identity.id.as_str(), e2.identity.id.as_str()],
+        vec![e1.identity.id, e2.identity.id],
         "discovery returns the two oldest raw episodes in commit order"
     );
 
@@ -178,18 +175,15 @@ fn discovery_is_oldest_first_skips_consolidated_and_respects_the_limit() {
             &no_artifacts(),
         )
         .expect("flip e1");
-    let remaining: Vec<String> = store
+    let remaining: Vec<Id> = store
         .discover_consolidation_work(10)
         .expect("discover")
         .iter()
-        .map(|w| w.episode.identity.id.as_str().to_owned())
+        .map(|w| w.episode.identity.id)
         .collect();
     assert_eq!(
         remaining,
-        vec![
-            e2.identity.id.as_str().to_owned(),
-            e3.identity.id.as_str().to_owned()
-        ],
+        vec![e2.identity.id, e3.identity.id],
         "a consolidated episode is never rediscovered"
     );
 }
@@ -427,7 +421,7 @@ fn recording_the_same_failure_attempt_twice_is_idempotent() {
             expired_at: None,
         },
         kind: AuditKind::ConsolidationFailed,
-        subject_id: episode.identity.id.clone(),
+        subject_id: episode.identity.id,
         actor_id: Id::from_content_hash(b"scheduler"),
         payload: json!({ "pass": "noop", "reason": "boom", "attempts": 1 }),
         signature: String::new(),
@@ -463,7 +457,7 @@ fn failure_audit(subject: &Id) -> AuditEvent {
             expired_at: None,
         },
         kind: AuditKind::ConsolidationFailed,
-        subject_id: subject.clone(),
+        subject_id: *subject,
         actor_id: Id::generate(),
         payload: json!({ "pass": "noop", "reason": "boom" }),
         signature: String::new(),

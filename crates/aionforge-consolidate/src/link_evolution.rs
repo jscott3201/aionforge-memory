@@ -272,10 +272,10 @@ impl<L: LinkEvolver> LinkEvolvePass<L> {
         let Some(source_vec) = source.embedding.as_ref() else {
             return Vec::new();
         };
-        let source_id = source.identity.id.as_str();
+        let source_id = &source.identity.id;
         let mut scored: Vec<(f64, &Note)> = Vec::new();
         for note in pool {
-            if note.identity.id.as_str() == source_id {
+            if note.identity.id == *source_id {
                 continue;
             }
             let Some(other) = note.embedding.as_ref() else {
@@ -286,7 +286,7 @@ impl<L: LinkEvolver> LinkEvolvePass<L> {
         scored.sort_by(|a, b| {
             b.0.partial_cmp(&a.0)
                 .unwrap_or(Ordering::Equal)
-                .then_with(|| a.1.identity.id.as_str().cmp(b.1.identity.id.as_str()))
+                .then_with(|| a.1.identity.id.cmp(&b.1.identity.id))
         });
         scored
             .into_iter()
@@ -302,8 +302,10 @@ impl<L: LinkEvolver> LinkEvolvePass<L> {
         candidates: &[Note],
         proposed: Vec<EvolvedLink>,
     ) -> Vec<EvolvedLink> {
-        let candidate_ids: HashSet<&str> =
-            candidates.iter().map(|c| c.identity.id.as_str()).collect();
+        let candidate_ids: HashSet<String> = candidates
+            .iter()
+            .map(|c| c.identity.id.to_string())
+            .collect();
         let mut best: BTreeMap<String, EvolvedLink> = BTreeMap::new();
         for link in proposed {
             if link.confidence < self.config.confidence_floor {
@@ -312,13 +314,13 @@ impl<L: LinkEvolver> LinkEvolvePass<L> {
             if !RELATIONSHIP_VOCABULARY.contains(&link.relationship_label.as_str()) {
                 continue;
             }
-            if !candidate_ids.contains(link.target_id.as_str()) {
+            if !candidate_ids.contains(&link.target_id.to_string()) {
                 continue;
             }
-            match best.get(link.target_id.as_str()) {
+            match best.get(&link.target_id.to_string()) {
                 Some(kept) if kept.confidence >= link.confidence => {}
                 _ => {
-                    best.insert(link.target_id.as_str().to_string(), link);
+                    best.insert(link.target_id.to_string(), link);
                 }
             }
         }
@@ -339,7 +341,7 @@ impl<L: LinkEvolver> LinkEvolvePass<L> {
         report: &mut LinkEvolveReport,
         now: &Timestamp,
     ) -> Vec<LinkDecision> {
-        let source_id = source.identity.id.as_str().to_string();
+        let source_id = source.identity.id.to_string();
         let mut decisions = Vec::new();
         for link in valid {
             // The blast-radius guard: once the affected-notes budget is full, write nothing for a
@@ -372,8 +374,8 @@ impl<L: LinkEvolver> LinkEvolvePass<L> {
                     }
                     closes.push(edge.edge_id);
                     creates.push(LinkEdgeWrite {
-                        source_id: source.identity.id.clone(),
-                        target_id: link.target_id.clone(),
+                        source_id: source.identity.id,
+                        target_id: link.target_id,
                         relationship_label: link.relationship_label.clone(),
                         valid_from: now.clone(),
                     });
@@ -381,7 +383,7 @@ impl<L: LinkEvolver> LinkEvolvePass<L> {
                     affected.insert(source_id.clone());
                     decisions.push(LinkDecision {
                         action: "revised",
-                        target: link.target_id.as_str().to_string(),
+                        target: link.target_id.to_string(),
                         label: link.relationship_label.clone(),
                         confidence: link.confidence,
                     });
@@ -392,8 +394,8 @@ impl<L: LinkEvolver> LinkEvolvePass<L> {
                         continue;
                     }
                     creates.push(LinkEdgeWrite {
-                        source_id: source.identity.id.clone(),
-                        target_id: link.target_id.clone(),
+                        source_id: source.identity.id,
+                        target_id: link.target_id,
                         relationship_label: link.relationship_label.clone(),
                         valid_from: now.clone(),
                     });
@@ -401,7 +403,7 @@ impl<L: LinkEvolver> LinkEvolvePass<L> {
                     affected.insert(source_id.clone());
                     decisions.push(LinkDecision {
                         action: "created",
-                        target: link.target_id.as_str().to_string(),
+                        target: link.target_id.to_string(),
                         label: link.relationship_label.clone(),
                         confidence: link.confidence,
                     });

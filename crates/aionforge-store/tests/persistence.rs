@@ -8,9 +8,16 @@
 
 use std::path::PathBuf;
 
+use aionforge_domain::ids::Id;
 use aionforge_store::{BoundQuery, QueryResult, Store, StoreConfig, Value};
 
 use jiff::Zoned;
+
+/// A stable [`Id`] for a string tag, so the synthetic id columns (now UUID-typed) still
+/// join the same way: the same tag always maps to the same UUID within and across queries.
+fn tag_id(tag: &str) -> Id {
+    Id::from_content_hash(tag.as_bytes())
+}
 
 fn now() -> Zoned {
     "2026-06-06T12:00:00-05:00[America/Chicago]"
@@ -40,7 +47,7 @@ fn insert_fact(store: &Store, id: &str, subject: &str) {
          surprise: $su, subject_id: $subj, predicate: $pred, object_kind: $ok, \
          confidence: $conf, status: $st, statement: $stmt})",
     )
-    .bind_str("id", id)
+    .bind_uuid("id", tag_id(id))
     .unwrap()
     .bind("ts", zdt())
     .unwrap()
@@ -56,7 +63,7 @@ fn insert_fact(store: &Store, id: &str, subject: &str) {
     .unwrap()
     .bind("su", Value::Float(0.0))
     .unwrap()
-    .bind_str("subj", subject)
+    .bind_uuid("subj", tag_id(subject))
     .unwrap()
     .bind_str("pred", "relates_to")
     .unwrap()
@@ -94,12 +101,12 @@ fn provider_count(store: &Store, name: &str) -> usize {
 /// The `(reason, target-id)` of the single SUPERSEDED_BY edge out of `from`. Reads the
 /// edge's property and orientation back, so a recovered edge is verified directly, not
 /// just through its effect on a provider's membership.
-fn superseded_by(store: &Store, from: &str) -> (String, String) {
+fn superseded_by(store: &Store, from: &Id) -> (String, String) {
     let query = BoundQuery::new(
         "MATCH (a:Fact {id: $from})-[r:SUPERSEDED_BY]->(b:Fact) \
          RETURN r.reason AS reason, b.id AS target",
     )
-    .bind_str("from", from)
+    .bind_uuid("from", from)
     .unwrap();
     match store.execute(&query).expect("query superseded_by edge") {
         QueryResult::Rows(rows) => {
@@ -108,11 +115,15 @@ fn superseded_by(store: &Store, from: &str) -> (String, String) {
                 1,
                 "exactly one SUPERSEDED_BY out of {from}"
             );
-            let string_at = |column: usize| match rows.value(0, column) {
+            let reason = match rows.value(0, 0) {
                 Some(Value::String(value)) => value.as_str().to_owned(),
-                other => panic!("column {column} was not a string: {other:?}"),
+                other => panic!("reason was not a string: {other:?}"),
             };
-            (string_at(0), string_at(1))
+            let target = match rows.value(0, 1) {
+                Some(Value::Uuid(u)) => u.to_string(),
+                other => panic!("target id was not a uuid: {other:?}"),
+            };
+            (reason, target)
         }
         other => panic!("unexpected query result: {other:?}"),
     }
@@ -133,9 +144,9 @@ fn persistence_round_trips_schema_data_indexes_and_providers() {
             "MATCH (a:Fact {id: $from}), (b:Fact {id: $to}) \
              INSERT (a)-[:SUPERSEDED_BY {valid_from: $ts, ingested_at: $ts, reason: $reason}]->(b)",
         )
-        .bind_str("from", "fact-1")
+        .bind_uuid("from", tag_id("fact-1"))
         .unwrap()
-        .bind_str("to", "fact-2")
+        .bind_uuid("to", tag_id("fact-2"))
         .unwrap()
         .bind("ts", zdt())
         .unwrap()
@@ -185,9 +196,13 @@ fn persistence_round_trips_schema_data_indexes_and_providers() {
     );
     // The edge itself — its property and its direction — survives, not just its effect
     // on the provider count.
-    let (reason, target) = superseded_by(&recovered, "fact-1");
+    let (reason, target) = superseded_by(&recovered, &tag_id("fact-1"));
     assert_eq!(reason, "superseded", "edge property survives recovery");
-    assert_eq!(target, "fact-2", "edge orientation survives recovery");
+    assert_eq!(
+        target,
+        tag_id("fact-2").to_string(),
+        "edge orientation survives recovery"
+    );
 
     // A migrate after recovery is a no-op — the schema is already current.
     assert!(
@@ -282,15 +297,15 @@ fn insert_provenance(store: &Store, id: &str, subject: &str) {
          subject_id: $subj, writer_agent_id: $writer, signature: $sig, \
          model_family: $mf, trust_at_write: $tw})",
     )
-    .bind_str("id", id)
+    .bind_uuid("id", tag_id(id))
     .unwrap()
     .bind("ts", zdt())
     .unwrap()
     .bind_str("ns", "agent:test")
     .unwrap()
-    .bind_str("subj", subject)
+    .bind_uuid("subj", tag_id(subject))
     .unwrap()
-    .bind_str("writer", "agent:test")
+    .bind_uuid("writer", tag_id("agent:test"))
     .unwrap()
     .bind_str("sig", "signature-bytes")
     .unwrap()
@@ -306,7 +321,7 @@ fn insert_scope(store: &Store, id: &str) {
     let query = BoundQuery::new(
         "INSERT (s:Scope {id: $id, ingested_at: $ts, namespace: $ns, name: $name, scope_kind: $kind})",
     )
-    .bind_str("id", id)
+    .bind_uuid("id", tag_id(id))
     .unwrap()
     .bind("ts", zdt())
     .unwrap()
@@ -324,7 +339,7 @@ fn insert_recency_window(store: &Store, id: &str) {
     let query = BoundQuery::new(
         "INSERT (w:RecencyWindow {id: $id, ingested_at: $ts, namespace: $ns, label: $label})",
     )
-    .bind_str("id", id)
+    .bind_uuid("id", tag_id(id))
     .unwrap()
     .bind("ts", zdt())
     .unwrap()
@@ -338,9 +353,9 @@ fn insert_recency_window(store: &Store, id: &str) {
 /// Run a fixed, property-free edge insert binding only the two endpoint ids.
 fn insert_edge(store: &Store, source: &str, from: &str, to: &str) {
     let query = BoundQuery::new(source)
-        .bind_str("from", from)
+        .bind_uuid("from", tag_id(from))
         .unwrap()
-        .bind_str("to", to)
+        .bind_uuid("to", tag_id(to))
         .unwrap();
     store.execute(&query).expect("insert edge");
 }
@@ -376,9 +391,9 @@ fn candidate_state_providers_survive_recovery() {
         let supports = BoundQuery::new(
             "MATCH (a:Fact {id: $from}), (b:Fact {id: $to}) INSERT (a)-[:SUPPORTS {weight: $w}]->(b)",
         )
-        .bind_str("from", "fact-a")
+        .bind_uuid("from", tag_id("fact-a"))
         .unwrap()
-        .bind_str("to", "fact-b")
+        .bind_uuid("to", tag_id("fact-b"))
         .unwrap()
         .bind("w", Value::Float(1.0))
         .unwrap();
@@ -388,9 +403,9 @@ fn candidate_state_providers_survive_recovery() {
             "MATCH (a:Fact {id: $from}), (b:Fact {id: $to}) \
              INSERT (a)-[:CONTRADICTS {valid_from: $ts, ingested_at: $ts, detected_by: $by}]->(b)",
         )
-        .bind_str("from", "fact-c")
+        .bind_uuid("from", tag_id("fact-c"))
         .unwrap()
-        .bind_str("to", "fact-b")
+        .bind_uuid("to", tag_id("fact-b"))
         .unwrap()
         .bind("ts", zdt())
         .unwrap()

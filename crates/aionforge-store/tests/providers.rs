@@ -26,7 +26,7 @@ fn an_asserted_fact_joins_current_support_and_unresolved() {
     let store = store();
     let subject = entity("graphs");
     let f = fact(
-        subject.identity.id.clone(),
+        subject.identity.id,
         "is",
         ObjectValue::Text("useful".to_string()),
         "graphs are useful",
@@ -60,13 +60,13 @@ fn supersession_moves_membership_from_the_old_fact_to_the_new() {
     let subject = entity("capital");
     let subject_node = store.insert_entity(&subject).expect("insert entity");
     let old = fact(
-        subject.identity.id.clone(),
+        subject.identity.id,
         "is",
         ObjectValue::Text("Bonn".to_string()),
         "the capital is Bonn",
     );
     let new = fact(
-        subject.identity.id.clone(),
+        subject.identity.id,
         "is",
         ObjectValue::Text("Berlin".to_string()),
         "the capital is Berlin",
@@ -126,13 +126,13 @@ fn current_support_and_unresolved_current_are_node_level_duals() {
     let subject = entity("temperature");
     let subject_node = store.insert_entity(&subject).expect("insert entity");
     let incumbent = fact(
-        subject.identity.id.clone(),
+        subject.identity.id,
         "is",
         ObjectValue::Text("hot".to_string()),
         "it is hot",
     );
     let challenger = fact(
-        subject.identity.id.clone(),
+        subject.identity.id,
         "is",
         ObjectValue::Text("cold".to_string()),
         "it is cold",
@@ -188,13 +188,13 @@ fn quarantining_a_source_drops_it_from_current_support() {
     let subject = entity("status");
     let subject_node = store.insert_entity(&subject).expect("insert entity");
     let incumbent = fact(
-        subject.identity.id.clone(),
+        subject.identity.id,
         "is",
         ObjectValue::Text("open".to_string()),
         "the ticket is open",
     );
     let challenger = fact(
-        subject.identity.id.clone(),
+        subject.identity.id,
         "is",
         ObjectValue::Text("closed".to_string()),
         "the ticket is closed",
@@ -297,7 +297,7 @@ fn membership_and_counts_track_the_latest_generation() {
 
     let subject = entity("subject");
     let f = fact(
-        subject.identity.id.clone(),
+        subject.identity.id,
         "is",
         ObjectValue::Text("present".to_string()),
         "the subject is present",
@@ -355,19 +355,19 @@ fn current_support_membership_rebuilds_at_node_identity_after_recovery() {
         let subject = entity("capital");
         let subject_node = store.insert_entity(&subject).expect("insert entity");
         let old = fact(
-            subject.identity.id.clone(),
+            subject.identity.id,
             "is",
             ObjectValue::Text("Bonn".to_string()),
             "the capital is Bonn",
         );
         let new = fact(
-            subject.identity.id.clone(),
+            subject.identity.id,
             "is",
             ObjectValue::Text("Berlin".to_string()),
             "the capital is Berlin",
         );
-        superseded_id = old.identity.id.as_str().to_owned();
-        kept_id = new.identity.id.as_str().to_owned();
+        superseded_id = old.identity.id.to_string();
+        kept_id = new.identity.id.to_string();
         let old_node = store
             .assert_fact(
                 &old,

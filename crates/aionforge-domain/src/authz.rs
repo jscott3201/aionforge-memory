@@ -68,7 +68,7 @@ impl Principal {
     /// The agent's own private namespace (`agent:<id>`).
     #[must_use]
     pub fn private(&self) -> Namespace {
-        Namespace::Agent(self.agent_id.as_str().to_string())
+        Namespace::Agent(self.agent_id.to_string())
     }
 
     /// Whether the agent is a member of `team`.
@@ -207,14 +207,14 @@ impl Authorizer for DefaultAuthorizer {
         target: &Namespace,
     ) -> Result<(), AuthorizationError> {
         let reason = match target {
-            Namespace::Agent(id) if id.as_str() == principal.agent_id.as_str() => return Ok(()),
+            Namespace::Agent(id) if *id == principal.agent_id.to_string() => return Ok(()),
             Namespace::Team(team) if principal.is_member_of(team) => return Ok(()),
             Namespace::Agent(_) => DenyReason::NotOwnPrivate,
             Namespace::Team(_) => DenyReason::NotTeamMember,
             Namespace::Global | Namespace::System => DenyReason::NotDirectlyWritable,
         };
         Err(AuthorizationError {
-            agent: principal.agent_id.as_str().to_string(),
+            agent: principal.agent_id.to_string(),
             target: target.to_string(),
             reason,
         })
@@ -234,14 +234,14 @@ impl Authorizer for DefaultAuthorizer {
 mod tests {
     use super::*;
 
-    // Agent ids are ULIDs, so derive them from content hashes and build namespaces from the id
+    // Agent ids are UUIDs, so derive them from content hashes and build namespaces from the id
     // string (an agent's private namespace is `agent:<that id>`).
     fn agent_id(seed: &[u8]) -> Id {
         Id::from_content_hash(seed)
     }
 
     fn private_of(seed: &[u8]) -> Namespace {
-        Namespace::Agent(agent_id(seed).as_str().to_string())
+        Namespace::Agent(agent_id(seed).to_string())
     }
 
     fn alice() -> Principal {
@@ -352,7 +352,7 @@ mod tests {
         // The deserialization path filters too (it does not route through `new`).
         let json = format!(
             r#"{{"agent_id":"{}","teams":["","squad"]}}"#,
-            agent_id(b"alice").as_str()
+            agent_id(b"alice")
         );
         let de: Principal = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(de.teams, vec!["squad".to_string()]);

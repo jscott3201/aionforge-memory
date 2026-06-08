@@ -33,7 +33,7 @@ async fn record_failure_links_a_pattern_bumps_the_counter_and_surfaces_it() {
         .await
         .expect("save");
     let pattern_id = svc
-        .record_failure(id.clone(), "gamma timed out".to_string())
+        .record_failure(id, "gamma timed out".to_string())
         .await
         .expect("record failure");
     assert_ne!(pattern_id, id, "the pattern has its own id");
@@ -169,7 +169,7 @@ async fn a_down_embedder_at_retrieval_still_surfaces_failures_without_penalty() 
         ))
         .await
         .expect("save");
-    up.record_failure(id.clone(), "epsilon broke".to_string())
+    up.record_failure(id, "epsilon broke".to_string())
         .await
         .expect("record failure");
 
@@ -215,7 +215,7 @@ async fn multiple_relevant_failure_modes_scale_the_penalty() {
         ))
         .await
         .expect("save");
-    svc.record_failure(id.clone(), "fail one".to_string())
+    svc.record_failure(id, "fail one".to_string())
         .await
         .expect("fail one");
     svc.record_failure(id, "fail two".to_string())
@@ -304,10 +304,10 @@ async fn surfaced_failure_modes_are_ordered_by_relevance() {
         .await
         .expect("save");
     // Record out of order; retrieval must still return them most-relevant first.
-    svc.record_failure(id.clone(), "somewhat relevant".to_string())
+    svc.record_failure(id, "somewhat relevant".to_string())
         .await
         .expect("p2");
-    svc.record_failure(id.clone(), "not relevant".to_string())
+    svc.record_failure(id, "not relevant".to_string())
         .await
         .expect("p3");
     svc.record_failure(id, "most relevant".to_string())
@@ -395,7 +395,7 @@ async fn all_failure_modes_surface_even_the_irrelevant_ones() {
         .await
         .expect("save");
     for desc in ["relevant", "unrelated one", "unrelated two"] {
-        svc.record_failure(id.clone(), desc.to_string())
+        svc.record_failure(id, desc.to_string())
             .await
             .expect("record failure");
     }

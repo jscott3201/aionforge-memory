@@ -182,17 +182,17 @@ pub(crate) fn materialize_into(
         if let Some((existing_id, existing_node)) =
             dedup::find_existing_entity(mutator.read(), entity)?
         {
-            canonical_id.insert(entity.identity.id.clone(), existing_id.clone());
+            canonical_id.insert(entity.identity.id, existing_id);
             node_of.insert(existing_id, existing_node);
         } else {
             let (labels, props) = entity::to_node(entity)?;
             let node = mutator.create_node(labels, props)?;
-            canonical_id.insert(entity.identity.id.clone(), entity.identity.id.clone());
-            node_of.insert(entity.identity.id.clone(), node);
+            canonical_id.insert(entity.identity.id, entity.identity.id);
+            node_of.insert(entity.identity.id, node);
         }
     }
     // Map a (possibly fresh) entity id to the persisted canonical id it resolves to.
-    let canon = |id: &Id| canonical_id.get(id).cloned().unwrap_or_else(|| id.clone());
+    let canon = |id: &Id| canonical_id.get(id).cloned().unwrap_or(*id);
 
     // 2. Facts (+ ABOUT), content-deduped within the batch and against the committed graph.
     // `fact_nodes` records each fact's NodeId by its dedup key so step 2.5 can resolve a
@@ -326,7 +326,7 @@ pub(crate) fn materialize_into(
                 mentions_props(now)?,
             )?,
             None => tracing::warn!(
-                entity = entity_id.as_str(),
+                entity = %entity_id,
                 "consolidation: mentioned entity has no node; skipping MENTIONS"
             ),
         }
@@ -533,7 +533,7 @@ pub(crate) fn resolve_instruction_fact(
     canonical_id: &HashMap<Id, Id>,
     key: &FactKey,
 ) -> Result<Option<NodeId>, StoreError> {
-    let canon = |id: &Id| canonical_id.get(id).cloned().unwrap_or_else(|| id.clone());
+    let canon = |id: &Id| canonical_id.get(id).cloned().unwrap_or(*id);
     let subject = canon(&key.subject_id);
     let object = remap_object(&key.object, canon);
     let dedup_key = fact_dedup_key(&subject, &key.predicate, &object)?;
@@ -610,9 +610,7 @@ fn fact_dedup_key(
     let object_json = serde_json::to_string(object)?;
     Ok(format!(
         "{}\u{1f}{}\u{1f}{}",
-        subject_id.as_str(),
-        predicate,
-        object_json
+        subject_id, predicate, object_json
     ))
 }
 

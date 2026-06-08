@@ -44,7 +44,7 @@ fn fact(subject: &Id, predicate: &str, object: &str, status: FactStatus) -> Fact
             surprise: 0.1,
             is_pinned: false,
         },
-        subject_id: subject.clone(),
+        subject_id: *subject,
         predicate: predicate.to_string(),
         object: ObjectValue::Text(object.to_string()),
         confidence: 0.9,

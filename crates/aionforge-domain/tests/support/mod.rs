@@ -37,8 +37,7 @@ where
 // ---- leaf and value strategies ----
 
 pub fn arb_id() -> impl Strategy<Value = Id> {
-    any::<[u8; 16]>()
-        .prop_map(|bytes| Id::parse(ulid::Ulid::from_bytes(bytes).to_string()).expect("valid ulid"))
+    any::<[u8; 16]>().prop_map(|bytes| Id::from_uuid(uuid::Uuid::from_bytes(bytes)))
 }
 
 pub fn arb_content_hash() -> impl Strategy<Value = ContentHash> {

@@ -91,7 +91,7 @@ where
         if let Some((_, current)) = &active
             && is_unchanged(current, &skill)
         {
-            return Ok(current.identity.id.clone());
+            return Ok(current.identity.id);
         }
 
         // The next version is one past the highest ever recorded for this name — robust even if
@@ -108,7 +108,7 @@ where
         // Stamp the version-node identity and reset reliability: a changed body is a different
         // procedure whose success record is earned from zero, never inherited.
         let skill_id = Id::generate();
-        skill.identity.id = skill_id.clone();
+        skill.identity.id = skill_id;
         skill.identity.ingested_at = now.clone();
         skill.identity.expired_at = None;
         skill.stats.last_access = now.clone();
@@ -181,7 +181,7 @@ where
             embedder_model: Some(self.embedder.model().clone()),
             observed_at: now,
         };
-        let pattern_id = pattern.identity.id.clone();
+        let pattern_id = pattern.identity.id;
         // One atomic L0 commit creates the pattern, wires HAS_FAILURE, and bumps the failure
         // counter — recording a failure mode is a failure.
         self.store.save_bad_pattern(&pattern, skill_node)?;
@@ -406,8 +406,8 @@ where
                 expired_at: None,
             },
             kind,
-            subject_id: subject.clone(),
-            actor_id: self.actor_id.clone(),
+            subject_id: *subject,
+            actor_id: self.actor_id,
             payload,
             signature: String::new(),
             occurred_at: now.clone(),

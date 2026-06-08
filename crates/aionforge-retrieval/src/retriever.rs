@@ -343,10 +343,7 @@ impl<E: Embedder> HybridRetriever<E> {
             }
             considered += 1;
             let entry = StructuredEntry::Episode(episode_entry(&episode, &candidate));
-            let session = episode
-                .session_id
-                .as_ref()
-                .map(|id| id.as_str().to_string());
+            let session = episode.session_id.as_ref().map(|id| id.to_string());
             let seen = per_session.entry(session).or_insert(0);
             if cap == 0 || *seen < cap {
                 *seen += 1;
@@ -600,7 +597,7 @@ fn admit_episode(query: &RecallQuery, visible: &VisibleSet, episode: &Episode) -
 /// Build an episode entry from an episode and its fused candidate.
 fn episode_entry(episode: &Episode, candidate: &FusedCandidate) -> EpisodeEntry {
     EpisodeEntry {
-        id: episode.identity.id.clone(),
+        id: episode.identity.id,
         serialization_id: SerializationId::derive(
             EPISODE_KIND_TAG,
             episode.content_hash.as_str().as_bytes(),
@@ -619,10 +616,10 @@ fn episode_entry(episode: &Episode, candidate: &FusedCandidate) -> EpisodeEntry 
 /// Build a fact entry from a fact, its `ABOUT` validity window, and its fused candidate.
 fn fact_entry(fact: &Fact, about: &About, candidate: &FusedCandidate) -> FactEntry {
     FactEntry {
-        id: fact.identity.id.clone(),
+        id: fact.identity.id,
         serialization_id: fact_serialization_id(fact),
         namespace: fact.identity.namespace.clone(),
-        subject_id: fact.subject_id.clone(),
+        subject_id: fact.subject_id,
         predicate: fact.predicate.clone(),
         confidence: fact.confidence,
         status: fact.status,

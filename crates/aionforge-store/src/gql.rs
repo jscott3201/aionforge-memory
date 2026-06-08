@@ -46,6 +46,20 @@ impl BoundQuery {
         self.bind(name, v)
     }
 
+    /// Bind a parameter to an [`Id`] as a native UUID value (convenience over
+    /// [`BoundQuery::bind`]). Use this for id-equality filters so the bound value's
+    /// type matches the UUID-typed id columns.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the parameter name exceeds the engine's string cap.
+    pub fn bind_uuid(
+        self,
+        name: &str,
+        id: impl std::borrow::Borrow<aionforge_domain::Id>,
+    ) -> Result<Self, StoreError> {
+        self.bind(name, Value::Uuid(id.borrow().as_uuid()))
+    }
+
     pub(crate) fn source(&self) -> &str {
         &self.source
     }

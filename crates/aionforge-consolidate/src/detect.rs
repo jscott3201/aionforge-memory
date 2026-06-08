@@ -75,11 +75,8 @@ pub(crate) fn detect(
         let new_key = fact_key(&materialized.fact);
         let rule = cfg.rule(&new_key.predicate);
         let is_survivor = survivors
-            .get(&(
-                new_key.subject_id.as_str().to_string(),
-                new_key.predicate.clone(),
-            ))
-            .is_none_or(|winner| winner == materialized.fact.identity.id.as_str());
+            .get(&(new_key.subject_id.to_string(), new_key.predicate.clone()))
+            .is_none_or(|winner| *winner == materialized.fact.identity.id.to_string());
         for incumbent in current.iter().filter(|c| {
             c.key.subject_id == new_key.subject_id && c.key.predicate == new_key.predicate
         }) {
@@ -134,8 +131,8 @@ fn functional_survivors(
         if !cfg.rule(&key.predicate).functional {
             continue;
         }
-        let group = (key.subject_id.as_str().to_string(), key.predicate);
-        let id = materialized.fact.identity.id.as_str().to_string();
+        let group = (key.subject_id.to_string(), key.predicate);
+        let id = materialized.fact.identity.id.to_string();
         survivors
             .entry(group)
             .and_modify(|winner| {
@@ -163,7 +160,7 @@ fn detect_intra_episode_ties(
         let key = fact_key(&materialized.fact);
         if cfg.rule(&key.predicate).functional {
             groups
-                .entry((key.subject_id.as_str().to_string(), key.predicate))
+                .entry((key.subject_id.to_string(), key.predicate))
                 .or_default()
                 .push(materialized);
         }
@@ -172,7 +169,7 @@ fn detect_intra_episode_ties(
         if group.len() < 2 {
             continue;
         }
-        group.sort_by(|a, b| a.fact.identity.id.as_str().cmp(b.fact.identity.id.as_str()));
+        group.sort_by_key(|a| a.fact.identity.id);
         let survivor = fact_key(&group[0].fact);
         for loser in &group[1..] {
             let loser_key = fact_key(&loser.fact);
@@ -209,7 +206,7 @@ fn mutually_exclusive(
 /// The identifying triple of a fact.
 fn fact_key(fact: &Fact) -> FactKey {
     FactKey {
-        subject_id: fact.subject_id.clone(),
+        subject_id: fact.subject_id,
         predicate: fact.predicate.clone(),
         object: fact.object.clone(),
     }
@@ -228,20 +225,21 @@ fn quarantine_audit(
     // the incumbent object keeps each reconcile signal distinct, while a replay still reproduces
     // every id exactly and the dedup-aware write makes the whole set a no-op (04 §3).
     let incumbent_object = serde_json::to_string(&incumbent.key.object).unwrap_or_default();
+    let new_fact_id_str = new_fact.identity.id.to_string();
     AuditEvent {
         identity: Identity {
             id: crate::audit::audit_id(
                 "quarantine",
                 namespace,
-                &[new_fact.identity.id.as_str(), &incumbent_object],
+                &[new_fact_id_str.as_str(), &incumbent_object],
             ),
             ingested_at: now.clone(),
             namespace: namespace.clone(),
             expired_at: None,
         },
         kind: AuditKind::Quarantine,
-        subject_id: new_fact.identity.id.clone(),
-        actor_id: actor_id.clone(),
+        subject_id: new_fact.identity.id,
+        actor_id: *actor_id,
         payload: json!({
             "predicate": new_fact.predicate,
             "new_object": new_fact.object,
@@ -298,7 +296,7 @@ mod tests {
     fn current(subject: &Id, predicate: &str, object: ObjectValue, trust: f64) -> CurrentFact {
         CurrentFact {
             key: FactKey {
-                subject_id: subject.clone(),
+                subject_id: *subject,
                 predicate: predicate.to_string(),
                 object,
             },
@@ -323,7 +321,7 @@ mod tests {
                     expired_at: None,
                 },
                 stats: stats(0.9),
-                subject_id: subject.clone(),
+                subject_id: *subject,
                 predicate: predicate.to_string(),
                 object,
                 confidence: 0.9,
@@ -516,7 +514,7 @@ mod tests {
             "based_in",
             text("SF"),
         );
-        let (survivor, loser) = if a.fact.identity.id.as_str() < b.fact.identity.id.as_str() {
+        let (survivor, loser) = if a.fact.identity.id < b.fact.identity.id {
             (&a, &b)
         } else {
             (&b, &a)
@@ -563,7 +561,7 @@ mod tests {
         let subject = Id::generate();
         let cur = vec![CurrentFact {
             key: FactKey {
-                subject_id: subject.clone(),
+                subject_id: subject,
                 predicate: "based_in".to_string(),
                 object: text("SF"),
             },
@@ -600,7 +598,7 @@ mod tests {
             "based_in",
             text("Boston"),
         );
-        let (survivor, loser) = if sf.fact.identity.id.as_str() < boston.fact.identity.id.as_str() {
+        let (survivor, loser) = if sf.fact.identity.id < boston.fact.identity.id {
             (&sf, &boston)
         } else {
             (&boston, &sf)

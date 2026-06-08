@@ -14,11 +14,12 @@ use crate::time::Timestamp;
 /// The version byte prefixing every canonical signing payload.
 ///
 /// Bump this — and the domain-separation tags — whenever the layout changes, so a
-/// signature made under one layout can never validate under another.
-pub const SIGNING_ENCODING_VERSION: u8 = 1;
+/// signature made under one layout can never validate under another. v2 signs ids as
+/// their 16 raw UUID bytes (rather than the former 26-char ULID string).
+pub const SIGNING_ENCODING_VERSION: u8 = 2;
 
-const PROVENANCE_TAG: &str = "aionforge.provenance.v1";
-const ATTESTATION_TAG: &str = "aionforge.attestation.v1";
+const PROVENANCE_TAG: &str = "aionforge.provenance.v2";
+const ATTESTATION_TAG: &str = "aionforge.attestation.v2";
 
 /// The canonical provenance signing payload over `(subject_id, writer_agent_id,
 /// ingested_at)` (02 §10).
@@ -31,9 +32,11 @@ pub fn provenance_payload(
     writer_agent_id: &Id,
     ingested_at: &Timestamp,
 ) -> Vec<u8> {
+    let subject = subject_id.as_uuid();
+    let writer = writer_agent_id.as_uuid();
     encode(
         PROVENANCE_TAG,
-        &[subject_id.as_str(), writer_agent_id.as_str()],
+        &[subject.as_bytes(), writer.as_bytes()],
         ingested_at,
     )
 }
@@ -45,22 +48,24 @@ pub fn provenance_payload(
 /// `ATTESTED_BY` edge fields and checks them against the attester's public key.
 #[must_use]
 pub fn attestation_payload(fact_id: &Id, attester_id: &Id, attested_at: &Timestamp) -> Vec<u8> {
+    let fact = fact_id.as_uuid();
+    let attester = attester_id.as_uuid();
     encode(
         ATTESTATION_TAG,
-        &[fact_id.as_str(), attester_id.as_str()],
+        &[fact.as_bytes(), attester.as_bytes()],
         attested_at,
     )
 }
 
 /// Encode a versioned, domain-separated, length-prefixed payload: the version
-/// byte, then the tag, then each string field, then the instant as big-endian
-/// epoch milliseconds.
-fn encode(tag: &str, fields: &[&str], instant: &Timestamp) -> Vec<u8> {
+/// byte, then the tag, then each field, then the instant as big-endian epoch
+/// milliseconds. Ids arrive as their 16 raw UUID bytes.
+fn encode(tag: &str, fields: &[&[u8]], instant: &Timestamp) -> Vec<u8> {
     let mut buf = Vec::new();
     buf.push(SIGNING_ENCODING_VERSION);
     push_field(&mut buf, tag.as_bytes());
-    for field in fields {
-        push_field(&mut buf, field.as_bytes());
+    for &field in fields {
+        push_field(&mut buf, field);
     }
     let millis = instant.timestamp().as_millisecond();
     buf.extend_from_slice(&millis.to_be_bytes());
@@ -88,7 +93,7 @@ mod tests {
     }
 
     fn id(seed: u128) -> Id {
-        Id::parse(ulid::Ulid::from_parts(0, seed).to_string()).unwrap()
+        Id::from_uuid(uuid::Uuid::from_u128(seed))
     }
 
     #[test]
@@ -121,8 +126,8 @@ mod tests {
 
     #[test]
     fn length_prefix_prevents_field_boundary_collisions() {
-        let split_a = encode("t", &["ab", "c"], &ts(0));
-        let split_b = encode("t", &["a", "bc"], &ts(0));
+        let split_a = encode("t", &[&b"ab"[..], &b"c"[..]], &ts(0));
+        let split_b = encode("t", &[&b"a"[..], &b"bc"[..]], &ts(0));
         assert_ne!(split_a, split_b);
     }
 }

@@ -368,8 +368,10 @@ async fn audit_actor_id_is_stable_across_pass_construction() {
             panic!("expected rows");
         };
         match rows.value(0, 0) {
-            Some(Value::String(actor)) => actor.as_str().to_string(),
-            other => panic!("expected an actor id string, got {other:?}"),
+            // `actor_id` is a UUID-typed column, so the row carries a `Value::Uuid`; render it
+            // to a string for the cross-run stability comparison below.
+            Some(Value::Uuid(actor)) => actor.to_string(),
+            other => panic!("expected an actor id uuid, got {other:?}"),
         }
     }
 

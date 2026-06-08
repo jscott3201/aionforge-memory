@@ -73,7 +73,7 @@ fn seed_note_with_expiry(
     expired_at: Option<Timestamp>,
 ) -> Id {
     let id = Id::from_content_hash(seed);
-    let mut ident = identity(id.clone(), namespace);
+    let mut ident = identity(id, namespace);
     ident.expired_at = expired_at;
     let note = Note {
         identity: ident,
@@ -91,7 +91,7 @@ fn seed_note_with_expiry(
             namespace,
         ),
         kind: AuditKind::Distill,
-        subject_id: id.clone(),
+        subject_id: id,
         actor_id: Id::from_content_hash(b"seed"),
         payload: serde_json::json!({"outcome": "written"}),
         signature: String::new(),
@@ -117,7 +117,7 @@ fn link_evolve_audit(id_seed: &[u8], source: &Id, namespace: &Namespace) -> Audi
     AuditEvent {
         identity: identity(Id::from_content_hash(id_seed), namespace),
         kind: AuditKind::LinkEvolve,
-        subject_id: source.clone(),
+        subject_id: *source,
         actor_id: Id::from_content_hash(b"link-evolver/link-evolve-v1"),
         payload: serde_json::json!({
             "outcome": "created",
@@ -132,8 +132,8 @@ fn link_evolve_audit(id_seed: &[u8], source: &Id, namespace: &Namespace) -> Audi
 
 fn create(source: &Id, target: &Id, label: &str, valid_from: Timestamp) -> LinkEdgeWrite {
     LinkEdgeWrite {
-        source_id: source.clone(),
-        target_id: target.clone(),
+        source_id: *source,
+        target_id: *target,
         relationship_label: label.to_string(),
         valid_from,
     }
@@ -180,7 +180,7 @@ fn notes_in_namespace_returns_live_notes_sorted_and_bounded() {
 
     let pool = store.notes_in_namespace(&a, 10).expect("pool");
     assert_eq!(pool.len(), 3, "only namespace A's notes");
-    let ids: Vec<&str> = pool.iter().map(|n| n.identity.id.as_str()).collect();
+    let ids: Vec<Id> = pool.iter().map(|n| n.identity.id).collect();
     let mut sorted = ids.clone();
     sorted.sort_unstable();
     assert_eq!(ids, sorted, "pool is sorted by id (deterministic)");

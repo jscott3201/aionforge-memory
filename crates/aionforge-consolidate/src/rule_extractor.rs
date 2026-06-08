@@ -130,7 +130,7 @@ impl RuleExtractor {
                     confidence: rule.confidence,
                     statement: sentence.trim().to_string(),
                     source_spans: vec![SourceSpan {
-                        episode_id: episode.identity.id.clone(),
+                        episode_id: episode.identity.id,
                         start: offset,
                         end: offset + sentence.len(),
                     }],

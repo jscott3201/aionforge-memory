@@ -81,14 +81,16 @@ pub(crate) fn canonicalize_audit(
     namespace: &Namespace,
     now: &Timestamp,
 ) -> AuditEvent {
+    let episode_id_str = episode_id.to_string();
+    let resolution_id_str = resolution.id.to_string();
     let id = audit_id(
         "canonicalize",
         namespace,
         &[
-            episode_id.as_str(),
+            episode_id_str.as_str(),
             surface.surface.as_str(),
             surface.entity_type.as_str(),
-            resolution.id.as_str(),
+            resolution_id_str.as_str(),
         ],
     );
     AuditEvent {
@@ -99,12 +101,12 @@ pub(crate) fn canonicalize_audit(
             expired_at: None,
         },
         kind: AuditKind::Canonicalize,
-        subject_id: resolution.id.clone(),
-        actor_id: actor_id.clone(),
+        subject_id: resolution.id,
+        actor_id: *actor_id,
         payload: json!({
             "surface": surface.surface,
             "type": surface.entity_type,
-            "resolved_to": resolution.id.as_str(),
+            "resolved_to": resolution.id.to_string(),
             "canonical_name": resolution.canonical_name,
             "method": resolution.method.as_str(),
             "is_new": resolution.is_new,
@@ -142,11 +144,12 @@ pub(crate) fn induce_skill_audit(
     now: &Timestamp,
 ) -> AuditEvent {
     let namespace = &skill.identity.namespace;
+    let episode_id_str = episode.identity.id.to_string();
     let id = audit_id(
         "induce_skill",
         namespace,
         &[
-            episode.identity.id.as_str(),
+            episode_id_str.as_str(),
             episode.content_hash.as_str(),
             rule_version,
         ],
@@ -159,15 +162,15 @@ pub(crate) fn induce_skill_audit(
             expired_at: None,
         },
         kind: AuditKind::InduceSkill,
-        subject_id: skill.identity.id.clone(),
-        actor_id: actor_id.clone(),
+        subject_id: skill.identity.id,
+        actor_id: *actor_id,
         payload: json!({
             "schema_version": 1,
-            "episode_id": episode.identity.id.as_str(),
+            "episode_id": episode.identity.id.to_string(),
             "content_hash": episode.content_hash.as_str(),
             "recurrence_count": recurrence_count,
             "namespace": namespace.to_string(),
-            "induced_skill_id": skill.identity.id.as_str(),
+            "induced_skill_id": skill.identity.id.to_string(),
             "induced_skill_name": skill.name,
             "version": skill.version,
             "inducer_rule_version": rule_version,
@@ -187,10 +190,11 @@ pub(crate) fn induced_deprecate_audit(
     now: &Timestamp,
 ) -> AuditEvent {
     let namespace = &new.identity.namespace;
+    let new_id_str = new.identity.id.to_string();
     let id = audit_id(
         "skill_deprecate",
         namespace,
-        &[new.identity.id.as_str(), &prior.version.to_string()],
+        &[new_id_str.as_str(), &prior.version.to_string()],
     );
     AuditEvent {
         identity: Identity {
@@ -200,13 +204,13 @@ pub(crate) fn induced_deprecate_audit(
             expired_at: None,
         },
         kind: AuditKind::SkillDeprecate,
-        subject_id: prior.identity.id.clone(),
-        actor_id: actor_id.clone(),
+        subject_id: prior.identity.id,
+        actor_id: *actor_id,
         payload: json!({
             "skill_name": new.name,
             "deprecated_version": prior.version,
             "superseded_by_version": new.version,
-            "superseded_by_id": new.identity.id.as_str(),
+            "superseded_by_id": new.identity.id.to_string(),
         }),
         signature: String::new(),
         occurred_at: now.clone(),
@@ -256,18 +260,19 @@ pub(crate) fn distill_audit(
     namespace: &Namespace,
     now: &Timestamp,
 ) -> AuditEvent {
-    let mut fact_ids: Vec<&str> = cluster
+    let mut fact_ids: Vec<String> = cluster
         .facts
         .iter()
-        .map(|f| f.identity.id.as_str())
+        .map(|f| f.identity.id.to_string())
         .collect();
     fact_ids.sort_unstable();
     let facts_key = fact_ids.join(",");
+    let subject_id_str = cluster.subject_id.to_string();
     let id = audit_id(
         "distill",
         namespace,
         &[
-            cluster.subject_id.as_str(),
+            subject_id_str.as_str(),
             &facts_key,
             &provenance.identity.rule_version,
             outcome,
@@ -281,8 +286,8 @@ pub(crate) fn distill_audit(
             expired_at: None,
         },
         kind: AuditKind::Distill,
-        subject_id: cluster.subject_id.clone(),
-        actor_id: actor_id.clone(),
+        subject_id: cluster.subject_id,
+        actor_id: *actor_id,
         payload: json!({
             "outcome": outcome,
             "model_family": provenance.identity.model_family,
@@ -294,7 +299,7 @@ pub(crate) fn distill_audit(
             "entity_count": cluster.entity_names.len(),
             "entity_retention": retention.map(|r| r.entity_retention),
             "mean_confidence": retention.map(|r| r.mean_confidence),
-            "note_id": note_id.map(Id::as_str),
+            "note_id": note_id.map(|n| n.to_string()),
         }),
         signature: String::new(),
         occurred_at: now.clone(),
@@ -362,11 +367,12 @@ pub(crate) fn link_evolve_audit(
         .collect();
     decision_keys.sort_unstable();
     let decisions_key = decision_keys.join(",");
+    let source_id_str = source_id.to_string();
     let id = audit_id(
         "link_evolve",
         namespace,
         &[
-            source_id.as_str(),
+            source_id_str.as_str(),
             &provenance.identity.rule_version,
             outcome,
             &decisions_key,
@@ -391,8 +397,8 @@ pub(crate) fn link_evolve_audit(
             expired_at: None,
         },
         kind: AuditKind::LinkEvolve,
-        subject_id: source_id.clone(),
-        actor_id: actor_id.clone(),
+        subject_id: *source_id,
+        actor_id: *actor_id,
         payload: json!({
             "outcome": outcome,
             "model_family": provenance.identity.model_family,
@@ -418,10 +424,12 @@ pub(crate) fn summarize_audit(
     now: &Timestamp,
     retention: &RetentionOutcome,
 ) -> AuditEvent {
+    let episode_id_str = episode_id.to_string();
+    let subject_id_str = cluster.subject_id.to_string();
     let id = audit_id(
         "summarize",
         namespace,
-        &[episode_id.as_str(), cluster.subject_id.as_str()],
+        &[episode_id_str.as_str(), subject_id_str.as_str()],
     );
     AuditEvent {
         identity: Identity {
@@ -431,8 +439,8 @@ pub(crate) fn summarize_audit(
             expired_at: None,
         },
         kind: AuditKind::Summarize,
-        subject_id: cluster.subject_id.clone(),
-        actor_id: actor_id.clone(),
+        subject_id: cluster.subject_id,
+        actor_id: *actor_id,
         payload: json!({
             "outcome": if retention.passed { "written" } else { "skipped_low_retention" },
             "source_fact_count": cluster.facts.len(),

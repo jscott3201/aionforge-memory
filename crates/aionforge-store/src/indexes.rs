@@ -43,16 +43,16 @@ const TEXT_INDEXES: &[(&str, &str)] = &[
 /// `(label, property)` for the per-kind `INDEXED` scalar fields (§4/§8). `namespace`
 /// is indexed on every kind (§11) and added separately, so it is not repeated here.
 /// Every field here is a `STRING` column.
-const SCALAR_INDEXES: &[(&str, &str)] = &[
-    ("Episode", "role"),
-    ("Episode", "agent_id"),
-    ("Episode", "session_id"),
-    ("Episode", "content_hash"),
-    ("Episode", "consolidation_state"),
-    ("Fact", "subject_id"),
-    ("Fact", "predicate"),
-    ("Fact", "status"),
-    ("Fact", "object_entity_id"),
+const SCALAR_INDEXES: &[(&str, &str, TypedIndexKind)] = &[
+    ("Episode", "role", TypedIndexKind::String),
+    ("Episode", "agent_id", TypedIndexKind::Uuid),
+    ("Episode", "session_id", TypedIndexKind::Uuid),
+    ("Episode", "content_hash", TypedIndexKind::String),
+    ("Episode", "consolidation_state", TypedIndexKind::String),
+    ("Fact", "subject_id", TypedIndexKind::Uuid),
+    ("Fact", "predicate", TypedIndexKind::String),
+    ("Fact", "status", TypedIndexKind::String),
+    ("Fact", "object_entity_id", TypedIndexKind::Uuid),
     // `id` is indexed on `Entity`, `Note`, `AuditEvent`, and `Skill` (not on every kind).
     // Consolidation resolves an already-canonical subject entity's `NodeId` by its domain id
     // inside the flip txn when it wires the `ABOUT`/`MENTIONS` edges (M2.T04); it dedups a
@@ -62,24 +62,24 @@ const SCALAR_INDEXES: &[(&str, &str)] = &[
     // (`ProceduralMemory::record_outcome(skill_id: Id)` and the by-id reads); L2 bridges that to
     // L0's node-keyed `record_skill_outcome` / reads via `skill_by_id`, so the id probe must be
     // indexed (M3.T04). Other kinds are reached by node id directly, so they need no id index.
-    ("Entity", "id"),
-    ("Entity", "canonical_name"),
-    ("Entity", "type"),
-    ("Note", "id"),
-    ("Skill", "id"),
-    ("Skill", "name"),
-    ("Skill", "source_hash"),
-    ("Note", "derived_from_episode"),
-    ("CoreBlock", "block_kind"),
-    ("Agent", "status"),
-    ("Session", "owner_agent_id"),
-    ("ProvenanceRecord", "subject_id"),
-    ("ProvenanceRecord", "writer_agent_id"),
-    ("AuditEvent", "id"),
-    ("AuditEvent", "kind"),
-    ("AuditEvent", "subject_id"),
-    ("Promotion", "candidate_fact_id"),
-    ("Promotion", "status"),
+    ("Entity", "id", TypedIndexKind::Uuid),
+    ("Entity", "canonical_name", TypedIndexKind::String),
+    ("Entity", "type", TypedIndexKind::String),
+    ("Note", "id", TypedIndexKind::Uuid),
+    ("Skill", "id", TypedIndexKind::Uuid),
+    ("Skill", "name", TypedIndexKind::String),
+    ("Skill", "source_hash", TypedIndexKind::String),
+    ("Note", "derived_from_episode", TypedIndexKind::Uuid),
+    ("CoreBlock", "block_kind", TypedIndexKind::String),
+    ("Agent", "status", TypedIndexKind::String),
+    ("Session", "owner_agent_id", TypedIndexKind::Uuid),
+    ("ProvenanceRecord", "subject_id", TypedIndexKind::Uuid),
+    ("ProvenanceRecord", "writer_agent_id", TypedIndexKind::Uuid),
+    ("AuditEvent", "id", TypedIndexKind::Uuid),
+    ("AuditEvent", "kind", TypedIndexKind::String),
+    ("AuditEvent", "subject_id", TypedIndexKind::Uuid),
+    ("Promotion", "candidate_fact_id", TypedIndexKind::Uuid),
+    ("Promotion", "status", TypedIndexKind::String),
 ];
 
 /// Composite indexes (§8). DDL-only — no Rust wrapper. The five timestamp-bearing
@@ -152,15 +152,20 @@ impl Store {
     fn register_property_indexes(&self) -> Result<(), StoreError> {
         // namespace is indexed on every kind (§11).
         for type_ddl in NODE_TYPES {
-            self.ensure_property_index(type_ddl.name, "namespace")?;
+            self.ensure_property_index(type_ddl.name, "namespace", TypedIndexKind::String)?;
         }
-        for &(label, property) in SCALAR_INDEXES {
-            self.ensure_property_index(label, property)?;
+        for &(label, property, kind) in SCALAR_INDEXES {
+            self.ensure_property_index(label, property, kind)?;
         }
         Ok(())
     }
 
-    fn ensure_property_index(&self, label: &str, property: &str) -> Result<(), StoreError> {
+    fn ensure_property_index(
+        &self,
+        label: &str,
+        property: &str,
+        kind: TypedIndexKind,
+    ) -> Result<(), StoreError> {
         if self.property_index_exists(label, property) {
             return Ok(());
         }
@@ -168,7 +173,7 @@ impl Store {
         self.graph().create_property_index_named(
             db_string(label)?,
             db_string(property)?,
-            TypedIndexKind::String,
+            kind,
             Some(name),
         )?;
         Ok(())

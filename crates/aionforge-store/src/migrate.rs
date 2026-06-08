@@ -212,7 +212,7 @@ impl Store {
                 "INSERT (v:SchemaVersion {id: $id, ingested_at: $now, namespace: $namespace, \
                  current_version: $version, applied_at: $now})",
             )
-            .bind_str("id", Id::generate().as_str())?
+            .bind_uuid("id", Id::generate())?
             .bind("now", timestamp_value(now))?
             .bind_str("namespace", &Namespace::System.to_string())?
             .bind("version", Value::Int(version))?;

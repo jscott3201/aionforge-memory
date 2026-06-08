@@ -59,7 +59,7 @@ impl RuleLinkEvolver {
                 continue;
             };
             links.push(EvolvedLink {
-                target_id: candidate.identity.id.clone(),
+                target_id: candidate.identity.id,
                 relationship_label: RELATED_TO.to_string(),
                 confidence: cosine(source_vec.as_slice(), candidate_vec.as_slice()),
             });

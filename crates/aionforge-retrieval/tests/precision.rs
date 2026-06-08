@@ -137,7 +137,7 @@ fn entity(store: &Store, name: &str, embedding: [f32; 4]) -> (Id, NodeId) {
     let id = Id::generate();
     let entity = Entity {
         identity: Identity {
-            id: id.clone(),
+            id,
             ingested_at: ts(T0),
             namespace: Namespace::Global,
             expired_at: None,
@@ -161,7 +161,7 @@ fn entity_unembedded(store: &Store, name: &str) -> (Id, NodeId) {
     let id = Id::generate();
     let entity = Entity {
         identity: Identity {
-            id: id.clone(),
+            id,
             ingested_at: ts(T0),
             namespace: Namespace::Global,
             expired_at: None,
@@ -188,7 +188,7 @@ fn assert_fact(store: &Store, subject: &Id, subject_node: NodeId, statement: &st
             expired_at: None,
         },
         stats: stats(),
-        subject_id: subject.clone(),
+        subject_id: *subject,
         predicate: "based_in".to_string(),
         object: ObjectValue::Text(statement.to_string()),
         confidence: 0.9,

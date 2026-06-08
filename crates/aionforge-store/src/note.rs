@@ -196,7 +196,7 @@ pub(crate) fn materialize_notes(
                 resolve_instruction_fact(mutator.read(), fact_nodes, canonical_id, source)?
             else {
                 tracing::warn!(
-                    note = materialized.note.identity.id.as_str(),
+                    note = %materialized.note.identity.id,
                     "consolidation: summary source fact unresolved; skipping DERIVED_FROM edge"
                 );
                 continue;

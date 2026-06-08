@@ -15,14 +15,14 @@ serde_json.workspace = true
 jiff.workspace = true
 thiserror.workspace = true
 blake3.workspace = true
-ulid.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 jiff.workspace = true
-ulid.workspace = true
+uuid.workspace = true
 
 [lints]
 workspace = true

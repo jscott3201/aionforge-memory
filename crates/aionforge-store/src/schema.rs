@@ -93,6 +93,8 @@ pub enum PropertyKind {
     Float,
     /// `STRING`.
     String,
+    /// `UUID`.
+    Uuid,
     /// `ZONED DATETIME`.
     ZonedDateTime,
     /// `VECTOR`.
@@ -159,6 +161,7 @@ fn property_kind(value_type: &PropertyValueType) -> PropertyKind {
         PropertyValueType::Uint => PropertyKind::Uint,
         PropertyValueType::Float => PropertyKind::Float,
         PropertyValueType::String => PropertyKind::String,
+        PropertyValueType::Uuid => PropertyKind::Uuid,
         PropertyValueType::ZonedDateTime => PropertyKind::ZonedDateTime,
         PropertyValueType::Vector => PropertyKind::Vector,
         PropertyValueType::Json => PropertyKind::Json,

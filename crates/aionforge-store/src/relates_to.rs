@@ -106,7 +106,7 @@ impl Store {
                 notes.push(note);
             }
         }
-        notes.sort_by(|a, b| a.identity.id.as_str().cmp(b.identity.id.as_str()));
+        notes.sort_by_key(|a| a.identity.id);
         notes.truncate(limit);
         Ok(notes)
     }
@@ -227,7 +227,7 @@ impl Store {
                 let Some(source_node) = node_by_id(mutator.read(), Note::LABEL, &create.source_id)?
                 else {
                     tracing::warn!(
-                        source = create.source_id.as_str(),
+                        source = %create.source_id,
                         "link evolution: source note not found; skipping link create"
                     );
                     continue;
@@ -235,7 +235,7 @@ impl Store {
                 let Some(target_node) = node_by_id(mutator.read(), Note::LABEL, &create.target_id)?
                 else {
                     tracing::warn!(
-                        target = create.target_id.as_str(),
+                        target = %create.target_id,
                         "link evolution: target note not found; skipping link create"
                     );
                     continue;
@@ -247,8 +247,8 @@ impl Store {
                     }
                     Some(existing) => {
                         tracing::warn!(
-                            source = create.source_id.as_str(),
-                            target = create.target_id.as_str(),
+                            source = %create.source_id,
+                            target = %create.target_id,
                             current = existing.as_str(),
                             proposed = create.relationship_label.as_str(),
                             "link evolution: a different current link exists on this pair; close it \
@@ -283,8 +283,8 @@ impl Store {
                         PropertyMap::from_pairs(Vec::new())?,
                     )?,
                     None => tracing::warn!(
-                        audit = event.identity.id.as_str(),
-                        subject = event.subject_id.as_str(),
+                        audit = %event.identity.id,
+                        subject = %event.subject_id,
                         "link evolution: audit subject note not found; skipping AUDIT edge"
                     ),
                 }

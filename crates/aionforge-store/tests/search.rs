@@ -296,7 +296,7 @@ fn nearest_active_episode_returns_the_closest_active_match() {
         .expect("seed expired episode");
 
     let active = episode("remembered turn", Some(vec![1.0, 0.0, 0.0, 0.0]));
-    let active_id = active.identity.id.clone();
+    let active_id = active.identity.id;
     store.insert_episode(&active).expect("seed active episode");
 
     let (id, distance) = store

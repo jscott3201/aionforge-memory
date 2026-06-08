@@ -473,7 +473,7 @@ async fn an_interrupted_in_progress_episode_recovers_across_a_restart() {
         .expect("load")
         .expect("cursor");
     assert!(
-        cursor.last_episode_id.as_ref().map(|id| id.as_str()) == Some(episode_id.as_str()),
+        cursor.last_episode_id.as_ref() == Some(&episode_id),
         "the cursor advanced to the recovered episode"
     );
     drop(consolidator);
@@ -559,8 +559,10 @@ async fn failure_audit_actor_id_is_deterministic_across_construction() {
             panic!("expected rows");
         };
         match rows.value(0, 0) {
-            Some(Value::String(actor)) => actor.as_str().to_string(),
-            other => panic!("expected an actor id string, got {other:?}"),
+            // `actor_id` is a UUID-typed column, so the row carries a `Value::Uuid`; render it
+            // to a string for the cross-run stability comparison below.
+            Some(Value::Uuid(actor)) => actor.to_string(),
+            other => panic!("expected an actor id uuid, got {other:?}"),
         }
     }
 

@@ -261,7 +261,7 @@ impl<S: Summarizer, E: Embedder> Distiller<S, E> {
                 .facts
                 .iter()
                 .map(|f| FactKey {
-                    subject_id: f.subject_id.clone(),
+                    subject_id: f.subject_id,
                     predicate: f.predicate.clone(),
                     object: f.object.clone(),
                 })
@@ -314,7 +314,7 @@ impl<S: Summarizer, E: Embedder> Distiller<S, E> {
             if fact.identity.namespace != *namespace {
                 continue;
             }
-            if seen.insert(fact.identity.id.as_str().to_string()) {
+            if seen.insert(fact.identity.id.to_string()) {
                 facts.push(fact);
             }
         }
@@ -331,18 +331,18 @@ impl<S: Summarizer, E: Embedder> Distiller<S, E> {
     ) -> Result<BTreeMap<Id, String>, DistillError> {
         let mut needed: Vec<Id> = Vec::new();
         for fact in facts {
-            needed.push(fact.subject_id.clone());
+            needed.push(fact.subject_id);
             if let ObjectValue::Entity(id) = &fact.object {
-                needed.push(id.clone());
+                needed.push(*id);
             }
         }
-        needed.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+        needed.sort();
         needed.dedup();
         let mut name_of: BTreeMap<Id, String> = BTreeMap::new();
         for id in needed {
             let name = match store.entity_by_id(&id)? {
                 Some(entity) => entity.canonical_name,
-                None => id.as_str().to_string(),
+                None => id.to_string(),
             };
             name_of.insert(id, name);
         }

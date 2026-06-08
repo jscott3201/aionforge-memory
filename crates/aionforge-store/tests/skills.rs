@@ -57,7 +57,7 @@ fn audit(kind: AuditKind, subject: &Id) -> AuditEvent {
     AuditEvent {
         identity: identity(Id::generate()),
         kind,
-        subject_id: subject.clone(),
+        subject_id: *subject,
         actor_id: Id::generate(),
         payload: serde_json::json!({}),
         signature: "test-signature".to_string(),
@@ -70,7 +70,7 @@ fn audit_edges_into(store: &Store, skill_id: &Id) -> usize {
     use aionforge_store::{BoundQuery, QueryResult};
     let query =
         BoundQuery::new("MATCH (a:AuditEvent)-[:AUDIT]->(s:Skill {id: $sid}) RETURN a.id AS id")
-            .bind_str("sid", skill_id.as_str())
+            .bind_uuid("sid", skill_id)
             .expect("bind skill id");
     match store.execute(&query).expect("audit query") {
         QueryResult::Rows(rows) => rows.row_count(),

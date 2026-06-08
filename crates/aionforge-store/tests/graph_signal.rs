@@ -39,14 +39,14 @@ fn episode(content: &str) -> Episode {
 /// Wire an `Episode -MENTIONS-> Entity` edge by domain id (no typed writer exists yet;
 /// this is a real commit through the parameter-bound write path, like the grounding
 /// fixtures). Both `NOT NULL` timestamp props on the edge are bound.
-fn mention(store: &Store, episode_id: &str, entity_id: &str) {
+fn mention(store: &Store, episode_id: &Id, entity_id: &Id) {
     let query = BoundQuery::new(
         "MATCH (e:Episode {id: $from}), (n:Entity {id: $to}) \
          INSERT (e)-[:MENTIONS {valid_from: $ts, ingested_at: $ts}]->(n)",
     )
-    .bind_str("from", episode_id)
+    .bind_uuid("from", episode_id)
     .unwrap()
-    .bind_str("to", entity_id)
+    .bind_uuid("to", entity_id)
     .unwrap()
     .bind("ts", zdt())
     .unwrap();
@@ -54,14 +54,14 @@ fn mention(store: &Store, episode_id: &str, entity_id: &str) {
 }
 
 /// Wire a `Fact -SUPPORTS-> Fact` edge by domain id (weight is `NOT NULL` on the type).
-fn support(store: &Store, from_fact_id: &str, to_fact_id: &str) {
+fn support(store: &Store, from_fact_id: &Id, to_fact_id: &Id) {
     let query = BoundQuery::new(
         "MATCH (a:Fact {id: $from}), (b:Fact {id: $to}) \
          INSERT (a)-[:SUPPORTS {weight: 1.0}]->(b)",
     )
-    .bind_str("from", from_fact_id)
+    .bind_uuid("from", from_fact_id)
     .unwrap()
-    .bind_str("to", to_fact_id)
+    .bind_uuid("to", to_fact_id)
     .unwrap();
     store.execute(&query).expect("insert SUPPORTS edge");
 }
@@ -82,9 +82,9 @@ fn sorted(mut nodes: Vec<NodeId>) -> Vec<NodeId> {
 /// The engine node id of the `Scope` with domain id `id`. `Scope` sits outside the
 /// associative projection (which spans only `Entity`/`Fact`/`Episode`), so its node id is
 /// what the seed-not-in-projection error path needs.
-fn scope_node(store: &Store, id: &str) -> NodeId {
+fn scope_node(store: &Store, id: &Id) -> NodeId {
     let query = BoundQuery::new("MATCH (s:Scope {id: $id}) RETURN s AS node_id")
-        .bind_str("id", id)
+        .bind_uuid("id", id)
         .unwrap();
     let QueryResult::Rows(rows) = store.execute(&query).expect("match scope") else {
         panic!("a MATCH ... RETURN yields rows");
@@ -102,14 +102,14 @@ fn undirected_pagerank_spreads_entity_seed_and_filters_by_kind() {
 
     // The entity the query names; keep its domain id for the MENTIONS edge below.
     let ent = entity("aionforge");
-    let entity_id = ent.identity.id.as_str().to_owned();
+    let entity_id = ent.identity.id;
     let e_node = store.insert_entity(&ent).expect("insert entity");
 
     // Two facts ABOUT the entity (assert_fact writes the Fact and the ABOUT edge).
     let f1 = store
         .assert_fact(
             &fact(
-                ent.identity.id.clone(),
+                ent.identity.id,
                 "is",
                 ObjectValue::Text("a memory substrate".to_string()),
                 "aionforge is a memory substrate",
@@ -121,7 +121,7 @@ fn undirected_pagerank_spreads_entity_seed_and_filters_by_kind() {
     let f2 = store
         .assert_fact(
             &fact(
-                ent.identity.id.clone(),
+                ent.identity.id,
                 "uses",
                 ObjectValue::Text("selene".to_string()),
                 "aionforge uses selene",
@@ -133,7 +133,7 @@ fn undirected_pagerank_spreads_entity_seed_and_filters_by_kind() {
 
     // One episode that MENTIONS the entity.
     let ep = episode("we talked about aionforge today");
-    let ep_id = ep.identity.id.as_str().to_owned();
+    let ep_id = ep.identity.id;
     let ep_node = store.insert_episode(&ep).expect("insert episode");
     mention(&store, &ep_id, &entity_id);
 
@@ -192,12 +192,12 @@ fn mass_spreads_across_support_chains_and_skips_disconnected_facts() {
     let e3_node = store.insert_entity(&e3).expect("insert e3");
 
     let f1 = fact(
-        e1.identity.id.clone(),
+        e1.identity.id,
         "uses",
         ObjectValue::Text("selene".to_string()),
         "aionforge uses selene",
     );
-    let f1_id = f1.identity.id.as_str().to_owned();
+    let f1_id = f1.identity.id;
     let f1_node = store
         .assert_fact(
             &f1,
@@ -207,12 +207,12 @@ fn mass_spreads_across_support_chains_and_skips_disconnected_facts() {
         .expect("assert f1");
 
     let f2 = fact(
-        e2.identity.id.clone(),
+        e2.identity.id,
         "is",
         ObjectValue::Text("a graph engine".to_string()),
         "selene is a graph engine",
     );
-    let f2_id = f2.identity.id.as_str().to_owned();
+    let f2_id = f2.identity.id;
     let f2_node = store
         .assert_fact(
             &f2,
@@ -222,7 +222,7 @@ fn mass_spreads_across_support_chains_and_skips_disconnected_facts() {
         .expect("assert f2");
 
     let f3 = fact(
-        e3.identity.id.clone(),
+        e3.identity.id,
         "is",
         ObjectValue::Text("off topic".to_string()),
         "unrelated is off topic",
@@ -290,7 +290,7 @@ fn empty_seeds_yield_an_empty_ranking() {
     store
         .assert_fact(
             &fact(
-                ent.identity.id.clone(),
+                ent.identity.id,
                 "is",
                 ObjectValue::Text("a memory substrate".to_string()),
                 "aionforge is a memory substrate",
@@ -322,7 +322,7 @@ fn k_bounds_the_ranking() {
             store
                 .assert_fact(
                     &fact(
-                        ent.identity.id.clone(),
+                        ent.identity.id,
                         "rel",
                         ObjectValue::Text(format!("object {n}")),
                         &format!("statement {n}"),
@@ -369,7 +369,7 @@ fn zero_k_yields_an_empty_ranking() {
     store
         .assert_fact(
             &fact(
-                ent.identity.id.clone(),
+                ent.identity.id,
                 "is",
                 ObjectValue::Text("a memory substrate".to_string()),
                 "aionforge is a memory substrate",
@@ -398,7 +398,7 @@ fn a_kind_with_no_nodes_yields_an_empty_ranking() {
     store
         .assert_fact(
             &fact(
-                ent.identity.id.clone(),
+                ent.identity.id,
                 "is",
                 ObjectValue::Text("a memory substrate".to_string()),
                 "aionforge is a memory substrate",
@@ -433,7 +433,7 @@ fn multiple_seeds_reach_each_seed_component() {
     let f1_node = store
         .assert_fact(
             &fact(
-                e1.identity.id.clone(),
+                e1.identity.id,
                 "is",
                 ObjectValue::Text("a memory substrate".to_string()),
                 "aionforge is a memory substrate",
@@ -445,7 +445,7 @@ fn multiple_seeds_reach_each_seed_component() {
     let f2_node = store
         .assert_fact(
             &fact(
-                e2.identity.id.clone(),
+                e2.identity.id,
                 "is",
                 ObjectValue::Text("a graph engine".to_string()),
                 "selene is a graph engine",
@@ -480,8 +480,9 @@ fn a_seed_outside_the_projection_is_an_error() {
     // spans only Entity/Fact/Episode).
     let ent = entity("aionforge");
     store.insert_entity(&ent).expect("insert entity");
-    insert_scope(&store, "scope-1");
-    let scope = scope_node(&store, "scope-1");
+    let scope_id = Id::generate();
+    insert_scope(&store, &scope_id);
+    let scope = scope_node(&store, &scope_id);
 
     // selene validates that every personalization seed is a projected node and rejects
     // one that is not; the store surfaces that as an error rather than a silent empty —

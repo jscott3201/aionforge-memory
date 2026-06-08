@@ -174,7 +174,7 @@ fn identity(id: Id) -> Identity {
 fn entity(store: &Store, name: &str, embedding: [f32; 4]) -> (Id, NodeId) {
     let id = Id::generate();
     let entity = Entity {
-        identity: identity(id.clone()),
+        identity: identity(id),
         stats: stats(),
         canonical_name: name.to_string(),
         entity_type: "Concept".to_string(),
@@ -198,9 +198,9 @@ fn assert_fact(
 ) -> (Id, NodeId) {
     let id = Id::generate();
     let fact = Fact {
-        identity: identity(id.clone()),
+        identity: identity(id),
         stats: stats(),
-        subject_id: subject.clone(),
+        subject_id: *subject,
         predicate: "rel".to_string(),
         object: ObjectValue::Text(statement.to_string()),
         confidence: 0.9,
@@ -227,7 +227,7 @@ fn assert_fact(
 fn episode(store: &Store, content: &str, embedding: [f32; 4]) -> Id {
     let id = Id::generate();
     let episode = Episode {
-        identity: identity(id.clone()),
+        identity: identity(id),
         stats: stats(),
         content: content.to_string(),
         role: Role::User,
@@ -251,9 +251,9 @@ fn mention(store: &Store, episode_id: &Id, entity_id: &Id) {
         "MATCH (e:Episode {id: $from}), (n:Entity {id: $to}) \
          INSERT (e)-[:MENTIONS {valid_from: $ts, ingested_at: $ts}]->(n)",
     )
-    .bind_str("from", episode_id.as_str())
+    .bind_uuid("from", episode_id)
     .unwrap()
-    .bind_str("to", entity_id.as_str())
+    .bind_uuid("to", entity_id)
     .unwrap()
     .bind("ts", zdt())
     .unwrap();
@@ -267,9 +267,9 @@ fn support(store: &Store, from: &Id, to: &Id) {
         "MATCH (a:Fact {id: $from}), (b:Fact {id: $to}) \
          INSERT (a)-[:SUPPORTS {weight: $weight}]->(b)",
     )
-    .bind_str("from", from.as_str())
+    .bind_uuid("from", from)
     .unwrap()
-    .bind_str("to", to.as_str())
+    .bind_uuid("to", to)
     .unwrap()
     .bind("weight", Value::Float(1.0))
     .unwrap();
@@ -283,9 +283,9 @@ fn contradict(store: &Store, from: &Id, to: &Id) {
         "MATCH (a:Fact {id: $from}), (b:Fact {id: $to}) \
          INSERT (a)-[:CONTRADICTS {valid_from: $ts, ingested_at: $ts, detected_by: $by}]->(b)",
     )
-    .bind_str("from", from.as_str())
+    .bind_uuid("from", from)
     .unwrap()
-    .bind_str("to", to.as_str())
+    .bind_uuid("to", to)
     .unwrap()
     .bind("ts", zdt())
     .unwrap()

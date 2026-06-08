@@ -125,8 +125,9 @@ fn induced_skills(store: &Store) -> Vec<Skill> {
     };
     let mut out = Vec::new();
     for row in 0..rows.row_count() {
-        if let Some(Value::String(id)) = rows.value(row, 0) {
-            let id = Id::parse(id.as_str()).expect("valid id");
+        // `s.id` is a UUID-typed column, so the row carries a `Value::Uuid`.
+        if let Some(Value::Uuid(id)) = rows.value(row, 0) {
+            let id = Id::from_uuid(*id);
             if let Some(skill) = store.skill_by_id(&id).expect("decode skill")
                 && skill.induced
             {
@@ -142,7 +143,7 @@ fn induce_audits_for(store: &Store, skill_id: &Id) -> usize {
     let query = BoundQuery::new(
         "MATCH (a:AuditEvent)-[:AUDIT]->(s:Skill {id: $sid}) WHERE a.kind = $k RETURN a.id AS id",
     )
-    .bind_str("sid", skill_id.as_str())
+    .bind_uuid("sid", skill_id)
     .expect("bind sid")
     .bind_str("k", "induce_skill")
     .expect("bind kind");
@@ -157,7 +158,7 @@ fn has_episode_lineage(store: &Store, skill_id: &Id) -> bool {
     let query = BoundQuery::new(
         "MATCH (s:Skill {id: $sid})-[:DERIVED_FROM]->(e:Episode) RETURN e.id AS id LIMIT 1",
     )
-    .bind_str("sid", skill_id.as_str())
+    .bind_uuid("sid", skill_id)
     .expect("bind sid");
     matches!(store.execute(&query).expect("lineage query"), QueryResult::Rows(rows) if rows.row_count() > 0)
 }

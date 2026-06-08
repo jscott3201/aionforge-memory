@@ -120,7 +120,7 @@ fn request(content: &str, agent: &Id) -> CaptureRequest {
     CaptureRequest {
         content: content.to_string(),
         role: Role::User,
-        agent_id: agent.clone(),
+        agent_id: *agent,
         teams: Vec::new(),
         session_id: None,
         captured_at: ts(),
@@ -154,6 +154,7 @@ fn first_string(store: &Store, query: BoundQuery) -> Option<String> {
     match store.execute(&query).expect("query") {
         QueryResult::Rows(rows) => match rows.value(0, 0) {
             Some(Value::String(s)) => Some(s.as_str().to_string()),
+            Some(Value::Uuid(uuid)) => Some(uuid.to_string()),
             _ => None,
         },
         _ => None,
@@ -213,9 +214,7 @@ fn episode_field(store: &Store, id: &Id, field: &str) -> Option<String> {
     let source = format!("MATCH (e:Episode) WHERE e.id = $id RETURN e.{field} AS v"); // gql-ident-ok
     first_string(
         store,
-        BoundQuery::new(source)
-            .bind_str("id", id.as_str())
-            .expect("bind"),
+        BoundQuery::new(source).bind_uuid("id", id).expect("bind"),
     )
 }
 
@@ -252,10 +251,10 @@ async fn a_new_event_commits_episode_provenance_and_audit() {
             "MATCH (e:Episode)-[:HAS_PROVENANCE]->(p:ProvenanceRecord) \
              WHERE e.id = $id RETURN p.writer_agent_id AS v",
         )
-        .bind_str("id", receipt.episode_id.as_str())
+        .bind_uuid("id", receipt.episode_id)
         .expect("bind"),
     );
-    assert_eq!(writer.as_deref(), Some(agent.as_str()));
+    assert_eq!(writer.as_deref(), Some(agent.to_string().as_str()));
 }
 
 #[tokio::test]
@@ -279,7 +278,7 @@ async fn the_capture_audit_event_lives_in_the_system_namespace() {
             "MATCH (a:AuditEvent)-[:AUDIT]->(e:Episode) \
              WHERE e.id = $id RETURN a.namespace AS v",
         )
-        .bind_str("id", receipt.episode_id.as_str())
+        .bind_uuid("id", receipt.episode_id)
         .expect("bind"),
     );
     assert_eq!(audit.as_deref(), Some("system"));
@@ -290,7 +289,7 @@ async fn the_capture_audit_event_lives_in_the_system_namespace() {
             "MATCH (a:AuditEvent)-[:AUDIT]->(e:Episode) \
              WHERE e.id = $id RETURN a.kind AS v",
         )
-        .bind_str("id", receipt.episode_id.as_str())
+        .bind_uuid("id", receipt.episode_id)
         .expect("bind"),
     );
     assert_eq!(kind.as_deref(), Some("capture"));
@@ -463,10 +462,7 @@ async fn an_untrusted_write_is_forced_into_the_private_namespace() {
     let receipt = cap.capture(req).await.expect("capture");
 
     let expected = format!("agent:{agent}");
-    assert_eq!(
-        receipt.namespace,
-        Namespace::Agent(agent.as_str().to_string())
-    );
+    assert_eq!(receipt.namespace, Namespace::Agent(agent.to_string()));
     assert_eq!(
         episode_field(&store, &receipt.episode_id, "namespace").as_deref(),
         Some(expected.as_str()),
@@ -532,7 +528,7 @@ async fn a_trusted_write_to_a_non_member_team_is_refused_and_audited() {
     );
     assert_eq!(
         namespace_denied_audit_field(&store, "subject_id").as_deref(),
-        Some(agent.as_str()),
+        Some(agent.to_string().as_str()),
         "the rejected agent is the audit subject"
     );
     assert_eq!(
@@ -545,7 +541,7 @@ async fn a_trusted_write_to_a_non_member_team_is_refused_and_audited() {
     let payload = namespace_denied_audit_payload(&store);
     assert_eq!(payload["requested_namespace"], "team:squad");
     assert_eq!(payload["reason"], "not a member of the team");
-    assert_eq!(payload["agent"], agent.as_str());
+    assert_eq!(payload["agent"], agent.to_string());
 }
 
 #[tokio::test]
@@ -596,7 +592,7 @@ async fn a_trusted_write_to_another_agents_private_namespace_is_refused_and_audi
     // memory. This is the cross-agent case the unit policy test covers, now exercised through capture.
     let mut req = request("peeking at alice", &bob);
     req.trusted = true;
-    req.namespace = Some(Namespace::Agent(alice.as_str().to_string()));
+    req.namespace = Some(Namespace::Agent(alice.to_string()));
 
     let err = cap
         .capture(req)
@@ -610,14 +606,11 @@ async fn a_trusted_write_to_another_agents_private_namespace_is_refused_and_audi
     assert_eq!(namespace_denied_audit_count(&store), 1);
     assert_eq!(
         namespace_denied_audit_field(&store, "subject_id").as_deref(),
-        Some(bob.as_str()),
+        Some(bob.to_string().as_str()),
         "the rejected writer, not the target, is the audit subject"
     );
     let payload = namespace_denied_audit_payload(&store);
-    assert_eq!(
-        payload["requested_namespace"],
-        format!("agent:{}", alice.as_str())
-    );
+    assert_eq!(payload["requested_namespace"], format!("agent:{alice}"));
     assert_eq!(payload["reason"], "not the agent's own private namespace");
 }
 
@@ -678,10 +671,7 @@ async fn an_untrusted_write_requesting_a_team_is_confined_not_refused() {
         .capture(req)
         .await
         .expect("untrusted write is confined, not refused");
-    assert_eq!(
-        receipt.namespace,
-        Namespace::Agent(agent.as_str().to_string())
-    );
+    assert_eq!(receipt.namespace, Namespace::Agent(agent.to_string()));
 }
 
 #[tokio::test]

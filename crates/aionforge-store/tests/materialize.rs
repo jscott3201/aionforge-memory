@@ -65,7 +65,7 @@ fn identity(id: Id) -> Identity {
 fn insert_entity(store: &Store, name: &str) -> (Id, NodeId) {
     let id = Id::generate();
     let entity = Entity {
-        identity: identity(id.clone()),
+        identity: identity(id),
         stats: stats(),
         canonical_name: name.to_string(),
         entity_type: "Person".to_string(),
@@ -83,7 +83,7 @@ fn fact(subject_id: &Id, predicate: &str, object: ObjectValue, statement: &str) 
     Fact {
         identity: identity(Id::generate()),
         stats: stats(),
-        subject_id: subject_id.clone(),
+        subject_id: *subject_id,
         predicate: predicate.to_string(),
         object,
         confidence: 0.9,
@@ -129,7 +129,7 @@ fn insert_episode(store: &Store) -> (NodeId, Episode) {
 fn cursor_at(episode: &Episode) -> ConsolidationCursor {
     ConsolidationCursor {
         last_position: ConsolidationCursor::watermark_for(episode),
-        last_episode_id: Some(episode.identity.id.clone()),
+        last_episode_id: Some(episode.identity.id),
         last_processed_at: Some(now()),
         rule_versions: serde_json::Value::Object(serde_json::Map::new()),
     }
@@ -141,9 +141,9 @@ fn edge_count(store: &Store, label: &str, a: &Id, b: &Id) -> u64 {
     let query = BoundQuery::new(format!(
         "MATCH (a:Fact)-[r:{label}]->(b:Fact) WHERE a.id = $a AND b.id = $b RETURN count(r) AS n"
     ))
-    .bind_str("a", a.as_str())
+    .bind_uuid("a", a)
     .expect("bind a")
-    .bind_str("b", b.as_str())
+    .bind_uuid("b", b)
     .expect("bind b");
     match store.execute(&query).expect("count edges") {
         QueryResult::Rows(rows) => match rows.value(0, 0) {
@@ -159,7 +159,7 @@ fn edge_count(store: &Store, label: &str, a: &Id, b: &Id) -> u64 {
 fn fact_status(store: &Store, id: &Id) -> String {
     let query =
         BoundQuery::new("MATCH (f:Fact) WHERE f.id = $id RETURN f.status AS status LIMIT 1")
-            .bind_str("id", id.as_str())
+            .bind_uuid("id", id)
             .expect("bind id");
     match store.execute(&query).expect("status query") {
         QueryResult::Rows(rows) => match rows.value(0, 0) {
@@ -173,7 +173,7 @@ fn fact_status(store: &Store, id: &Id) -> String {
 /// How many `Fact` nodes carry this id (1 once asserted; proves no duplicate on replay).
 fn fact_count_by_id(store: &Store, id: &Id) -> usize {
     let query = BoundQuery::new("MATCH (f:Fact) WHERE f.id = $id RETURN f.id AS id")
-        .bind_str("id", id.as_str())
+        .bind_uuid("id", id)
         .expect("bind id");
     match store.execute(&query).expect("fact count") {
         QueryResult::Rows(rows) => rows.row_count(),
@@ -184,7 +184,7 @@ fn fact_count_by_id(store: &Store, id: &Id) -> usize {
 /// How many `Entity` nodes carry this id (proves a re-minted id deduped rather than dup'd).
 fn entity_count_by_id(store: &Store, id: &Id) -> usize {
     let query = BoundQuery::new("MATCH (e:Entity) WHERE e.id = $id RETURN e.id AS id")
-        .bind_str("id", id.as_str())
+        .bind_uuid("id", id)
         .expect("bind id");
     match store.execute(&query).expect("entity count") {
         QueryResult::Rows(rows) => rows.row_count(),
@@ -229,7 +229,7 @@ fn materialize_dedups_a_re_minted_entity_id_without_violating_the_unique_constra
     let (ep_node, episode) = insert_episode(&store);
 
     let variant = Entity {
-        identity: identity(id.clone()),
+        identity: identity(id),
         stats: stats(),
         canonical_name: "new york".to_string(),
         entity_type: "Person".to_string(),
@@ -247,7 +247,7 @@ fn materialize_dedups_a_re_minted_entity_id_without_violating_the_unique_constra
     );
     let mut artifacts = ConsolidationArtifacts::default();
     artifacts.new_entities.push(variant);
-    artifacts.mentioned_entities.push(id.clone());
+    artifacts.mentioned_entities.push(id);
     artifacts.facts.push(MaterializedFact {
         fact: about.clone(),
         about: open_window("2026-06-06T11:00:00Z[UTC]"),
@@ -305,12 +305,8 @@ fn materialize_falls_back_to_canonical_name_across_id_schemes_but_respects_type(
     let mut artifacts = ConsolidationArtifacts::default();
     artifacts.new_entities.push(bridged.clone());
     artifacts.new_entities.push(other_type.clone());
-    artifacts
-        .mentioned_entities
-        .push(bridged.identity.id.clone());
-    artifacts
-        .mentioned_entities
-        .push(other_type.identity.id.clone());
+    artifacts.mentioned_entities.push(bridged.identity.id);
+    artifacts.mentioned_entities.push(other_type.identity.id);
 
     store
         .commit_consolidation_episode(
@@ -375,12 +371,12 @@ fn materialize_supersession_closes_window_and_is_idempotent() {
     });
     artifacts.supersessions.push(Supersession {
         old_fact: FactKey {
-            subject_id: subject_id.clone(),
+            subject_id,
             predicate: "based_in".to_string(),
             object: ObjectValue::Text("NYC".to_string()),
         },
         new_fact: FactKey {
-            subject_id: subject_id.clone(),
+            subject_id,
             predicate: "based_in".to_string(),
             object: ObjectValue::Text("SF".to_string()),
         },
@@ -490,7 +486,7 @@ fn materialize_skips_an_unresolvable_supersession_without_failing_the_commit() {
             object: ObjectValue::Text("Nowhere".to_string()),
         },
         new_fact: FactKey {
-            subject_id: subject_id.clone(),
+            subject_id,
             predicate: "based_in".to_string(),
             object: ObjectValue::Text("SF".to_string()),
         },
@@ -556,12 +552,12 @@ fn materialize_contradiction_quarantines_the_source_and_is_idempotent() {
     });
     artifacts.contradictions.push(Contradiction {
         source_fact: FactKey {
-            subject_id: subject_id.clone(),
+            subject_id,
             predicate: "is_up".to_string(),
             object: ObjectValue::Bool(false),
         },
         target_fact: FactKey {
-            subject_id: subject_id.clone(),
+            subject_id,
             predicate: "is_up".to_string(),
             object: ObjectValue::Bool(true),
         },
@@ -696,7 +692,7 @@ fn induced_skill_is_materialized_with_episode_lineage_and_replays_to_a_no_op() {
     let lineage = BoundQuery::new(
         "MATCH (s:Skill {id: $sid})-[:DERIVED_FROM]->(e:Episode) RETURN e.id AS id",
     )
-    .bind_str("sid", skill.identity.id.as_str())
+    .bind_uuid("sid", skill.identity.id)
     .expect("bind sid");
     let QueryResult::Rows(rows) = store.execute(&lineage).expect("lineage query") else {
         panic!("expected rows");

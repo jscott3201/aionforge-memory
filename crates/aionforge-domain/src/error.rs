@@ -9,7 +9,7 @@ use thiserror::Error;
 #[derive(Debug, Error, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum DomainError {
-    /// An identifier was empty or not a valid ULID-shaped string.
+    /// An identifier was empty or not a valid UUID string.
     #[error("invalid identifier: `{0}`")]
     InvalidId(String),
 

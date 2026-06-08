@@ -123,13 +123,10 @@ where
         // committed self, so a replay clusters the same set.
         let touched: HashSet<String> = new_facts
             .iter()
-            .map(|m| m.fact.subject_id.as_str().to_string())
+            .map(|m| m.fact.subject_id.to_string())
             .collect();
         let mut facts: Vec<Fact> = new_facts.iter().map(|m| m.fact.clone()).collect();
-        let mut seen: HashSet<String> = facts
-            .iter()
-            .map(|f| f.identity.id.as_str().to_string())
-            .collect();
+        let mut seen: HashSet<String> = facts.iter().map(|f| f.identity.id.to_string()).collect();
         let members = store
             .candidate_state_members(CandidateSet::CurrentSupportFacts)
             .map_err(|error| {
@@ -150,8 +147,8 @@ where
             if fact.identity.namespace != *namespace {
                 continue;
             }
-            if touched.contains(fact.subject_id.as_str())
-                && seen.insert(fact.identity.id.as_str().to_string())
+            if touched.contains(&fact.subject_id.to_string())
+                && seen.insert(fact.identity.id.to_string())
             {
                 facts.push(fact);
             }
@@ -203,7 +200,7 @@ where
                 .facts
                 .iter()
                 .map(|f| FactKey {
-                    subject_id: f.subject_id.clone(),
+                    subject_id: f.subject_id,
                     predicate: f.predicate.clone(),
                     object: f.object.clone(),
                 })
@@ -217,7 +214,7 @@ where
                     keywords: output.keywords,
                     embedding: Some(embedding),
                     embedder_model: Some(model.clone()),
-                    derived_from_episode: Some(episode.identity.id.clone()),
+                    derived_from_episode: Some(episode.identity.id),
                 },
                 source_facts,
             });
@@ -236,21 +233,21 @@ where
         let mut name_of: BTreeMap<Id, String> = BTreeMap::new();
         for resolution in resolutions.values() {
             name_of
-                .entry(resolution.id.clone())
+                .entry(resolution.id)
                 .or_insert_with(|| resolution.canonical_name.clone());
         }
         let mut needed: Vec<Id> = Vec::new();
         for fact in facts {
             if !name_of.contains_key(&fact.subject_id) {
-                needed.push(fact.subject_id.clone());
+                needed.push(fact.subject_id);
             }
             if let ObjectValue::Entity(id) = &fact.object
                 && !name_of.contains_key(id)
             {
-                needed.push(id.clone());
+                needed.push(*id);
             }
         }
-        needed.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+        needed.sort();
         needed.dedup();
         for id in needed {
             // Resolve the name from the committed index, falling back to the id string when
@@ -262,7 +259,7 @@ where
                 .map_err(|error| PassError::Transient(format!("entity read failed: {error}")))?
             {
                 Some(entity) => entity.canonical_name,
-                None => id.as_str().to_string(),
+                None => id.to_string(),
             };
             name_of.insert(id, name);
         }
@@ -384,7 +381,7 @@ where
                         continue;
                     };
                     note_mention(&mut mentioned, &mut mentioned_seen, &resolved.id);
-                    ObjectValue::Entity(resolved.id.clone())
+                    ObjectValue::Entity(resolved.id)
                 }
                 ExtractedObject::Literal(value) => value.clone(),
             };
@@ -408,7 +405,7 @@ where
                 fact: Fact {
                     identity: identity(fact_id, namespace, &cx.now),
                     stats: derived_stats(episode, &cx.now),
-                    subject_id: subject.id.clone(),
+                    subject_id: subject.id,
                     predicate: extracted_fact.predicate.clone(),
                     object,
                     confidence: extracted_fact.confidence,
@@ -475,12 +472,7 @@ impl<X, E, S> FactExtractionPass<X, E, S> {
         }
         let touched: HashSet<(String, String)> = facts
             .iter()
-            .map(|m| {
-                (
-                    m.fact.subject_id.as_str().to_string(),
-                    m.fact.predicate.clone(),
-                )
-            })
+            .map(|m| (m.fact.subject_id.to_string(), m.fact.predicate.clone()))
             .collect();
         let members = store
             .candidate_state_members(CandidateSet::CurrentSupportFacts)
@@ -503,7 +495,7 @@ impl<X, E, S> FactExtractionPass<X, E, S> {
             if fact.identity.namespace != *namespace {
                 continue;
             }
-            if !touched.contains(&(fact.subject_id.as_str().to_string(), fact.predicate.clone())) {
+            if !touched.contains(&(fact.subject_id.to_string(), fact.predicate.clone())) {
                 continue;
             }
             let Some(about) = store.fact_about(node).map_err(|error| {
@@ -592,8 +584,8 @@ fn surface_key(surface: &EntitySurface) -> (String, String) {
 
 /// Record an entity id as mentioned by the episode, once.
 fn note_mention(mentioned: &mut Vec<Id>, seen: &mut HashSet<String>, id: &Id) {
-    if seen.insert(id.as_str().to_string()) {
-        mentioned.push(id.clone());
+    if seen.insert(id.to_string()) {
+        mentioned.push(*id);
     }
 }
 

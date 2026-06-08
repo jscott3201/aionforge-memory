@@ -43,7 +43,7 @@ pub(crate) fn find_existing_entity(
     entity: &Entity,
 ) -> Result<Option<(Id, NodeId)>, StoreError> {
     if let Some(node) = entity_node_by_id(snapshot, &entity.identity.id)? {
-        return Ok(Some((entity.identity.id.clone(), node)));
+        return Ok(Some((entity.identity.id, node)));
     }
 
     // Fallback: exact canonical name + type + namespace (cross-id-scheme bridge).

@@ -139,8 +139,8 @@ impl Store {
                         PropertyMap::from_pairs(Vec::new())?,
                     )?,
                     None => tracing::warn!(
-                        audit = event.identity.id.as_str(),
-                        subject = event.subject_id.as_str(),
+                        audit = %event.identity.id,
+                        subject = %event.subject_id,
                         "distillation: declined-call audit subject entity not found; skipping AUDIT edge"
                     ),
                 }

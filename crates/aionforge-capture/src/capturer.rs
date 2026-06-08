@@ -89,7 +89,7 @@ where
         //    always passes; a trusted write to a team the agent does not belong to, or to
         //    global/system, is refused. A refusal records a `namespace_denied` audit and writes no
         //    memory, so nothing the agent is not permitted to write ever lands.
-        let principal = Principal::new(request.agent_id.clone(), request.teams.clone());
+        let principal = Principal::new(request.agent_id, request.teams.clone());
         if let Err(denial) = self.authorizer.authorize_write(&principal, &namespace) {
             self.store
                 .commit_audit(&namespace_denied_audit(&request, &namespace, &denial))?;
@@ -123,7 +123,7 @@ where
 
         let episode = Episode {
             identity: Identity {
-                id: episode_id.clone(),
+                id: episode_id,
                 ingested_at: request.captured_at.clone(),
                 namespace: namespace.clone(),
                 expired_at: None,
@@ -140,8 +140,8 @@ where
             content: outcome.cleaned,
             role: request.role,
             captured_at: request.captured_at.clone(),
-            agent_id: request.agent_id.clone(),
-            session_id: request.session_id.clone(),
+            agent_id: request.agent_id,
+            session_id: request.session_id,
             content_hash,
             embedding,
             embedder_model,
@@ -168,8 +168,8 @@ where
                 namespace,
                 expired_at: None,
             },
-            subject_id: episode_id.clone(),
-            writer_agent_id: request.agent_id.clone(),
+            subject_id: episode_id,
+            writer_agent_id: request.agent_id,
             signature: String::new(),
             source_episode_ids: Vec::new(),
             model_family: request.writer.model_family,
@@ -186,7 +186,7 @@ where
                 expired_at: None,
             },
             kind: AuditKind::Capture,
-            subject_id: episode_id.clone(),
+            subject_id: episode_id,
             actor_id: request.agent_id,
             payload: serde_json::json!({
                 "dedup": verdict_tag(&verdict),
@@ -196,7 +196,7 @@ where
             signature: String::new(),
             occurred_at: request.captured_at,
         };
-        let audit_id = audit.identity.id.clone();
+        let audit_id = audit.identity.id;
 
         // Write the episode, its provenance, and the audit event as one commit.
         self.store.commit_capture(&episode, &provenance, &audit)?;
@@ -278,7 +278,7 @@ where
 /// untrusted write is always placed in the writer's private agent namespace,
 /// regardless of what it requested (04 §1, 07).
 fn enforce_namespace(request: &CaptureRequest) -> Namespace {
-    let private = Namespace::Agent(request.agent_id.as_str().to_string());
+    let private = Namespace::Agent(request.agent_id.to_string());
     if request.trusted {
         request.namespace.clone().unwrap_or(private)
     } else {
@@ -302,8 +302,8 @@ fn namespace_denied_audit(
             expired_at: None,
         },
         kind: AuditKind::NamespaceDenied,
-        subject_id: request.agent_id.clone(),
-        actor_id: request.agent_id.clone(),
+        subject_id: request.agent_id,
+        actor_id: request.agent_id,
         payload: serde_json::json!({
             "requested_namespace": target.to_string(),
             "reason": denial.reason.as_str(),

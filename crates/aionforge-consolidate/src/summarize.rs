@@ -30,14 +30,14 @@ pub(crate) fn build_clusters(
     let mut by_subject: BTreeMap<Id, Vec<Fact>> = BTreeMap::new();
     for fact in facts {
         by_subject
-            .entry(fact.subject_id.clone())
+            .entry(fact.subject_id)
             .or_default()
             .push(fact.clone());
     }
 
     let mut clusters = Vec::new();
     for (subject_id, mut subject_facts) in by_subject {
-        subject_facts.sort_by(|a, b| a.identity.id.as_str().cmp(b.identity.id.as_str()));
+        subject_facts.sort_by_key(|a| a.identity.id);
         subject_facts.dedup_by(|a, b| a.identity.id == b.identity.id);
         let entity_names = distinct_entity_names(&subject_id, &subject_facts, name_of);
         if subject_facts.len() < cfg.min_facts || entity_names.len() < cfg.min_entities {
@@ -46,7 +46,7 @@ pub(crate) fn build_clusters(
         let subject_name = name_of
             .get(&subject_id)
             .cloned()
-            .unwrap_or_else(|| subject_id.as_str().to_string());
+            .unwrap_or_else(|| subject_id.to_string());
         clusters.push(SummarizationCluster {
             subject_id,
             subject_name,
@@ -64,12 +64,7 @@ fn distinct_entity_names(
     facts: &[Fact],
     name_of: &BTreeMap<Id, String>,
 ) -> Vec<String> {
-    let name = |id: &Id| {
-        name_of
-            .get(id)
-            .cloned()
-            .unwrap_or_else(|| id.as_str().to_string())
-    };
+    let name = |id: &Id| name_of.get(id).cloned().unwrap_or_else(|| id.to_string());
     let mut names = vec![name(subject_id)];
     for fact in facts {
         if let ObjectValue::Entity(id) = &fact.object {
@@ -90,10 +85,10 @@ pub(crate) fn note_id(
     cluster: &SummarizationCluster,
     rule_version: &str,
 ) -> Id {
-    let mut ids: Vec<&str> = cluster
+    let mut ids: Vec<String> = cluster
         .facts
         .iter()
-        .map(|f| f.identity.id.as_str())
+        .map(|f| f.identity.id.to_string())
         .collect();
     ids.sort_unstable();
     let key = format!(
@@ -229,7 +224,7 @@ mod tests {
                 expired_at: None,
             },
             stats: stats(confidence),
-            subject_id: subject.clone(),
+            subject_id: *subject,
             predicate: predicate.to_string(),
             object,
             confidence,
@@ -244,7 +239,7 @@ mod tests {
     fn names(pairs: &[(&Id, &str)]) -> BTreeMap<Id, String> {
         pairs
             .iter()
-            .map(|(id, name)| ((*id).clone(), (*name).to_string()))
+            .map(|(id, name)| (*(*id), (*name).to_string()))
             .collect()
     }
 
@@ -256,18 +251,12 @@ mod tests {
         let aionforge = Id::from_content_hash(b"aionforge");
         let name_of = names(&[(&alice, "Alice"), (&nyc, "NYC"), (&aionforge, "Aionforge")]);
         let facts = vec![
-            fact(
-                "f1",
-                &alice,
-                "based_in",
-                ObjectValue::Entity(nyc.clone()),
-                0.9,
-            ),
+            fact("f1", &alice, "based_in", ObjectValue::Entity(nyc), 0.9),
             fact(
                 "f2",
                 &alice,
                 "works_on",
-                ObjectValue::Entity(aionforge.clone()),
+                ObjectValue::Entity(aionforge),
                 0.9,
             ),
             fact(
@@ -307,13 +296,7 @@ mod tests {
         let alice = Id::from_content_hash(b"alice");
         let nyc = Id::from_content_hash(b"nyc");
         let name_of = names(&[(&alice, "Alice"), (&nyc, "NYC")]);
-        let f1 = fact(
-            "f1",
-            &alice,
-            "based_in",
-            ObjectValue::Entity(nyc.clone()),
-            0.9,
-        );
+        let f1 = fact("f1", &alice, "based_in", ObjectValue::Entity(nyc), 0.9);
         let f2 = fact(
             "f2",
             &alice,
@@ -346,18 +329,12 @@ mod tests {
         let aionforge = Id::from_content_hash(b"aionforge");
         let name_of = names(&[(&alice, "Alice"), (&nyc, "NYC"), (&aionforge, "Aionforge")]);
         let facts = vec![
-            fact(
-                "f1",
-                &alice,
-                "based_in",
-                ObjectValue::Entity(nyc.clone()),
-                0.9,
-            ),
+            fact("f1", &alice, "based_in", ObjectValue::Entity(nyc), 0.9),
             fact(
                 "f2",
                 &alice,
                 "works_on",
-                ObjectValue::Entity(aionforge.clone()),
+                ObjectValue::Entity(aionforge),
                 0.9,
             ),
             fact(
@@ -419,14 +396,8 @@ mod tests {
         let aionforge = Id::from_content_hash(b"aionforge");
         let name_of = names(&[(&bo, "Bo"), (&nyc, "NYC"), (&aionforge, "Aionforge")]);
         let facts = vec![
-            fact("f1", &bo, "based_in", ObjectValue::Entity(nyc.clone()), 0.9),
-            fact(
-                "f2",
-                &bo,
-                "works_on",
-                ObjectValue::Entity(aionforge.clone()),
-                0.9,
-            ),
+            fact("f1", &bo, "based_in", ObjectValue::Entity(nyc), 0.9),
+            fact("f2", &bo, "works_on", ObjectValue::Entity(aionforge), 0.9),
             fact("f3", &bo, "prefers", ObjectValue::Text("Rust".into()), 0.9),
         ];
         let cluster = build_clusters(&facts, &name_of, &cfg)
@@ -454,18 +425,12 @@ mod tests {
         let aionforge = Id::from_content_hash(b"aionforge");
         let name_of = names(&[(&alice, "Alice"), (&nyc, "NYC"), (&aionforge, "Aionforge")]);
         let facts = vec![
-            fact(
-                "f1",
-                &alice,
-                "based_in",
-                ObjectValue::Entity(nyc.clone()),
-                0.4,
-            ),
+            fact("f1", &alice, "based_in", ObjectValue::Entity(nyc), 0.4),
             fact(
                 "f2",
                 &alice,
                 "works_on",
-                ObjectValue::Entity(aionforge.clone()),
+                ObjectValue::Entity(aionforge),
                 0.4,
             ),
             fact(

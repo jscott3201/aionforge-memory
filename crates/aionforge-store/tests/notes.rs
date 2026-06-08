@@ -63,7 +63,7 @@ fn identity(id: Id) -> Identity {
 fn insert_entity(store: &Store, name: &str) -> (Id, NodeId) {
     let id = Id::generate();
     let entity = Entity {
-        identity: identity(id.clone()),
+        identity: identity(id),
         stats: stats(),
         canonical_name: name.to_string(),
         entity_type: "Person".to_string(),
@@ -81,7 +81,7 @@ fn fact(subject_id: &Id, predicate: &str, object: ObjectValue, statement: &str) 
     Fact {
         identity: identity(Id::generate()),
         stats: stats(),
-        subject_id: subject_id.clone(),
+        subject_id: *subject_id,
         predicate: predicate.to_string(),
         object,
         confidence: 0.9,
@@ -126,7 +126,7 @@ fn insert_episode(store: &Store) -> (NodeId, Episode) {
 fn cursor_at(episode: &Episode) -> ConsolidationCursor {
     ConsolidationCursor {
         last_position: ConsolidationCursor::watermark_for(episode),
-        last_episode_id: Some(episode.identity.id.clone()),
+        last_episode_id: Some(episode.identity.id),
         last_processed_at: Some(now()),
         rule_versions: serde_json::Value::Object(serde_json::Map::new()),
     }
@@ -166,14 +166,14 @@ fn note_with_id(id: Id, content: &str, episode_id: &Id) -> Note {
         keywords: vec!["alice".to_string(), "aionforge".to_string()],
         embedding: None,
         embedder_model: None,
-        derived_from_episode: Some(episode_id.clone()),
+        derived_from_episode: Some(*episode_id),
     }
 }
 
 /// How many `Note` nodes carry this id (1 once written; 1 still after replay).
 fn note_count_by_id(store: &Store, id: &Id) -> usize {
     let query = BoundQuery::new("MATCH (n:Note) WHERE n.id = $id RETURN n.id AS id")
-        .bind_str("id", id.as_str())
+        .bind_uuid("id", id)
         .expect("bind id");
     match store.execute(&query).expect("note count") {
         QueryResult::Rows(rows) => rows.row_count(),
@@ -184,7 +184,7 @@ fn note_count_by_id(store: &Store, id: &Id) -> usize {
 /// How many `Fact` nodes carry this id (proves the source facts are untouched).
 fn fact_count_by_id(store: &Store, id: &Id) -> usize {
     let query = BoundQuery::new("MATCH (f:Fact) WHERE f.id = $id RETURN f.id AS id")
-        .bind_str("id", id.as_str())
+        .bind_uuid("id", id)
         .expect("bind id");
     match store.execute(&query).expect("fact count") {
         QueryResult::Rows(rows) => rows.row_count(),
@@ -207,7 +207,7 @@ fn note_lineage_edges(store: &Store) -> u64 {
 
 fn fact_key(subject_id: &Id, predicate: &str, object: ObjectValue) -> FactKey {
     FactKey {
-        subject_id: subject_id.clone(),
+        subject_id: *subject_id,
         predicate: predicate.to_string(),
         object,
     }

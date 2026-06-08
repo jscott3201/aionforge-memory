@@ -67,7 +67,6 @@ tracing = "0.1"
 metrics = "0.24"
 
 # --- New top-level pins (selene-db has none of these). ---
-ulid = "1.2"
 # Layered configuration (file + environment + flags) with documented precedence, and
 # secret values that redact in logs and zeroize on drop. Introduced at M0.T07.
 figment = { version = "0.10", features = ["toml", "env"] }

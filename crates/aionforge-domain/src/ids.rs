@@ -6,64 +6,73 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::DomainError;
 
-/// A stable, collision-resistant, never-reused external identifier (ULID-shaped).
+/// A stable, collision-resistant, never-reused external identifier (a UUID).
 ///
-/// Sortable by creation time and safe to expose; the substrate never derives an
-/// `Id` from a storage position.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct Id(String);
+/// A generated id is a UUIDv7 — time-ordered, so ids sort by creation time and the
+/// substrate's native UUID index keeps them in chronological order. A content-addressed
+/// id (see [`Id::from_content_hash`]) is a UUIDv8. The value is a `Copy` 128-bit UUID,
+/// safe to expose; the substrate never derives an `Id` from a storage position.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct Id(uuid::Uuid);
 
 impl Id {
-    /// Generate a fresh, monotonic, sortable identifier.
+    /// Generate a fresh, time-sortable identifier (UUIDv7).
+    ///
+    /// The embedded millisecond timestamp is read from the system clock, the same as
+    /// the ULID this replaced. An id's own timestamp is an opaque sort key, never read
+    /// back as a domain time, so this is the one identifier path that touches the wall
+    /// clock; every stored temporal field still takes an explicit timestamp instead.
     #[must_use]
     pub fn generate() -> Self {
-        Self(ulid::Ulid::new().to_string())
+        Self(uuid::Uuid::now_v7())
     }
 
-    /// Derive a deterministic, ULID-shaped identifier from canonical content bytes.
+    /// Derive a deterministic identifier from canonical content bytes (a UUIDv8).
     ///
     /// Unlike [`Id::generate`], the result is a pure function of the input: the same
     /// bytes always yield the same id. Consolidation uses this to give an extracted
     /// fact a stable identity (over namespace, subject, predicate, object, source
     /// episode, and rule version) so re-running a cursor position dedups to a no-op
-    /// rather than duplicating the assertion (04 §2). The blake3 digest's leading
-    /// 128 bits are packed into the ULID byte layout, so the value round-trips
-    /// through [`Id::parse`] like any other identifier — it is simply not
-    /// time-sortable, which derived (non-temporal) ids never need to be.
+    /// rather than duplicating the assertion (04 §2). The blake3 digest's leading 128
+    /// bits become a UUIDv8 — the RFC's "custom" version for application-defined bytes.
+    /// Six of those bits carry the version and variant, leaving 122 bits of hash, which
+    /// keeps derived ids collision-free with room to spare. A v8 id holds no timestamp,
+    /// so it is correctly not time-sortable.
     #[must_use]
     pub fn from_content_hash(bytes: &[u8]) -> Self {
         let digest = blake3::hash(bytes);
         let mut packed = [0u8; 16];
         packed.copy_from_slice(&digest.as_bytes()[..16]);
-        Self(ulid::Ulid::from_bytes(packed).to_string())
+        Self(uuid::Builder::from_custom_bytes(packed).into_uuid())
     }
 
-    /// Construct an identifier from an existing string, validating its ULID shape.
+    /// Construct an identifier from an existing string, validating its UUID shape.
     ///
     /// # Errors
-    /// Returns [`DomainError::InvalidId`] if the string is not a valid ULID.
+    /// Returns [`DomainError::InvalidId`] if the string is not a valid UUID.
     pub fn parse(s: impl Into<String>) -> Result<Self, DomainError> {
         let s = s.into();
-        ulid::Ulid::from_string(&s).map_err(|_| DomainError::InvalidId(s.clone()))?;
-        Ok(Self(s))
+        uuid::Uuid::parse_str(&s)
+            .map(Self)
+            .map_err(|_| DomainError::InvalidId(s))
     }
 
-    /// The identifier as a string slice.
+    /// The underlying UUID, for the storage layer that binds it as a native value.
     #[must_use]
-    pub fn as_str(&self) -> &str {
-        &self.0
+    pub fn as_uuid(&self) -> uuid::Uuid {
+        self.0
+    }
+
+    /// Wrap a UUID read back from the store.
+    #[must_use]
+    pub fn from_uuid(uuid: uuid::Uuid) -> Self {
+        Self(uuid)
     }
 }
 
 impl fmt::Display for Id {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-impl AsRef<str> for Id {
-    fn as_ref(&self) -> &str {
-        &self.0
+        fmt::Display::fmt(&self.0, f)
     }
 }
 
@@ -162,10 +171,27 @@ mod tests {
     }
 
     #[test]
-    fn content_hash_id_is_a_valid_ulid() {
+    fn content_hash_id_round_trips_through_parse() {
         // A derived id must round-trip through the same validation as any boundary
         // id, so the store can persist it without a special path.
         let derived = Id::from_content_hash(b"anything");
-        assert!(Id::parse(derived.as_str()).is_ok());
+        assert!(Id::parse(derived.to_string()).is_ok());
+    }
+
+    #[test]
+    fn a_generated_id_is_uuid_v7() {
+        // Generated ids carry a timestamp, so they sort by creation time.
+        assert_eq!(Id::generate().as_uuid().get_version_num(), 7);
+    }
+
+    #[test]
+    fn a_content_addressed_id_is_uuid_v8() {
+        // Derived ids are the RFC "custom" version: deterministic, not time-sortable.
+        assert_eq!(
+            Id::from_content_hash(b"anything")
+                .as_uuid()
+                .get_version_num(),
+            8
+        );
     }
 }

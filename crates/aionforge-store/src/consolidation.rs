@@ -86,14 +86,10 @@ impl ConsolidationCursor {
     /// The watermark string for an episode: `"<ingested_at_rfc3339>|<id>"`.
     ///
     /// `ingested_at` is the immutable commit-time stamp and `id` is a time-ordered
-    /// ULID, so the pair is a stable total order over the commit stream.
+    /// UUIDv7, so the pair is a stable total order over the commit stream.
     #[must_use]
     pub fn watermark_for(episode: &Episode) -> String {
-        format!(
-            "{}|{}",
-            episode.identity.ingested_at,
-            episode.identity.id.as_str()
-        )
+        format!("{}|{}", episode.identity.ingested_at, episode.identity.id)
     }
 }
 
@@ -199,20 +195,14 @@ impl Store {
                 });
             }
         }
-        // Commit order over the bounded pending set: ingested_at, then the time-ordered
-        // ULID as the tiebreak.
+        // Commit order over the bounded pending set: ingested_at, then the UUIDv7 id
+        // as the tiebreak.
         items.sort_by(|a, b| {
             a.episode
                 .identity
                 .ingested_at
                 .cmp(&b.episode.identity.ingested_at)
-                .then_with(|| {
-                    a.episode
-                        .identity
-                        .id
-                        .as_str()
-                        .cmp(b.episode.identity.id.as_str())
-                })
+                .then_with(|| a.episode.identity.id.cmp(&b.episode.identity.id))
         });
         items.truncate(limit);
         Ok(items)
