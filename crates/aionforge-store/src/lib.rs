@@ -8,6 +8,7 @@
 //! Higher layers depend on this crate, not on selene-db, so the engine's value and
 //! id types are re-exported here.
 
+mod agent;
 mod audit;
 mod bad_pattern;
 mod capture_write;

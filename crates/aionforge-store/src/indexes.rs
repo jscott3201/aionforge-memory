@@ -53,15 +53,18 @@ const SCALAR_INDEXES: &[(&str, &str, TypedIndexKind)] = &[
     ("Fact", "predicate", TypedIndexKind::String),
     ("Fact", "status", TypedIndexKind::String),
     ("Fact", "object_entity_id", TypedIndexKind::Uuid),
-    // `id` is indexed on `Entity`, `Note`, `AuditEvent`, and `Skill` (not on every kind).
-    // Consolidation resolves an already-canonical subject entity's `NodeId` by its domain id
-    // inside the flip txn when it wires the `ABOUT`/`MENTIONS` edges (M2.T04); it dedups a
+    // `id` is indexed on `Entity`, `Note`, `AuditEvent`, `Skill`, and `Agent` (not on every
+    // kind). Consolidation resolves an already-canonical subject entity's `NodeId` by its domain
+    // id inside the flip txn when it wires the `ABOUT`/`MENTIONS` edges (M2.T04); it dedups a
     // content-addressed summary `Note` by id so replaying an episode never writes a second copy
     // (M2.T06); and it dedups a content-addressed `AuditEvent` by id for the same replay reason
     // (M2.T04 audit determinism). `Skill` is addressed by domain id at the procedural contract
     // (`ProceduralMemory::record_outcome(skill_id: Id)` and the by-id reads); L2 bridges that to
     // L0's node-keyed `record_skill_outcome` / reads via `skill_by_id`, so the id probe must be
-    // indexed (M3.T04). Other kinds are reached by node id directly, so they need no id index.
+    // indexed (M3.T04). `Agent` is addressed by domain id when provenance verification resolves a
+    // writer's public key (`agent_by_id`, M4.T03) — the DDL `UNIQUE` constraint does not back the
+    // scalar-equality probe, so the index is declared here. Other kinds are reached by node id
+    // directly, so they need no id index.
     ("Entity", "id", TypedIndexKind::Uuid),
     ("Entity", "canonical_name", TypedIndexKind::String),
     ("Entity", "type", TypedIndexKind::String),
@@ -71,6 +74,7 @@ const SCALAR_INDEXES: &[(&str, &str, TypedIndexKind)] = &[
     ("Skill", "source_hash", TypedIndexKind::String),
     ("Note", "derived_from_episode", TypedIndexKind::Uuid),
     ("CoreBlock", "block_kind", TypedIndexKind::String),
+    ("Agent", "id", TypedIndexKind::Uuid),
     ("Agent", "status", TypedIndexKind::String),
     ("Session", "owner_agent_id", TypedIndexKind::Uuid),
     ("ProvenanceRecord", "subject_id", TypedIndexKind::Uuid),

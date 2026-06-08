@@ -8,6 +8,7 @@ use aionforge_domain::edges::{About, Contradicts, SupersededBy};
 use aionforge_domain::embedding::Embedding;
 use aionforge_domain::ids::{ContentHash, Id};
 use aionforge_domain::namespace::Namespace;
+use aionforge_domain::nodes::agent::Agent;
 use aionforge_domain::nodes::associative::Note;
 use aionforge_domain::nodes::episodic::Episode;
 use aionforge_domain::nodes::semantic::{Entity, Fact};
@@ -22,7 +23,7 @@ use crate::error::StoreError;
 use crate::gql::{BoundQuery, QueryResult, Rows};
 use crate::providers::candidate_state_provider;
 use crate::search::SearchKind;
-use crate::{entity, episode, fact};
+use crate::{agent, entity, episode, fact};
 
 /// The storage layer over a selene-db `SharedGraph`.
 ///
@@ -472,6 +473,49 @@ impl Store {
         };
         txn.commit()?;
         Ok(node_id)
+    }
+
+    /// Enroll an agent: commit its node through the single write funnel, returning the
+    /// node id. `Agent.id` is unique, so an agent is registered once and the substrate
+    /// stores only its public key. Provenance verification (M4.T03) resolves a writer's
+    /// key by agent id through [`Store::agent_by_id`] before checking a write's signature.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if translation, the mutation, or the commit fails.
+    pub fn create_agent(&self, agent: &Agent) -> Result<NodeId, StoreError> {
+        let (labels, props) = agent::to_node(agent)?;
+        let mut txn = self.graph.begin_write();
+        let node_id = {
+            let mut mutator = txn.mutator();
+            mutator.create_node(labels, props)?
+        };
+        txn.commit()?;
+        Ok(node_id)
+    }
+
+    /// Read an agent by its domain id from a fresh snapshot. `Agent.id` is unique-indexed,
+    /// so this is a probe, not a scan — the signing gate uses it to resolve a writer's
+    /// public key before verifying the write's provenance signature.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the stored data cannot be decoded into an [`Agent`].
+    pub fn agent_by_id(&self, id: &Id) -> Result<Option<Agent>, StoreError> {
+        let snapshot = self.graph.read();
+        let label = db_string(Agent::LABEL)?;
+        let prop = db_string("id")?;
+        let value = crate::convert::id_value(id)?;
+        let Some(rows) = snapshot.nodes_with_property_eq(&label, &prop, &value) else {
+            return Ok(None);
+        };
+        for row in rows.iter() {
+            let Some(node) = snapshot.node_id_for_row(selene_graph::RowIndex::new(row)) else {
+                continue;
+            };
+            if let Some(props) = snapshot.node_properties(node) {
+                return Ok(Some(agent::from_properties(props)?));
+            }
+        }
+        Ok(None)
     }
 
     /// Read a fact back by its node id from a fresh snapshot.

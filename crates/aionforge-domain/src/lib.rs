@@ -36,6 +36,7 @@ pub mod nodes;
 pub mod signing;
 pub mod time;
 pub mod value;
+pub mod verify;
 
 pub use authz::{
     AuthorizationError, Authorizer, DefaultAuthorizer, DenyReason, Principal, VisibleSet,
@@ -53,3 +54,4 @@ pub use ids::{ContentHash, Id, SerializationId};
 pub use namespace::Namespace;
 pub use time::{BiTemporal, Timestamp};
 pub use value::{ObjectKind, ObjectValue};
+pub use verify::{PublicKeyResolver, ResolveError, SignatureVerifier, VerifyError};
