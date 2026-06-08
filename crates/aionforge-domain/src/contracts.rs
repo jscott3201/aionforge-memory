@@ -18,7 +18,7 @@ use std::future::Future;
 use crate::embedding::{EmbedderModel, Embedding};
 use crate::ids::Id;
 use crate::nodes::episodic::{Episode, Redaction};
-use crate::nodes::procedural::Skill;
+use crate::nodes::procedural::{RankedSkill, Skill};
 use crate::nodes::semantic::{Fact, SourceSpan};
 use crate::value::ObjectValue;
 
@@ -79,6 +79,19 @@ pub trait ProceduralMemory: Send + Sync {
         skill_id: Id,
         success: bool,
     ) -> impl Future<Output = Result<(), Self::Error>> + Send;
+
+    /// Retrieve the active skills whose stored problem best matches `problem`, reliability-
+    /// weighted and best-first, at most `k` (05).
+    ///
+    /// A dedicated procedural-recall entry point — separate from the episodic/fact recall bundle
+    /// ([`Retriever::recall`]) — because skill selection ranks on a different axis: problem match
+    /// re-weighted by proven reliability, not bi-temporal relevance. Only live, active versions
+    /// surface; deprecated and soft-forgotten versions are history.
+    fn retrieve_skills(
+        &self,
+        problem: String,
+        k: usize,
+    ) -> impl Future<Output = Result<Vec<RankedSkill>, Self::Error>> + Send;
 }
 
 /// Multi-agent CRDT merge across namespaces (06). Implemented in M4.

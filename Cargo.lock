@@ -156,8 +156,10 @@ name = "aionforge-procedural"
 version = "0.1.0"
 dependencies = [
  "aionforge-domain",
- "aionforge-embed",
  "aionforge-store",
+ "serde_json",
+ "thiserror",
+ "tokio",
 ]
 
 [[package]]

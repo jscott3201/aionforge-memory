@@ -369,6 +369,32 @@ impl Store {
         Ok(None)
     }
 
+    /// The node id of the skill with this domain id, if present (`id` is indexed, so a probe).
+    ///
+    /// The bridge the procedural layer needs to record an outcome against a *specific* version:
+    /// the [`ProceduralMemory`](aionforge_domain::contracts::ProceduralMemory) contract addresses
+    /// a skill by its domain [`Id`] (a stable, portable handle), while
+    /// [`Store::record_skill_outcome`] mutates by `NodeId` (engine-internal). This resolves the
+    /// one to the other without decoding the whole skill, so the outcome path stays cheap.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the lookup fails.
+    pub fn skill_node_by_id(&self, id: &Id) -> Result<Option<NodeId>, StoreError> {
+        let snapshot = self.graph().read();
+        let label = db_string(Skill::LABEL)?;
+        let prop = db_string(ID)?;
+        let value = id_value(id)?;
+        let Some(rows) = snapshot.nodes_with_property_eq(&label, &prop, &value) else {
+            return Ok(None);
+        };
+        for row in rows.iter() {
+            if let Some(node) = snapshot.node_id_for_row(RowIndex::new(row)) {
+                return Ok(Some(node));
+            }
+        }
+        Ok(None)
+    }
+
     /// The active (non-deprecated) version of the skill named `name`, with its node id.
     ///
     /// At most one version per name is active — the deprecate-on-save protocol in

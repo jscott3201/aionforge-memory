@@ -77,6 +77,28 @@ impl Skill {
     pub const LABEL: &str = "Skill";
 }
 
+/// A skill retrieved by problem similarity, paired with the reliability-weighted score that
+/// ranked it (05; M3.T04).
+///
+/// Procedural retrieval ranks active skills by how well their stored problem matches the query
+/// *and* how reliable they have proven in practice, so the score that ordered the list is kept
+/// alongside the skill — and split into its two factors — so a caller can see *why* a skill
+/// surfaced, not just that it did. Carries an f64 score, so it derives `PartialEq` only.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RankedSkill {
+    /// The retrieved skill (always a live, active, non-deprecated version).
+    pub skill: Skill,
+    /// The problem-match score: rank fusion over the vector (problem-embedding) and lexical
+    /// (description) signals. Higher is better.
+    pub similarity: f64,
+    /// The reliability weight: the Beta-posterior mean of the skill's success rate, so an
+    /// unproven skill sits at the neutral prior rather than at either extreme.
+    pub reliability: f64,
+    /// The final rank score, `similarity * reliability`; the returned list is ordered by this,
+    /// descending.
+    pub score: f64,
+}
+
 /// A negative procedural memory: a recorded failure mode to avoid (02 §4.5).
 ///
 /// Linked to the skill it was observed against via `HAS_FAILURE`; drives

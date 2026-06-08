@@ -104,6 +104,32 @@ fn a_saved_skill_round_trips_by_node_and_domain_id() {
 }
 
 #[test]
+fn skill_node_by_id_resolves_the_outcome_bridge() {
+    let store = store();
+    let s = skill("deploy", 1, T1, [1.0, 0.0, 0.0, 0.0]);
+    let node = store
+        .save_skill(&s, None, &[audit(AuditKind::SkillSave, &s.identity.id)])
+        .expect("save skill");
+
+    // The domain-id -> node-id resolver the procedural layer uses to record an outcome against a
+    // specific version returns the same node `save_skill` created.
+    assert_eq!(
+        store
+            .skill_node_by_id(&s.identity.id)
+            .expect("resolve by id"),
+        Some(node),
+        "the id resolves to the saved version's node",
+    );
+    assert!(
+        store
+            .skill_node_by_id(&Id::generate())
+            .expect("resolve unknown")
+            .is_none(),
+        "an unknown id resolves to no node",
+    );
+}
+
+#[test]
 fn saving_a_new_version_deprecates_the_prior_active_one() {
     let store = store();
     let v1 = skill("deploy", 1, T1, [1.0, 0.0, 0.0, 0.0]);

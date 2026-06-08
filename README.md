@@ -85,6 +85,11 @@ Set up the shared git hooks once after cloning:
 bash scripts/install-hooks.sh
 ```
 
+## Documentation
+
+System documentation — subsystem guides and API reference — lives in [`docs/`](docs/).
+It grows alongside the build, one subsystem at a time.
+
 ## License
 
 Dual-licensed under either [Apache 2.0](LICENSE-APACHE) or [MIT](LICENSE-MIT), your
