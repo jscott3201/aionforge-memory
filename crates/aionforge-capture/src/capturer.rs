@@ -16,6 +16,7 @@ use aionforge_domain::authz::{AuthorizationError, Authorizer, Principal};
 use aionforge_domain::blocks::{Identity, Stats};
 use aionforge_domain::contracts::{Capture, Embedder, PrivacyFilter};
 use aionforge_domain::embedding::Embedding;
+use aionforge_domain::gate::{GateError, GateRejection, ProvenanceGate};
 use aionforge_domain::ids::{ContentHash, Id};
 use aionforge_domain::namespace::Namespace;
 use aionforge_domain::nodes::episodic::{ConsolidationState, Episode, Origin};
@@ -44,6 +45,10 @@ pub struct Capturer<F, E> {
     embedder: E,
     config: CaptureConfig,
     authorizer: Arc<dyn Authorizer>,
+    /// The signed-write gate (06 §3). `None` is the unsigned fast path — no crypto, no
+    /// store probe, byte-identical to an unsigned deployment. `Some` verifies every write's
+    /// provenance signature and clock skew before any memory is shaped.
+    gate: Option<Arc<dyn ProvenanceGate>>,
 }
 
 impl<F, E> Capturer<F, E>
@@ -67,7 +72,19 @@ where
             embedder,
             config,
             authorizer,
+            gate: None,
         }
+    }
+
+    /// Attach a signed-write gate, turning on provenance verification for every write (06 §3).
+    ///
+    /// The engine calls this only when `signed_writes` is configured; the default capturer
+    /// has no gate and the unsigned path is byte-identical to today. Consuming builder so it
+    /// composes onto [`Capturer::new`] at the single engine wiring point.
+    #[must_use]
+    pub fn with_gate(mut self, gate: Arc<dyn ProvenanceGate>) -> Self {
+        self.gate = Some(gate);
+        self
     }
 
     /// Run the capture path for one request.
@@ -96,6 +113,18 @@ where
             return Err(CaptureError::Unauthorized(denial));
         }
 
+        // 3a. Provenance gate (06 §3). When signed writes are in force, verify the writer's
+        //     Ed25519 signature over the canonical (subject_id, agent_id, captured_at) payload
+        //     and the clock skew before any memory is shaped — after namespace authorization
+        //     (so a denied write keeps its existing audit) and before the embedder round-trip
+        //     or any id mint. The host signs the episode (subject) id it minted, so on the
+        //     signed path that id becomes the episode id. No gate ⇒ this whole block is
+        //     skipped: zero crypto, zero store probe, byte-identical to an unsigned deployment.
+        let signed_subject_id = match &self.gate {
+            None => None,
+            Some(gate) => Some(self.admit_signed_write(gate.as_ref(), &request)?),
+        };
+
         if let Some(existing) = self.store.episode_id_by_content_hash(&content_hash)? {
             return Ok(CaptureReceipt {
                 episode_id: existing,
@@ -119,7 +148,21 @@ where
 
         let trust = request.writer.trust.clamp(0.0, 1.0);
         let embedder_model = embedding.as_ref().map(|_| self.embedder.model().clone());
-        let episode_id = Id::generate();
+        // On the signed path the host minted and signed the subject id, so it becomes the
+        // episode id (the gate already verified the signature is over exactly this id) and the
+        // verified signature is recorded on the provenance. The unsigned path mints a fresh
+        // sortable UUIDv7 server-side and leaves the signature empty — a `signed` envelope is
+        // ignored entirely when no gate admitted it.
+        let episode_id = signed_subject_id.unwrap_or_else(Id::generate);
+        let provenance_signature = match signed_subject_id {
+            Some(_) => request
+                .writer
+                .signed
+                .as_ref()
+                .map(|signed| signed.signature.clone())
+                .unwrap_or_default(),
+            None => String::new(),
+        };
 
         let episode = Episode {
             identity: Identity {
@@ -159,8 +202,8 @@ where
             }),
         };
 
-        // 5. Provenance. Unsigned in non-signed deployments (the empty signature);
-        //    signed-write deployments fill this in (04 §1).
+        // 5. Provenance. Unsigned deployments leave the empty signature; a signed-write
+        //    deployment records the host signature the gate just verified (04 §1, 06 §3).
         let provenance = ProvenanceRecord {
             identity: Identity {
                 id: Id::generate(),
@@ -170,7 +213,7 @@ where
             },
             subject_id: episode_id,
             writer_agent_id: request.agent_id,
-            signature: String::new(),
+            signature: provenance_signature,
             source_episode_ids: Vec::new(),
             model_family: request.writer.model_family,
             model_version: request.writer.model_version,
@@ -255,6 +298,74 @@ where
             _ => Ok(CaptureVerdict::New),
         }
     }
+
+    /// Admit a signed write, returning the host-supplied subject id to adopt as the episode
+    /// id (06 §3). Fail-closed: every rejection writes a `system`-namespace audit and returns,
+    /// so no memory is written and the unsigned-fast-path commit is never reached.
+    ///
+    /// The cause of a rejection is recorded in the audit payload but collapsed in the returned
+    /// error — [`CaptureError::InvalidSignature`] for an unknown writer, a bad signature, an
+    /// unsigned write, or a subject-id collision — so the substrate is neither an enrollment
+    /// oracle nor a forge oracle. A clock-skew rejection is reported distinctly so a client can
+    /// resync its clock; a backend fault resolving the key is an availability error, not an
+    /// attack, and writes no audit.
+    fn admit_signed_write(
+        &self,
+        gate: &dyn ProvenanceGate,
+        request: &CaptureRequest,
+    ) -> Result<Id, CaptureError> {
+        // An unsigned write under a signed-write policy is inadmissible.
+        let Some(signed) = request.writer.signed.as_ref() else {
+            self.store.commit_audit(&provenance_rejected_audit(
+                request,
+                request.agent_id,
+                AuditKind::InvalidSignature,
+                serde_json::json!({ "reason": "unsigned_write_under_signed_writes" }),
+            ))?;
+            return Err(CaptureError::InvalidSignature);
+        };
+
+        // Verify the signature and the clock skew against the writer's registered key.
+        match gate.admit(
+            &signed.subject_id,
+            &request.agent_id,
+            &request.captured_at,
+            &signed.signature,
+        ) {
+            Ok(()) => {}
+            Err(GateError::Backend(message)) => {
+                return Err(CaptureError::ProvenanceUnavailable(message));
+            }
+            Err(GateError::Rejected(rejection)) => {
+                let (kind, payload) = rejection_audit_fields(&rejection);
+                self.store.commit_audit(&provenance_rejected_audit(
+                    request,
+                    signed.subject_id,
+                    kind,
+                    payload,
+                ))?;
+                return Err(rejection_to_error(rejection));
+            }
+        }
+
+        // Collision guard: the host owns subject-id allocation on the signed path, and the
+        // store does not enforce episode-id uniqueness (content-hash dedup keys on content,
+        // not id — store.rs), so a host-chosen id that already names a live or soft-forgotten
+        // episode is rejected. A narrow window remains under two genuinely concurrent signed
+        // writes that reuse one id before either commits; the skew window and first-writer-wins
+        // bound it, and the id stays in the writer's own private namespace either way.
+        if self.store.episode_exists(&signed.subject_id)? {
+            self.store.commit_audit(&provenance_rejected_audit(
+                request,
+                signed.subject_id,
+                AuditKind::InvalidSignature,
+                serde_json::json!({ "reason": "subject_id_collision" }),
+            ))?;
+            return Err(CaptureError::InvalidSignature);
+        }
+
+        Ok(signed.subject_id)
+    }
 }
 
 impl<F, E> Capture for Capturer<F, E>
@@ -311,6 +422,77 @@ fn namespace_denied_audit(
         }),
         signature: String::new(),
         occurred_at: request.captured_at.clone(),
+    }
+}
+
+/// The audit for a rejected signed write (06 §3), in the `system` namespace, mirroring
+/// [`namespace_denied_audit`]'s write-then-return shape: a rejection produces no memory node,
+/// so the subject is the attempted episode (subject) id and the actor is the writer. The
+/// `kind`/`payload` carry the specific cause for forensics while the returned error stays
+/// coarse.
+fn provenance_rejected_audit(
+    request: &CaptureRequest,
+    subject_id: Id,
+    kind: AuditKind,
+    payload: serde_json::Value,
+) -> AuditEvent {
+    AuditEvent {
+        identity: Identity {
+            id: Id::generate(),
+            ingested_at: request.captured_at.clone(),
+            namespace: Namespace::System,
+            expired_at: None,
+        },
+        kind,
+        subject_id,
+        actor_id: request.agent_id,
+        payload,
+        signature: String::new(),
+        occurred_at: request.captured_at.clone(),
+    }
+}
+
+/// The audit kind and forensic payload for a gate rejection. Unknown-writer and bad-signature
+/// both record under `invalid_signature` (the substrate does not reveal which check failed);
+/// a skew rejection records the deviation and the bound.
+fn rejection_audit_fields(rejection: &GateRejection) -> (AuditKind, serde_json::Value) {
+    match rejection {
+        GateRejection::UnknownWriter => (
+            AuditKind::InvalidSignature,
+            serde_json::json!({ "reason": "unknown_writer" }),
+        ),
+        GateRejection::BadSignature => (
+            AuditKind::InvalidSignature,
+            serde_json::json!({ "reason": "invalid_signature" }),
+        ),
+        GateRejection::ClockSkew {
+            skew_ms,
+            tolerance_ms,
+        } => (
+            AuditKind::ClockSkewRejected,
+            serde_json::json!({
+                "reason": "clock_skew",
+                "skew_ms": skew_ms,
+                "tolerance_ms": tolerance_ms,
+            }),
+        ),
+    }
+}
+
+/// The client-facing error for a gate rejection: skew is reported distinctly so a client can
+/// resync, while the identity/signature causes collapse to one opaque rejection.
+fn rejection_to_error(rejection: GateRejection) -> CaptureError {
+    match rejection {
+        GateRejection::ClockSkew {
+            skew_ms,
+            tolerance_ms,
+        } => CaptureError::ClockSkew {
+            skew_ms,
+            tolerance_ms,
+        },
+        GateRejection::UnknownWriter | GateRejection::BadSignature => {
+            CaptureError::InvalidSignature
+        }
     }
 }
 

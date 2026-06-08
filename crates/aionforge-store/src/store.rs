@@ -242,6 +242,38 @@ impl Store {
         }
     }
 
+    /// Whether any episode — live or soft-forgotten — already carries this domain id.
+    ///
+    /// The signed-write collision guard (06 §3, M4.T03): a signed write adopts a
+    /// host-supplied subject id as its episode id, and the store does not otherwise enforce
+    /// episode-id uniqueness (`create_node` mints a fresh node id and stores the domain id as
+    /// an ordinary property; the capture path's exact-duplicate probe keys on `content_hash`,
+    /// not `id`). `Episode.id` is scalar-indexed, so this is a probe, not a scan — and the
+    /// index must exist for the probe to be sound, since `nodes_with_property_eq` returns
+    /// `None` (read here as "absent") when no index is registered. Soft-forgotten episodes
+    /// (`expired_at` set) still hold their id, so they count: the id stays taken.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the id cannot be encoded for the lookup.
+    pub fn episode_exists(&self, id: &Id) -> Result<bool, StoreError> {
+        let snapshot = self.graph.read();
+        let label = db_string(Episode::LABEL)?;
+        let prop = db_string("id")?;
+        let value = crate::convert::id_value(id)?;
+        let Some(rows) = snapshot.nodes_with_property_eq(&label, &prop, &value) else {
+            return Ok(false);
+        };
+        for row in rows.iter() {
+            let Some(node) = snapshot.node_id_for_row(selene_graph::RowIndex::new(row)) else {
+                continue;
+            };
+            if snapshot.node_properties(node).is_some() {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     /// Execute a parameter-bound GQL statement.
     ///
     /// The query's source is fixed and trusted; every caller value travels as a

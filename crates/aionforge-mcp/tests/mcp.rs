@@ -283,6 +283,7 @@ async fn search_tool_widens_to_a_team_only_when_the_host_asserts_membership() {
                 transport: None,
                 request_id: None,
                 trust: 0.9,
+                signed: None,
             },
             trusted: true,
             namespace: Some(Namespace::Team("squad".to_string())),

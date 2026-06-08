@@ -18,6 +18,12 @@ const MAX_EMBEDDER_TIMEOUT_MS: u64 = 600_000;
 /// outer bound before a stuck endpoint should be treated as unavailable.
 const MAX_COMPLETER_TIMEOUT_MS: u64 = 600_000;
 
+/// The widest sane clock-skew tolerance for signed writes (five minutes, 06 §3). The window
+/// bounds replay/storm exposure, so a misconfigured production deployment cannot effectively
+/// disable replay protection by setting it arbitrarily high; five minutes covers normal NTP
+/// drift across hosts and time zones with margin.
+const MAX_CLOCK_SKEW_TOLERANCE_MS: u64 = 300_000;
+
 /// The whole Aionforge configuration, assembled from defaults, a TOML file, the
 /// environment, and caller flags (see [`crate`] for precedence).
 ///
@@ -165,6 +171,11 @@ impl Default for RetrievalConfig {
 pub struct SecurityConfig {
     /// Whether writes must be signed. Off by default, on for production (§8.4).
     pub signed_writes: bool,
+    /// The clock-skew tolerance in milliseconds for signed writes (06 §3): a write whose
+    /// timestamp deviates from the substrate clock by more than this is rejected (replay/storm
+    /// mitigation). Only consulted when `signed_writes` is on; bounded to
+    /// `MAX_CLOCK_SKEW_TOLERANCE_MS`.
+    pub clock_skew_tolerance_ms: u64,
     /// Whether capture-side redaction of configured patterns is on.
     pub redaction: bool,
 }
@@ -173,6 +184,7 @@ impl Default for SecurityConfig {
     fn default() -> Self {
         Self {
             signed_writes: false,
+            clock_skew_tolerance_ms: 60_000,
             redaction: true,
         }
     }
@@ -346,6 +358,22 @@ impl Config {
                 "retrieval.fusion_constant",
                 "must be greater than zero",
             ));
+        }
+        if self.security.signed_writes {
+            if self.security.clock_skew_tolerance_ms == 0 {
+                // A zero window rejects every signed write (skew is always >= 0), so it is a
+                // configuration error, not a silent lockout.
+                return Err(ConfigError::invalid(
+                    "security.clock_skew_tolerance_ms",
+                    "must be greater than zero when signed writes are on",
+                ));
+            }
+            if self.security.clock_skew_tolerance_ms > MAX_CLOCK_SKEW_TOLERANCE_MS {
+                return Err(ConfigError::invalid(
+                    "security.clock_skew_tolerance_ms",
+                    "must be at most 300000 (five minutes)",
+                ));
+            }
         }
         Ok(())
     }

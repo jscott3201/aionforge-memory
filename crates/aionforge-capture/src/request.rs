@@ -54,4 +54,26 @@ pub struct WriterContext {
     pub request_id: Option<String>,
     /// Writer trust at write time; clamped to `[0, 1]` before it is recorded.
     pub trust: f64,
+    /// The host-supplied signed-write envelope, present when signed writes are in force
+    /// (06 §3). `None` on the unsigned fast path. With the provenance gate active, a
+    /// `None` here is a fail-closed rejection — an unsigned write under a signed-write
+    /// policy. Ignored entirely when no gate is configured.
+    pub signed: Option<SignedProvenance>,
+}
+
+/// A host-supplied signed-write envelope (06 §3, M4.T03).
+///
+/// On a signed-write deployment the host mints the episode (subject) id, signs the
+/// canonical `(subject_id, agent_id, captured_at)` payload with its Ed25519 private key,
+/// and ships both. The substrate verifies — the private key never enters the process —
+/// and, on success, adopts `subject_id` as the episode id so the id the host signed over
+/// is exactly the id that is stored. The host owns id allocation on the signed path; the
+/// substrate rejects a `subject_id` that collides with an existing episode.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SignedProvenance {
+    /// The episode (subject) id the host minted and signed over.
+    pub subject_id: Id,
+    /// The base64 Ed25519 signature over
+    /// `provenance_payload(subject_id, agent_id, captured_at)`.
+    pub signature: String,
 }

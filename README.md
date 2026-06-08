@@ -55,9 +55,10 @@ We'd rather say that plainly up front than oversell it.
 - **Retrieval picks its strategy per query.** Lexical, dense, graph, recency, and
   trust signals get rank-fused, and graph expansion only kicks in for the queries it
   actually helps.
-- **Security isn't a later milestone.** Provenance, per-writer trust, namespace
-  boundaries, quarantine when a new fact contradicts a trusted one, tagging recalled
-  text as untrusted data, and a red-team suite are all in scope for v1.
+- **Security isn't a later milestone.** Provenance, optional Ed25519 signed writes,
+  per-writer trust, namespace boundaries, quarantine when a new fact contradicts a
+  trusted one, tagging recalled text as untrusted data, and a red-team suite are all in
+  scope for v1.
 - **Same input, same output.** Given the same graph state, retrieval returns the same
   ordering every time, and derived state can always be rebuilt from the primary graph.
   The optional LLM layers — the distiller that condenses facts into notes, and the link evolver

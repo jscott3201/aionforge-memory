@@ -30,6 +30,7 @@ pub mod contracts;
 pub mod edges;
 pub mod embedding;
 pub mod error;
+pub mod gate;
 pub mod ids;
 pub mod namespace;
 pub mod nodes;
@@ -50,6 +51,7 @@ pub use contracts::{
 };
 pub use embedding::{EmbedderModel, Embedding};
 pub use error::DomainError;
+pub use gate::{GateError, GateRejection, ProvenanceGate, WallClock};
 pub use ids::{ContentHash, Id, SerializationId};
 pub use namespace::Namespace;
 pub use time::{BiTemporal, Timestamp};

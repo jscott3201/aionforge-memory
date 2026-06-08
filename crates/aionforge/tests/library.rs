@@ -82,6 +82,7 @@ async fn a_host_can_capture_and_search_through_the_library() {
                 transport: Some("library".to_string()),
                 request_id: None,
                 trust: 0.8,
+                signed: None,
             },
             trusted: false,
             namespace: None,
