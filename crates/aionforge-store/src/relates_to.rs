@@ -14,8 +14,11 @@
 //! idempotency here is *value-keyed*, not id-keyed: the driver reads the current links
 //! ([`Store::relates_to_links`]), decides per ordered `(source, target)` pair whether to create,
 //! leave alone, or revise, and this surface re-checks at write time so a crash-and-replay or a
-//! double call writes nothing new. One ordered pair carries at most one *current* relationship;
-//! a revision changes its label.
+//! double call writes nothing new. The surface **enforces one current relationship per ordered
+//! pair**: a same-label create is a no-op, and a different-label create is refused while the pair
+//! still has a live edge — so a relabel must be staged as a close of the current version followed
+//! by a fresh create (closes run before creates in the same transaction, so a staged relabel sees
+//! the pair already free).
 
 use aionforge_domain::edges::RelatesTo;
 use aionforge_domain::ids::Id;
@@ -110,7 +113,10 @@ impl Store {
 
     /// Every `RELATES_TO` edge out of a source note (current and closed), so the driver can decide
     /// per target whether a proposed link is new, already present, or a relabeling — and count how
-    /// many times a pair has already been revised, for the cascade guard (M3.T09).
+    /// many times a pair has already been revised, for the cascade guard (M3.T09). Both current and
+    /// closed versions are returned; the driver reads [`RelatesToLink::live`] to tell them apart,
+    /// staging only a *current* edge's `edge_id` into a revision's closes and counting closed
+    /// versions per pair against the revision cap.
     ///
     /// # Errors
     /// Returns [`StoreError`] if the source note id or an edge cannot be read.
@@ -156,8 +162,11 @@ impl Store {
     /// edges, and write the `audits`.
     ///
     /// Both edge steps are idempotent so a crash-and-replay or a double call is a no-op: closing an
-    /// already-closed edge is skipped, and creating a link that already exists live with the same
-    /// label is skipped. Each audit is deduped by its content-addressed id and wired
+    /// already-closed (or absent) edge is skipped, and a create whose `(source, target)` pair
+    /// already carries a current edge with the same label is skipped. The surface keeps **one
+    /// current link per pair** — a create with a *different* label is refused while the prior
+    /// version is still live (close it first to relabel), so a stale proposal cannot fork a pair
+    /// into two current links. Each audit is deduped by its content-addressed id and wired
     /// `AuditEvent -AUDIT-> Note` to its subject (the source note); a subject absent from the graph
     /// still records the audit (the provenance is the payload) and only the edge is skipped.
     ///
@@ -181,15 +190,23 @@ impl Store {
             let mut mutator = txn.mutator();
 
             // Close prior versions first (a revision closes the old before opening the new), each
-            // idempotent: an edge already carrying a `valid_to` is left as-is.
+            // idempotent: an absent edge is skipped (it can only be a stale or bad handle, since we
+            // never delete edges), and one already carrying a `valid_to` is left as-is.
             let valid_to_key = db_string(VALID_TO)?;
             for &edge_id in closes {
-                let already_closed = mutator
-                    .read()
-                    .edge_properties(edge_id)
-                    .is_some_and(|props| props.get(&valid_to_key).is_some());
-                if already_closed {
-                    continue;
+                let open = match mutator.read().edge_properties(edge_id) {
+                    Some(props) => props.get(&valid_to_key).is_none(),
+                    None => {
+                        tracing::warn!(
+                            edge = ?edge_id,
+                            "link evolution: edge to close not found; skipping (never existed or \
+                             already removed)"
+                        );
+                        continue;
+                    }
+                };
+                if !open {
+                    continue; // already carries a `valid_to` — idempotent
                 }
                 mutator.update_edge(
                     edge_id,
@@ -203,7 +220,9 @@ impl Store {
                 )?;
             }
 
-            // Open new versions, skipping any that already exist live with the same label.
+            // Open new versions, enforcing one current link per ordered pair: skip a same-label
+            // duplicate (idempotent), and refuse a different-label create while the pair still has a
+            // live edge (the driver stages a relabel as a close + a create, in that order).
             for create in creates {
                 let Some(source_node) = node_by_id(mutator.read(), Note::LABEL, &create.source_id)?
                 else {
@@ -221,13 +240,22 @@ impl Store {
                     );
                     continue;
                 };
-                if live_link_exists(
-                    mutator.read(),
-                    source_node,
-                    target_node,
-                    &create.relationship_label,
-                )? {
-                    continue; // already present, same label — idempotent no-op
+                match live_link_label(mutator.read(), source_node, target_node)? {
+                    None => {}
+                    Some(existing) if existing == create.relationship_label => {
+                        continue; // a current link with this label exists — idempotent no-op
+                    }
+                    Some(existing) => {
+                        tracing::warn!(
+                            source = create.source_id.as_str(),
+                            target = create.target_id.as_str(),
+                            current = existing.as_str(),
+                            proposed = create.relationship_label.as_str(),
+                            "link evolution: a different current link exists on this pair; close it \
+                             before relabeling — skipping create to keep one current link per pair"
+                        );
+                        continue;
+                    }
                 }
                 mutator.create_edge(
                     db_string(RelatesTo::LABEL)?,
@@ -281,18 +309,24 @@ fn relates_to_props(
     ])?)
 }
 
-/// Whether a current `RELATES_TO` edge already runs `source -> target` with this exact label —
-/// the value-keyed dedup that makes opening a link idempotent.
-fn live_link_exists(
+/// The label of the current `RELATES_TO` edge running `source -> target`, if one is live — the
+/// value-keyed probe behind link idempotency and the one-current-relationship-per-pair invariant.
+///
+/// At most one version of a pair is current, so this returns that version's label, or `None` when
+/// the pair has no live edge. A same-label create is then a no-op; a different-label create is a
+/// relabel the caller must stage as a close of the current edge followed by a fresh create.
+fn live_link_label(
     snapshot: &SeleneGraph,
     source: NodeId,
     target: NodeId,
-    relationship_label: &str,
-) -> Result<bool, StoreError> {
+) -> Result<Option<String>, StoreError> {
     let label = db_string(RelatesTo::LABEL)?;
     let Some(adjacency) = snapshot.outgoing_edges(source) else {
-        return Ok(false);
+        return Ok(None);
     };
+    let valid_to_key = db_string(VALID_TO)?;
+    let expired_at_key = db_string(EXPIRED_AT)?;
+    let relationship_label_key = db_string(RELATIONSHIP_LABEL)?;
     for edge in adjacency.iter_label(&label) {
         if edge.neighbor != target {
             continue;
@@ -300,21 +334,15 @@ fn live_link_exists(
         let Some(props) = snapshot.edge_properties(edge.edge_id) else {
             continue;
         };
-        let live = props.get(&db_string(VALID_TO)?).is_none()
-            && props.get(&db_string(EXPIRED_AT)?).is_none();
+        let live = props.get(&valid_to_key).is_none() && props.get(&expired_at_key).is_none();
         if !live {
             continue;
         }
-        if props
-            .get(&db_string(RELATIONSHIP_LABEL)?)
-            .map(as_str)
-            .transpose()?
-            == Some(relationship_label)
-        {
-            return Ok(true);
+        if let Some(value) = props.get(&relationship_label_key) {
+            return Ok(Some(as_str(value)?.to_string()));
         }
     }
-    Ok(false)
+    Ok(None)
 }
 
 /// The committed node carrying this id under the given label (ids are unique per kind).

@@ -10,7 +10,7 @@ use aionforge_domain::nodes::associative::Note;
 use aionforge_domain::nodes::forensic::{AuditEvent, AuditKind};
 use aionforge_domain::time::Timestamp;
 use aionforge_store::{
-    BoundQuery, DistilledNoteWrite, LinkEdgeWrite, MaterializedNote, QueryResult, Store,
+    BoundQuery, DistilledNoteWrite, EdgeId, LinkEdgeWrite, MaterializedNote, QueryResult, Store,
     StoreConfig, Value,
 };
 
@@ -61,9 +61,22 @@ fn identity(id: Id, namespace: &Namespace) -> Identity {
 /// Seed a `Note` via the distilled-note write path (the public note-write surface), returning its
 /// id. The paired `distill` audit is incidental — link tests assert on `link_evolve` audits only.
 fn seed_note(store: &Store, seed: &[u8], namespace: &Namespace) -> Id {
+    seed_note_with_expiry(store, seed, namespace, None)
+}
+
+/// Seed a `Note` whose identity carries `expired_at`, exercising the live-note filter in
+/// `notes_in_namespace`.
+fn seed_note_with_expiry(
+    store: &Store,
+    seed: &[u8],
+    namespace: &Namespace,
+    expired_at: Option<Timestamp>,
+) -> Id {
     let id = Id::from_content_hash(seed);
+    let mut ident = identity(id.clone(), namespace);
+    ident.expired_at = expired_at;
     let note = Note {
-        identity: identity(id.clone(), namespace),
+        identity: ident,
         stats: stats(),
         content: format!("note {}", String::from_utf8_lossy(seed)),
         context: None,
@@ -311,4 +324,121 @@ fn an_empty_link_run_is_a_no_op() {
         .materialize_link_edges(&[], &[], &[], &now())
         .expect("empty run");
     assert_eq!(relates_to_edges(&store), 0);
+}
+
+#[test]
+fn notes_in_namespace_honors_zero_and_one_limits() {
+    let store = store();
+    let ns = agent("alice");
+    seed_note(&store, b"n1", &ns);
+    seed_note(&store, b"n2", &ns);
+    assert!(
+        store.notes_in_namespace(&ns, 0).expect("pool").is_empty(),
+        "a zero limit yields no candidates"
+    );
+    assert_eq!(
+        store.notes_in_namespace(&ns, 1).expect("pool").len(),
+        1,
+        "a limit of one yields exactly one candidate"
+    );
+}
+
+#[test]
+fn notes_in_namespace_excludes_expired_notes() {
+    let store = store();
+    let ns = agent("alice");
+    seed_note(&store, b"live", &ns);
+    seed_note_with_expiry(&store, b"gone", &ns, Some(later()));
+    let pool = store.notes_in_namespace(&ns, 10).expect("pool");
+    assert_eq!(pool.len(), 1, "only the live note is pooled");
+    assert_eq!(pool[0].content, "note live", "the expired note is dropped");
+}
+
+#[test]
+fn a_different_label_create_is_refused_until_the_prior_is_closed() {
+    let store = store();
+    let ns = agent("alice");
+    let n1 = seed_note(&store, b"n1", &ns);
+    let n2 = seed_note(&store, b"n2", &ns);
+
+    store
+        .materialize_link_edges(
+            &[create(&n1, &n2, "related_to", now())],
+            &[],
+            &[link_evolve_audit(b"audit-create", &n1, &ns)],
+            &now(),
+        )
+        .expect("create link");
+
+    // A different-label create on the same live pair, without closing first, is refused: the
+    // invariant is one current relationship per ordered pair. It is a skip, not an error.
+    store
+        .materialize_link_edges(
+            &[create(&n1, &n2, "subsumes", later())],
+            &[],
+            &[link_evolve_audit(b"audit-skip", &n1, &ns)],
+            &later(),
+        )
+        .expect("refused create is not an error");
+    assert_eq!(
+        relates_to_edges(&store),
+        1,
+        "no second current edge forks the pair"
+    );
+    let links = store.relates_to_links(&n1).expect("links");
+    let live: Vec<&aionforge_store::RelatesToLink> = links.iter().filter(|l| l.live).collect();
+    assert_eq!(live.len(), 1, "still exactly one current link");
+    assert_eq!(
+        live[0].relationship_label, "related_to",
+        "the original label is untouched"
+    );
+
+    // Staged correctly — close the prior version and create the new one in the same call — the
+    // relabel lands (the close runs before the create, so the pair is free when the create probes).
+    let prior_edge = live[0].edge_id;
+    store
+        .materialize_link_edges(
+            &[create(&n1, &n2, "subsumes", later())],
+            &[prior_edge],
+            &[link_evolve_audit(b"audit-relabel", &n1, &ns)],
+            &later(),
+        )
+        .expect("staged relabel");
+    let links = store.relates_to_links(&n1).expect("links");
+    let live: Vec<&aionforge_store::RelatesToLink> = links.iter().filter(|l| l.live).collect();
+    assert_eq!(live.len(), 1, "still one current link after the relabel");
+    assert_eq!(live[0].relationship_label, "subsumes", "now relabeled");
+    assert_eq!(
+        links.iter().filter(|l| !l.live).count(),
+        1,
+        "the prior version is closed, not deleted"
+    );
+}
+
+#[test]
+fn closing_a_non_existent_edge_is_a_no_op() {
+    let store = store();
+    let ns = agent("alice");
+    let n1 = seed_note(&store, b"n1", &ns);
+    let n2 = seed_note(&store, b"n2", &ns);
+
+    // A bogus EdgeId in the closes list is skipped, not fatal — and it does not block a create
+    // batched alongside it (the close loop must distinguish "absent" from "open").
+    let bogus = EdgeId::new(9_999_999);
+    store
+        .materialize_link_edges(
+            &[create(&n1, &n2, "related_to", now())],
+            &[bogus],
+            &[link_evolve_audit(b"audit", &n1, &ns)],
+            &now(),
+        )
+        .expect("a non-existent close is skipped, not fatal");
+    assert_eq!(
+        relates_to_edges(&store),
+        1,
+        "the batched create still lands"
+    );
+    let links = store.relates_to_links(&n1).expect("links");
+    assert_eq!(links.len(), 1);
+    assert!(links[0].live, "the create is current");
 }
