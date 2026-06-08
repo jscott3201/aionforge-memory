@@ -58,9 +58,10 @@ const SCALAR_INDEXES: &[(&str, &str)] = &[
     // inside the flip txn when it wires the `ABOUT`/`MENTIONS` edges (M2.T04); it dedups a
     // content-addressed summary `Note` by id so replaying an episode never writes a second copy
     // (M2.T06); and it dedups a content-addressed `AuditEvent` by id for the same replay reason
-    // (M2.T04 audit determinism). `Skill` is addressed by domain id through the procedural
-    // contract — `record_outcome(skill_id)` and the by-id reads resolve a version's `NodeId` by
-    // id (M3.T04). Other kinds are reached by node id directly, so they need no id index.
+    // (M2.T04 audit determinism). `Skill` is addressed by domain id at the procedural contract
+    // (`ProceduralMemory::record_outcome(skill_id: Id)` and the by-id reads); L2 bridges that to
+    // L0's node-keyed `record_skill_outcome` / reads via `skill_by_id`, so the id probe must be
+    // indexed (M3.T04). Other kinds are reached by node id directly, so they need no id index.
     ("Entity", "id"),
     ("Entity", "canonical_name"),
     ("Entity", "type"),

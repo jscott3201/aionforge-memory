@@ -225,12 +225,14 @@ impl Store {
     /// `deprecate_prior` is given, that node's `deprecated_at` is stamped with the new
     /// version's `ingested_at` (the supersession instant), so at most one version per name is
     /// ever active. Each `audit` event is written and wired `AuditEvent -AUDIT-> Skill` to the
-    /// new version — the version-diff provenance (05): typically a `SkillSave`, plus a
-    /// `SkillDeprecate` / `SkillVersionDiff` pair when a prior version was superseded. Nothing
-    /// is published if any step fails (the transaction rolls back).
+    /// new version — the version-diff provenance (05): typically a `SkillSave`, plus both a
+    /// `SkillDeprecate` and a `SkillVersionDiff` when a prior version was superseded. Each event
+    /// carries its own `subject_id` (the version it describes); the `AUDIT` edges all anchor to
+    /// the new node so a version-diff traversal starts from one place. Nothing is published if
+    /// any step fails (the transaction rolls back).
     ///
-    /// The caller owns version assignment (monotonic per name) and audit construction; this
-    /// surface is the mechanical, atomic persistence underneath.
+    /// The caller (L2) must guarantee version monotonicity per name and construct the complete
+    /// audit set; this surface is the mechanical, atomic persistence underneath those policies.
     ///
     /// # Errors
     /// Returns [`StoreError`] if translation, a mutation, or the commit fails.
@@ -369,8 +371,10 @@ impl Store {
 
     /// The active (non-deprecated) version of the skill named `name`, with its node id.
     ///
-    /// At most one version per name is active (the deprecate-on-save protocol maintains it);
-    /// this returns that version, or `None` if no live, non-deprecated version exists.
+    /// At most one version per name is active — the deprecate-on-save protocol in
+    /// [`Store::save_skill`] maintains the invariant — so this returns that unique version and
+    /// its node id, or `None` if no live, non-deprecated version exists. Repeated calls for the
+    /// same name return the same `(NodeId, Skill)` pair.
     ///
     /// # Errors
     /// Returns [`StoreError`] if the lookup fails or a stored skill cannot be decoded.
