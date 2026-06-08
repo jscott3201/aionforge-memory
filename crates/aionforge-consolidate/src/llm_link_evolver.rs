@@ -361,6 +361,22 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn confidence_boundaries_are_inclusive_and_out_of_range_is_dropped() {
+        let cands = candidates();
+        let s = evolver(Outcome::Reply(
+            // 0.0 and 1.0 are valid (inclusive); just-outside values are dropped.
+            "LINK 1 related_to 0.0\nLINK 2 related_to 1.0\nLINK 1 subsumes -0.001\nLINK 2 subsumes 1.001"
+                .to_string(),
+            Some("stop".to_string()),
+        ));
+        let links = evolver_run(&s, &cands).await;
+        assert_eq!(links.len(), 2, "only the in-range boundary values survive");
+        assert!(links.iter().all(|l| l.relationship_label == "related_to"));
+        assert!(links.iter().any(|l| l.confidence == 0.0));
+        assert!(links.iter().any(|l| l.confidence == 1.0));
+    }
+
+    #[tokio::test]
     async fn an_unavailable_completer_declines() {
         let s = evolver(Outcome::Fail);
         assert!(

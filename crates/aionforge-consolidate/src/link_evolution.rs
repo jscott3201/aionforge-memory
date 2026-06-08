@@ -244,6 +244,11 @@ impl<L: LinkEvolver> LinkEvolvePass<L> {
                 &mut report,
                 now,
             );
+            // Audit material outcomes only: a decline (above) and a call that actually created or
+            // revised an edge. A call that ran but drew nothing — the model proposed no
+            // relationship, or every proposal was a no-op or filtered out — writes no audit, so the
+            // audit trail stays proportional to what changed rather than to what was examined. The
+            // examination count lives in `report.notes_seen`; `report.declined` separates declines.
             if !decisions.is_empty() {
                 audits.push(link_evolve_audit(
                     &actor_id,
@@ -427,4 +432,36 @@ pub(crate) fn cosine(a: &[f32], b: &[f32]) -> f64 {
         return 0.0;
     }
     (dot / (norm_a.sqrt() * norm_b.sqrt())).clamp(0.0, 1.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::cosine;
+
+    #[test]
+    fn cosine_of_identical_vectors_is_one() {
+        assert!((cosine(&[1.0, 2.0, 3.0], &[1.0, 2.0, 3.0]) - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn cosine_of_orthogonal_vectors_is_zero() {
+        assert_eq!(cosine(&[1.0, 0.0], &[0.0, 1.0]), 0.0);
+    }
+
+    #[test]
+    fn a_negative_cosine_clamps_to_zero() {
+        // Opposed vectors have cosine -1; clamped so the score reads as a relatedness floor.
+        assert_eq!(cosine(&[1.0, 0.0], &[-1.0, 0.0]), 0.0);
+    }
+
+    #[test]
+    fn a_zero_norm_operand_scores_zero() {
+        assert_eq!(cosine(&[0.0, 0.0], &[1.0, 1.0]), 0.0);
+        assert_eq!(cosine(&[1.0, 1.0], &[0.0, 0.0]), 0.0);
+    }
+
+    #[test]
+    fn a_length_mismatch_scores_zero() {
+        assert_eq!(cosine(&[1.0, 0.0, 0.0], &[1.0, 0.0]), 0.0);
+    }
 }
