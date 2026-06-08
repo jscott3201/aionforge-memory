@@ -24,20 +24,35 @@ use crate::namespace::Namespace;
 /// A caller-asserted security principal: the acting agent and the teams it belongs to (06 §1).
 ///
 /// Supplied by the host per request (see the module trust-boundary note). `teams` are the team
-/// ids the agent is a member of; they should be non-empty strings, but a malformed entry is inert
-/// — it can only fail to match a real team namespace, never grant access to one.
+/// ids the agent is a member of; empty ids are dropped at construction — a valid namespace never
+/// has an empty id, so an empty entry could otherwise match a programmatically-built
+/// `Namespace::Team("")` and is meaningless besides.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Principal {
     /// The acting agent's id (the `<id>` of its `agent:<id>` private namespace).
     pub agent_id: Id,
-    /// The team ids this agent is a member of.
+    /// The team ids this agent is a member of (no empty entries; see [`Principal::new`]).
+    #[serde(deserialize_with = "deserialize_non_empty_teams")]
     pub teams: Vec<String>,
 }
 
+/// Filter empty team ids on the deserialization path too, so the no-empty-team invariant holds for
+/// every construction route, not just [`Principal::new`].
+fn deserialize_non_empty_teams<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let teams = Vec::<String>::deserialize(deserializer)?;
+    Ok(teams.into_iter().filter(|team| !team.is_empty()).collect())
+}
+
 impl Principal {
-    /// A principal for an agent with an explicit team membership list.
+    /// A principal for an agent with an explicit team membership list. Empty team ids are dropped:
+    /// a real team namespace never has an empty id, so an empty entry could only match a
+    /// degenerate `Namespace::Team("")` — never a legitimate team.
     #[must_use]
     pub fn new(agent_id: Id, teams: Vec<String>) -> Self {
+        let teams = teams.into_iter().filter(|team| !team.is_empty()).collect();
         Self { agent_id, teams }
     }
 
@@ -311,6 +326,36 @@ mod tests {
         assert!(visible.contains(&Namespace::Global));
         assert!(visible.contains(&solo.private()));
         assert!(!visible.contains(&Namespace::Team("squad".to_string())));
+    }
+
+    #[test]
+    fn empty_team_ids_are_dropped_on_every_construction_path() {
+        // Direct construction filters empties.
+        let p = Principal::new(agent_id(b"alice"), vec![String::new(), "squad".to_string()]);
+        assert_eq!(p.teams, vec!["squad".to_string()]);
+        assert!(!p.is_member_of(""), "an empty team is never a member");
+        assert_eq!(
+            DefaultAuthorizer
+                .authorize_write(&p, &Namespace::Team(String::new()))
+                .expect_err("denied")
+                .reason,
+            DenyReason::NotTeamMember,
+            "a degenerate team:\"\" write is refused"
+        );
+        assert!(
+            !DefaultAuthorizer
+                .visible_namespaces(&p)
+                .contains(&Namespace::Team(String::new())),
+            "team:\"\" is never visible"
+        );
+
+        // The deserialization path filters too (it does not route through `new`).
+        let json = format!(
+            r#"{{"agent_id":"{}","teams":["","squad"]}}"#,
+            agent_id(b"alice").as_str()
+        );
+        let de: Principal = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(de.teams, vec!["squad".to_string()]);
     }
 
     #[test]
