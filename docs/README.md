@@ -30,6 +30,9 @@ This is reference and guides, not planning or changelogs.
 - [Concurrent merge](concurrent-merge.md) — how concurrent writes about the same thing come together
   into one state: a functional fact converges to a single current value chosen by event time then
   object, so the outcome does not depend on processing order, and the loser is kept in history.
+- [The merge model (CRDTs)](crdt-model.md) — the formal companion to concurrent merge: which CRDT
+  each memory type stands in for (add-wins set, multi-value register, last-write-wins stats), why
+  convergence here is just merge determinism, and why the logical clock is derived, not stored.
 
 ## Substrate
 

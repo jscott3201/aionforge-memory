@@ -8,8 +8,9 @@ does not depend on the order the writes happened to be processed in.
 
 This page covers how a **functional fact** — a fact whose predicate holds at most one value
 at a time, like "based in" — converges, and how a **contested belief** — two mutually
-exclusive values for the same thing — is resolved. The full type-by-type picture is covered
-as the remaining parts land.
+exclusive values for the same thing — is resolved. For the formal model behind it — which CRDT
+each memory type stands in for, and why convergence here reduces to a deterministic merge — see
+[the merge model](crdt-model.md).
 
 ## One current value, chosen the same way every time
 
