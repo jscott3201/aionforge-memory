@@ -97,6 +97,10 @@ pub enum AuditKind {
     ConsolidationFailed,
     /// The subliminal-learning guard raised a warning.
     SubliminalGuardWarning,
+    /// A write was rejected by namespace authorization: the agent is not permitted to write the
+    /// target namespace (06 §1). The payload records the agent, the requested namespace, and the
+    /// deny reason — the audit of a cross-namespace write attempt (07 §T9).
+    NamespaceDenied,
     /// A write was rejected for clock skew.
     ClockSkewRejected,
     /// A signature failed verification.
