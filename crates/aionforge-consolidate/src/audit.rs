@@ -17,7 +17,8 @@
 
 use aionforge_domain::blocks::Identity;
 use aionforge_domain::contracts::{
-    EntitySurface, ExtractorIdentity, InducerIdentity, SummarizationCluster, SummarizerIdentity,
+    EntitySurface, ExtractorIdentity, InducerIdentity, LinkEvolverIdentity, SummarizationCluster,
+    SummarizerIdentity,
 };
 use aionforge_domain::embedding::EmbedderModel;
 use aionforge_domain::ids::Id;
@@ -294,6 +295,112 @@ pub(crate) fn distill_audit(
             "entity_retention": retention.map(|r| r.entity_retention),
             "mean_confidence": retention.map(|r| r.mean_confidence),
             "note_id": note_id.map(Id::as_str),
+        }),
+        signature: String::new(),
+        occurred_at: now.clone(),
+    }
+}
+
+/// The deterministic actor id stamped on the off-cursor
+/// [`LinkEvolvePass`](crate::LinkEvolvePass)'s audit events: a content hash over the evolver's
+/// identity (rule version and the declared model family/version). The same evolver configuration
+/// attributes its calls to the same actor across runs, like the distillation actor id.
+pub(crate) fn link_evolve_actor_id(identity: &LinkEvolverIdentity) -> Id {
+    let key = format!(
+        "link_evolve|{}|{}|{}",
+        identity.rule_version,
+        identity.model_family.as_deref().unwrap_or(""),
+        identity.model_version.as_deref().unwrap_or(""),
+    );
+    Id::from_content_hash(key.as_bytes())
+}
+
+/// The model-provenance a `link_evolve` audit records for the cross-family guard (07 §T3, M6.T01):
+/// the evolver's declared identity, plus the endpoint and seed the call was made with. As with
+/// distillation these are not derivable from the
+/// [`LinkEvolver`](aionforge_domain::contracts::LinkEvolver) seam, so the driver supplies them from
+/// its configuration; the API key never appears here.
+pub(crate) struct LinkEvolveProvenance<'a> {
+    /// The evolver's declared identity (model family/version, rule version).
+    pub identity: &'a LinkEvolverIdentity,
+    /// The configured completion endpoint (the base URL — not a secret).
+    pub endpoint: Option<&'a str>,
+    /// The pinned sampling seed the completion was requested with.
+    pub seed: Option<i64>,
+}
+
+/// One create-or-revise decision the link-evolution driver made for a source note, recorded in the
+/// `link_evolve` audit payload so a forensic query can see exactly which relationships a call drew.
+pub(crate) struct LinkDecision {
+    /// `"created"` for a new link, `"revised"` for a closed-and-reopened relabeling.
+    pub action: &'static str,
+    /// The target note id the relationship points to.
+    pub target: String,
+    /// The relationship label written (from the closed vocabulary).
+    pub label: String,
+    /// The evolver's confidence in the relationship.
+    pub confidence: f64,
+}
+
+/// The `link_evolve` audit event recording one off-cursor link-evolution call against a source note
+/// (M3.T09). Its id is keyed on the source note, the evolver rule version, the outcome, and the
+/// sorted decision set, so a replay of the deterministic rule evolver dedups to a no-op while a
+/// genuinely different outcome records its own call. Wired `AuditEvent -AUDIT-> Note` to the source
+/// note by [`Store::materialize_link_edges`](aionforge_store::Store::materialize_link_edges).
+pub(crate) fn link_evolve_audit(
+    actor_id: &Id,
+    source_id: &Id,
+    provenance: &LinkEvolveProvenance<'_>,
+    outcome: &str,
+    decisions: &[LinkDecision],
+    namespace: &Namespace,
+    now: &Timestamp,
+) -> AuditEvent {
+    let mut decision_keys: Vec<String> = decisions
+        .iter()
+        .map(|d| format!("{}:{}:{}", d.action, d.target, d.label))
+        .collect();
+    decision_keys.sort_unstable();
+    let decisions_key = decision_keys.join(",");
+    let id = audit_id(
+        "link_evolve",
+        namespace,
+        &[
+            source_id.as_str(),
+            &provenance.identity.rule_version,
+            outcome,
+            &decisions_key,
+        ],
+    );
+    let links: Vec<serde_json::Value> = decisions
+        .iter()
+        .map(|d| {
+            json!({
+                "action": d.action,
+                "target": d.target,
+                "label": d.label,
+                "confidence": d.confidence,
+            })
+        })
+        .collect();
+    AuditEvent {
+        identity: Identity {
+            id,
+            ingested_at: now.clone(),
+            namespace: namespace.clone(),
+            expired_at: None,
+        },
+        kind: AuditKind::LinkEvolve,
+        subject_id: source_id.clone(),
+        actor_id: actor_id.clone(),
+        payload: json!({
+            "outcome": outcome,
+            "model_family": provenance.identity.model_family,
+            "model_version": provenance.identity.model_version,
+            "rule_version": provenance.identity.rule_version,
+            "endpoint": provenance.endpoint,
+            "seed": provenance.seed,
+            "links": links,
         }),
         signature: String::new(),
         occurred_at: now.clone(),
