@@ -23,6 +23,7 @@
 //!   `Option`, since `None` and a JSON `null` are likewise equivalent and `None` is
 //!   canonical.
 
+pub mod authz;
 pub mod blocks;
 pub mod completion;
 pub mod contracts;
@@ -36,6 +37,9 @@ pub mod signing;
 pub mod time;
 pub mod value;
 
+pub use authz::{
+    AuthorizationError, Authorizer, DefaultAuthorizer, DenyReason, Principal, VisibleSet,
+};
 pub use blocks::{Identity, Stats};
 pub use completion::{ChatMessage, ChatRole, CompleterModel, Completion, CompletionRequest};
 pub use contracts::{
