@@ -59,6 +59,42 @@ where
     fused
 }
 
+/// Cosine similarity of two equal-length vectors, in `[-1, 1]`; `0.0` for a length
+/// mismatch or a zero-norm vector.
+///
+/// Used to judge how relevant a skill's recorded failure mode is to the current problem:
+/// a bad pattern whose embedding is close to the query is a failure the agent is about to
+/// risk again. Stored and query embeddings are already unit-normalized, so this is a dot
+/// product in practice, but the full form keeps it correct for any input.
+pub(crate) fn cosine(a: &[f32], b: &[f32]) -> f64 {
+    if a.len() != b.len() {
+        return 0.0;
+    }
+    let mut dot = 0.0;
+    let mut norm_a = 0.0;
+    let mut norm_b = 0.0;
+    for (x, y) in a.iter().zip(b) {
+        let (x, y) = (f64::from(*x), f64::from(*y));
+        dot += x * y;
+        norm_a += x * x;
+        norm_b += y * y;
+    }
+    if norm_a == 0.0 || norm_b == 0.0 {
+        return 0.0;
+    }
+    dot / (norm_a.sqrt() * norm_b.sqrt())
+}
+
+/// The bad-pattern rank penalty: `1 / (1 + weight * count)`, in `(0, 1]`.
+///
+/// A skill with no query-relevant failure modes keeps its full score (`count = 0` → `1.0`);
+/// each relevant failure mode shrinks the score multiplicatively, bounded and monotonic, so a
+/// known-risky skill sinks below an equally-matched clean one without ever going negative. The
+/// `weight` knob sets how hard each relevant pattern bites.
+pub(crate) fn bad_pattern_penalty(weight: f64, count: usize) -> f64 {
+    1.0 / (1.0 + weight * count as f64)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -161,6 +197,38 @@ mod tests {
             60.0,
         );
         assert_eq!(forward, reversed);
+    }
+
+    #[test]
+    fn cosine_of_identical_unit_vectors_is_one() {
+        assert!((cosine(&[1.0, 0.0, 0.0, 0.0], &[1.0, 0.0, 0.0, 0.0]) - 1.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn cosine_of_orthogonal_vectors_is_zero() {
+        assert!(cosine(&[1.0, 0.0], &[0.0, 1.0]).abs() < 1e-12);
+    }
+
+    #[test]
+    fn cosine_handles_zero_norm_and_length_mismatch() {
+        assert_eq!(cosine(&[0.0, 0.0], &[1.0, 0.0]), 0.0);
+        assert_eq!(cosine(&[1.0, 0.0], &[1.0, 0.0, 0.0]), 0.0);
+    }
+
+    #[test]
+    fn bad_pattern_penalty_is_bounded_and_monotonic() {
+        assert!(
+            (bad_pattern_penalty(0.5, 0) - 1.0).abs() < 1e-12,
+            "no patterns, no penalty"
+        );
+        let one = bad_pattern_penalty(0.5, 1);
+        let two = bad_pattern_penalty(0.5, 2);
+        assert!((one - 1.0 / 1.5).abs() < 1e-12);
+        assert!(two < one && one < 1.0, "more relevant patterns bite harder");
+        assert!(
+            two > 0.0,
+            "the penalty never drives the score to or below zero"
+        );
     }
 
     #[test]

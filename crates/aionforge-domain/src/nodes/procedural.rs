@@ -94,9 +94,27 @@ pub struct RankedSkill {
     /// The reliability weight: the Beta-posterior mean of the skill's success rate, so an
     /// unproven skill sits at the neutral prior rather than at either extreme.
     pub reliability: f64,
-    /// The final rank score, `similarity * reliability`; the returned list is ordered by this,
-    /// descending.
+    /// The final rank score, `similarity * reliability * bad-pattern penalty`; the returned list
+    /// is ordered by this, descending.
     pub score: f64,
+    /// The skill's recorded failure modes (linked by `HAS_FAILURE`), each with how relevant it is
+    /// to the query, so a known failure is visible before reuse. Ordered by relevance, descending.
+    /// Empty when the skill has no recorded failures.
+    pub bad_patterns: Vec<RankedBadPattern>,
+}
+
+/// A skill's recorded failure mode surfaced alongside it in retrieval, with how relevant the
+/// failure is to the current problem (05; M3.T05).
+///
+/// Carries an f64 score, so it derives `PartialEq` only.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RankedBadPattern {
+    /// The failure-mode memory.
+    pub pattern: BadPattern,
+    /// Cosine similarity of the pattern's embedding to the query problem, in `[-1, 1]`; higher
+    /// means the current problem looks more like this past failure. `0.0` when the query could
+    /// not be embedded (the embedder was down), in which case the pattern still surfaces.
+    pub query_similarity: f64,
 }
 
 /// A negative procedural memory: a recorded failure mode to avoid (02 §4.5).

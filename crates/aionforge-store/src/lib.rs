@@ -9,6 +9,7 @@
 //! id types are re-exported here.
 
 mod audit;
+mod bad_pattern;
 mod catalog;
 mod config;
 mod consolidation;

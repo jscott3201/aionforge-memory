@@ -80,6 +80,17 @@ pub trait ProceduralMemory: Send + Sync {
         success: bool,
     ) -> impl Future<Output = Result<(), Self::Error>> + Send;
 
+    /// Record a failure against a skill *and* remember why: bump its failure counter and store a
+    /// linked [`BadPattern`](crate::nodes::procedural::BadPattern) describing the failure mode,
+    /// returning the pattern's id (05). The companion to [`Self::record_outcome`] for failures
+    /// worth remembering — a known failure mode resurfaces with the skill so it is visible before
+    /// reuse and weighs the skill down when the current problem looks like it.
+    fn record_failure(
+        &self,
+        skill_id: Id,
+        description: String,
+    ) -> impl Future<Output = Result<Id, Self::Error>> + Send;
+
     /// Retrieve the active skills whose stored problem best matches `problem`, reliability-
     /// weighted and best-first, at most `k` (05).
     ///

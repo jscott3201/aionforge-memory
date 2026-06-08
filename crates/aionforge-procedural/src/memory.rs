@@ -11,13 +11,13 @@ use std::collections::BTreeSet;
 use std::future::Future;
 use std::sync::Arc;
 
-use aionforge_domain::blocks::Identity;
+use aionforge_domain::blocks::{Identity, Stats};
 use aionforge_domain::contracts::{Embedder, ProceduralMemory};
 use aionforge_domain::embedding::Embedding;
 use aionforge_domain::ids::Id;
 use aionforge_domain::namespace::Namespace;
 use aionforge_domain::nodes::forensic::{AuditEvent, AuditKind};
-use aionforge_domain::nodes::procedural::{RankedSkill, Skill};
+use aionforge_domain::nodes::procedural::{BadPattern, RankedBadPattern, RankedSkill, Skill};
 use aionforge_domain::time::Timestamp;
 use aionforge_store::{NodeId, SearchKind, Store};
 
@@ -139,6 +139,55 @@ where
         Ok(())
     }
 
+    /// Record a failure against a skill and remember it as a linked bad pattern.
+    async fn run_record_failure(
+        &self,
+        skill_id: Id,
+        description: String,
+    ) -> Result<Id, ProceduralError> {
+        // Resolve the skill and fail closed if it is unknown.
+        let skill_node = self
+            .store
+            .skill_node_by_id(&skill_id)?
+            .ok_or_else(|| ProceduralError::NotFound(skill_id.to_string()))?;
+        let skill = self
+            .store
+            .skill_by_node_id(skill_node)?
+            .ok_or_else(|| ProceduralError::NotFound(skill_id.to_string()))?;
+
+        // Embed the failure description fail-closed: a pattern the vector index can never surface
+        // is a silent defect (mirrors save_skill). Then build the pattern, inheriting the skill's
+        // namespace so it is visible wherever the skill is.
+        let embedding = self.embed_problem(&description).await?;
+        let now = self.clock.now();
+        let pattern = BadPattern {
+            identity: Identity {
+                id: Id::generate(),
+                ingested_at: now.clone(),
+                namespace: skill.identity.namespace.clone(),
+                expired_at: None,
+            },
+            stats: Stats {
+                importance: 0.5,
+                trust: skill.stats.trust,
+                last_access: now.clone(),
+                access_count_recent: 0,
+                referenced_count: 0,
+                surprise: 0.0,
+                is_pinned: false,
+            },
+            description,
+            embedding: Some(embedding),
+            embedder_model: Some(self.embedder.model().clone()),
+            observed_at: now,
+        };
+        let pattern_id = pattern.identity.id.clone();
+        // One atomic L0 commit creates the pattern, wires HAS_FAILURE, and bumps the failure
+        // counter — recording a failure mode is a failure.
+        self.store.save_bad_pattern(&pattern, skill_node)?;
+        Ok(pattern_id)
+    }
+
     /// Retrieve active skills by problem match, reliability-weighted, best first.
     async fn run_retrieve(
         &self,
@@ -152,16 +201,20 @@ where
         // similar skill above an unproven top match.
         let pool = k.saturating_mul(self.config.candidate_multiplier).max(k);
 
-        // Vector signal over the problem embedding. Resilient: a down embedder falls back to the
-        // lexical signal alone — BM25 over the description is the recall floor (mirrors M2.T08).
-        let vector_nodes: Vec<NodeId> = match self.embed_problem(&problem).await {
-            Ok(query) => self
+        // Embed the problem once and reuse it for the vector signal and for judging how relevant
+        // each candidate's failure modes are. A down embedder leaves it `None`: retrieval degrades
+        // to the lexical signal (BM25 over the description, the recall floor, mirrors M2.T08) and
+        // the bad-pattern penalty is skipped — patterns still surface, just unranked.
+        let query_embedding = self.embed_problem(&problem).await.ok();
+
+        let vector_nodes: Vec<NodeId> = match &query_embedding {
+            Some(query) => self
                 .store
-                .vector_search_ann(SearchKind::Skill, &query, pool)?
+                .vector_search_ann(SearchKind::Skill, query, pool)?
                 .into_iter()
                 .map(|hit| hit.node)
                 .collect(),
-            Err(_) => Vec::new(),
+            None => Vec::new(),
         };
 
         // Lexical signal over the description.
@@ -186,7 +239,8 @@ where
             self.config.rrf_k,
         );
 
-        // Resolve to live, active skills, weight problem match by reliability, then rank.
+        // Resolve to live, active skills, weight problem match by reliability and a bad-pattern
+        // penalty, then rank.
         let mut ranked: Vec<RankedSkill> = Vec::new();
         for (node, similarity) in fused {
             let Some(skill) = self.store.skill_by_node_id(node)? else {
@@ -202,12 +256,23 @@ where
                 skill.success_count,
                 skill.failure_count,
             );
-            let score = similarity * reliability;
+            // Surface the skill's recorded failure modes, judged against the current problem; a
+            // failure mode that matches this problem weighs the skill down for this query. This
+            // runs for every pool candidate, not just the top `k`, because the penalty changes the
+            // score and so changes which candidates survive truncation — deferring it past
+            // `truncate` would let a query-risky skill keep a top slot. It is cheap in the common
+            // case: a skill with no failures has no outgoing edges, so the lookup early-returns.
+            let (bad_patterns, relevant_count) =
+                self.rank_bad_patterns(node, query_embedding.as_ref())?;
+            let penalty =
+                ranking::bad_pattern_penalty(self.config.bad_pattern_weight, relevant_count);
+            let score = similarity * reliability * penalty;
             ranked.push(RankedSkill {
                 skill,
                 similarity,
                 reliability,
                 score,
+                bad_patterns,
             });
         }
         // Final score descending; skill id ascending breaks ties for a deterministic order.
@@ -234,6 +299,46 @@ where
             .next()
             .ok_or_else(|| ProceduralError::Embed("the embedder returned no vector".to_string()))?;
         Ok(vector.normalized())
+    }
+
+    /// Fetch a skill's recorded failure modes, scored against the query, returning them ordered by
+    /// relevance plus the count that clears the relevance threshold (the penalty's input).
+    ///
+    /// When `query` is `None` (the embedder was down) every similarity is `0.0`, so the patterns
+    /// still surface but none count as relevant and the penalty is a no-op.
+    fn rank_bad_patterns(
+        &self,
+        skill: NodeId,
+        query: Option<&Embedding>,
+    ) -> Result<(Vec<RankedBadPattern>, usize), ProceduralError> {
+        let mut ranked: Vec<RankedBadPattern> = self
+            .store
+            .bad_patterns_for_skill(skill)?
+            .into_iter()
+            .map(|pattern| {
+                let query_similarity = match (query, pattern.embedding.as_ref()) {
+                    (Some(q), Some(embedding)) => {
+                        ranking::cosine(q.as_slice(), embedding.as_slice())
+                    }
+                    _ => 0.0,
+                };
+                RankedBadPattern {
+                    pattern,
+                    query_similarity,
+                }
+            })
+            .collect();
+        // Most query-relevant first; pattern id breaks ties for a deterministic order.
+        ranked.sort_by(|a, b| {
+            b.query_similarity
+                .total_cmp(&a.query_similarity)
+                .then(a.pattern.identity.id.cmp(&b.pattern.identity.id))
+        });
+        let relevant = ranked
+            .iter()
+            .filter(|r| r.query_similarity >= self.config.bad_pattern_similarity_threshold)
+            .count();
+        Ok((ranked, relevant))
     }
 
     /// The audit set for a save: always a `SkillSave`, plus a `SkillDeprecate` and a
@@ -327,6 +432,14 @@ where
         success: bool,
     ) -> impl Future<Output = Result<(), Self::Error>> + Send {
         self.run_record(skill_id, success)
+    }
+
+    fn record_failure(
+        &self,
+        skill_id: Id,
+        description: String,
+    ) -> impl Future<Output = Result<Id, Self::Error>> + Send {
+        self.run_record_failure(skill_id, description)
     }
 
     fn retrieve_skills(

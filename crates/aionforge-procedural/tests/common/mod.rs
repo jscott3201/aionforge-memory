@@ -205,11 +205,14 @@ pub fn service(
     store: Arc<Store>,
     embedder: FakeEmbedder,
 ) -> ProceduralMemoryService<FakeEmbedder, FixedClock> {
-    ProceduralMemoryService::with_clock(
-        store,
-        embedder,
-        Id::generate(),
-        ProceduralConfig::default(),
-        fixed_clock(),
-    )
+    service_with(store, embedder, ProceduralConfig::default())
+}
+
+/// A service with an explicit config (for the bad-pattern penalty/threshold knob tests).
+pub fn service_with(
+    store: Arc<Store>,
+    embedder: FakeEmbedder,
+    config: ProceduralConfig,
+) -> ProceduralMemoryService<FakeEmbedder, FixedClock> {
+    ProceduralMemoryService::with_clock(store, embedder, Id::generate(), config, fixed_clock())
 }
