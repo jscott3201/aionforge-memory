@@ -8,7 +8,8 @@
 //! recall security contract (the `recalled-memory-context` wrapper and `tag_escape` on
 //! every snippet, 07 §4) is applied in one place and never re-derived here. Captures
 //! arrive untrusted, so they are confined to the writer's private namespace, and a
-//! search is authorized against the caller-supplied viewer namespace.
+//! search is authorized against the caller-supplied viewer namespace plus the teams the
+//! host asserts for that reader.
 
 use aionforge_domain::contracts::Embedder;
 use aionforge_domain::ids::Id;
@@ -66,11 +67,19 @@ pub struct SearchToolParams {
     #[schemars(description = "The natural-language query.")]
     pub query: String,
     /// The reading agent's namespace, `agent:<id>`. The recall is scoped to this agent's
-    /// visible set: the global space and its own private namespace.
+    /// visible set: the global space, its own private namespace, and any teams it declares.
     #[schemars(
         description = "The reading agent's namespace, agent:<id>. Recall is scoped to its visible set."
     )]
     pub viewer: String,
+    /// The teams the host asserts this reader belongs to. Recall widens to each team's shared
+    /// namespace; omit (or leave empty) for a reader that sees only the global space and its own
+    /// private namespace. Host-asserted: the calling host is the team-membership authority (06 §1).
+    #[serde(default)]
+    #[schemars(
+        description = "Teams the host asserts this reader belongs to; recall widens to each team's shared namespace. Optional."
+    )]
+    pub teams: Vec<String>,
     /// The maximum number of hits to return (default 10, max 100).
     #[schemars(description = "Maximum hits to return (default 10, max 100).")]
     pub limit: Option<usize>,
@@ -107,8 +116,10 @@ pub async fn capture_tool<E: Embedder>(
         content: params.content,
         role,
         agent_id,
-        // Team membership from the MCP request context is wired in M4.T01 PR-E; for now an MCP
-        // write is confined to the agent's own private namespace.
+        // An MCP capture is structurally untrusted (`trusted: false` below), so the write is
+        // confined to the writer's own private namespace regardless of team membership (04 §1,
+        // 06 §1). A team-targeted write is unreachable from this surface, so the principal's
+        // teams are intentionally empty here — they could not change the write target.
         teams: Vec::new(),
         session_id,
         captured_at,
@@ -144,8 +155,8 @@ pub async fn search_tool<E: Embedder>(
     params: SearchToolParams,
 ) -> Result<String, String> {
     // A reader is an agent: recall scopes to the global space, the reader's own private
-    // namespace, and (M4.T01 PR-E, from the request context) its teams. A non-agent viewer
-    // has no reader identity, so it is rejected rather than silently widened.
+    // namespace, and the teams the host asserts. A non-agent viewer has no reader identity,
+    // so it is rejected rather than silently widened.
     let viewer: Namespace = params
         .viewer
         .parse()
@@ -155,9 +166,11 @@ pub async fn search_tool<E: Embedder>(
     };
     let agent = Id::parse(&agent_id)
         .map_err(|_| "ERR_INVALID_VIEWER: viewer agent id must be a UUID".to_string())?;
-    // Team membership from the MCP request context is wired in M4.T01 PR-E; for now a reader
-    // sees only the global space and its own private namespace.
-    let principal = Principal::agent(agent);
+    // The host asserts the reader's team membership (the caller-asserted trust boundary, 06 §1);
+    // those teams widen the visible set to each team's shared namespace. With no teams the reader
+    // is scoped to the global space and its own private namespace. `Principal::new` drops any
+    // empty team name.
+    let principal = Principal::new(agent, params.teams);
     let limit = params.limit.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT);
     let verbose = params.verbose.unwrap_or(false);
 

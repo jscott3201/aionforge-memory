@@ -146,6 +146,7 @@ async fn search_tool_returns_compact_hits() {
         SearchToolParams {
             query: "graph databases".to_string(),
             viewer: format!("agent:{agent}"),
+            teams: Vec::new(),
             limit: None,
             verbose: None,
         },
@@ -189,6 +190,7 @@ async fn search_tool_escapes_tag_breakout_in_snippets() {
         SearchToolParams {
             query: "graph".to_string(),
             viewer: format!("agent:{agent}"),
+            teams: Vec::new(),
             limit: None,
             verbose: None,
         },
@@ -227,6 +229,7 @@ async fn search_tool_enforces_namespace_authorization() {
         SearchToolParams {
             query: "secret".to_string(),
             viewer: format!("agent:{alice}"),
+            teams: Vec::new(),
             limit: None,
             verbose: None,
         },
@@ -242,6 +245,7 @@ async fn search_tool_enforces_namespace_authorization() {
         SearchToolParams {
             query: "secret".to_string(),
             viewer: format!("agent:{bob}"),
+            teams: Vec::new(),
             limit: None,
             verbose: None,
         },
@@ -251,6 +255,76 @@ async fn search_tool_enforces_namespace_authorization() {
     assert!(
         other.starts_with("hits: 0 "),
         "bob must not see alice's private: {other}"
+    );
+}
+
+#[tokio::test]
+async fn search_tool_widens_to_a_team_only_when_the_host_asserts_membership() {
+    use aionforge_domain::namespace::Namespace;
+    use aionforge_domain::nodes::episodic::Role;
+    use aionforge_engine::{CaptureRequest, WriterContext};
+
+    let memory = memory();
+    // Land a memory in the "squad" team's shared namespace. The MCP capture tool cannot do
+    // this (its writes are untrusted and confined to private), so drive the engine seam with
+    // a trusted, team-targeted write — the author is a squad member, so the write is allowed.
+    let author = Id::generate();
+    memory
+        .capture(CaptureRequest {
+            content: "the squad roadmap".to_string(),
+            role: Role::User,
+            agent_id: author,
+            teams: vec!["squad".to_string()],
+            session_id: None,
+            captured_at: now(),
+            writer: WriterContext {
+                model_family: "test".to_string(),
+                model_version: None,
+                transport: None,
+                request_id: None,
+                trust: 0.9,
+            },
+            trusted: true,
+            namespace: Some(Namespace::Team("squad".to_string())),
+        })
+        .await
+        .expect("trusted team capture");
+
+    // A reader the host does not place in the squad sees nothing in the team namespace.
+    let reader = Id::generate();
+    let without = search_tool(
+        &memory,
+        SearchToolParams {
+            query: "roadmap".to_string(),
+            viewer: format!("agent:{reader}"),
+            teams: Vec::new(),
+            limit: None,
+            verbose: None,
+        },
+    )
+    .await
+    .expect("search without team");
+    assert!(
+        without.starts_with("hits: 0 "),
+        "a non-member must not see the team namespace: {without}"
+    );
+
+    // The same reader, with the host asserting squad membership, now sees it.
+    let with = search_tool(
+        &memory,
+        SearchToolParams {
+            query: "roadmap".to_string(),
+            viewer: format!("agent:{reader}"),
+            teams: vec!["squad".to_string()],
+            limit: None,
+            verbose: None,
+        },
+    )
+    .await
+    .expect("search with team");
+    assert!(
+        with.starts_with("hits: 1 "),
+        "a host-asserted member sees the team namespace: {with}"
     );
 }
 
@@ -271,6 +345,7 @@ async fn search_tool_verbose_adds_per_hit_detail() {
         SearchToolParams {
             query: "graph".to_string(),
             viewer: format!("agent:{agent}"),
+            teams: Vec::new(),
             limit: None,
             verbose: Some(true),
         },
@@ -339,6 +414,7 @@ async fn search_tool_rejects_a_bad_viewer() {
         SearchToolParams {
             query: "x".to_string(),
             viewer: "not a namespace".to_string(),
+            teams: Vec::new(),
             limit: None,
             verbose: None,
         },
