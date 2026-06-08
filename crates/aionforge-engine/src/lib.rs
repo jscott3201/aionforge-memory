@@ -15,9 +15,11 @@
 use std::sync::Arc;
 
 use aionforge_capture::Capturer;
-use aionforge_consolidate::{Consolidator, Distiller, FactExtractionPass, SkillInductionPass};
+use aionforge_consolidate::{
+    Consolidator, Distiller, FactExtractionPass, LinkEvolvePass, SkillInductionPass,
+};
 use aionforge_domain::contracts::{
-    Capture, Embedder, FactExtractor, Retriever, SkillInducer, Summarizer,
+    Capture, Embedder, FactExtractor, LinkEvolver, Retriever, SkillInducer, Summarizer,
 };
 use aionforge_domain::namespace::Namespace;
 use aionforge_domain::time::Timestamp;
@@ -30,8 +32,10 @@ pub use aionforge_capture::{
 pub use aionforge_consolidate::{
     ConsolidationConfig, ConsolidationHandle, ConsolidationLag, DISTILL_RULE_VERSION,
     DetectionConfig, DistillError, DistillationConfig, DistillationReport, InductionConfig,
-    LLMSummarizer, ObjectRule, PassConfig, PredicateRule, ResolutionConfig, Rule, RuleExtractor,
-    RuleInducer, RuleSummarizer, SummarizationConfig,
+    LINK_EVOLVE_RULE_VERSION, LLMLinkEvolver, LLMSummarizer, LinkEvolveConfig, LinkEvolveError,
+    LinkEvolveReport, ObjectRule, PassConfig, PredicateRule, RELATIONSHIP_VOCABULARY,
+    RULE_LINK_EVOLVE_VERSION, ResolutionConfig, Rule, RuleExtractor, RuleInducer, RuleLinkEvolver,
+    RuleSummarizer, SummarizationConfig,
 };
 pub use aionforge_retrieval::{
     EpisodeEntry, FactEntry, QueryClass, RecallBundle, RecallExplanation, RecallOptions,
@@ -238,6 +242,37 @@ impl<E: Embedder + 'static> Memory<E> {
         let report = distiller.distill(&self.store, namespace, now).await?;
         Ok(report)
     }
+
+    /// Evolve the live notes of one namespace into non-canonical `RELATES_TO` links with the
+    /// injected [`LinkEvolver`], off the consolidation cursor (M3.T09).
+    ///
+    /// A no-op (empty report) unless `config.enabled` is set. A slow or unavailable model degrades
+    /// to the deterministic rule tier — each such call is recorded and writes no edge — so link
+    /// evolution can never stall or corrupt the cursor. Unlike [`Self::distill`] this needs no
+    /// embedder: the evolver scores the notes' already-stored embeddings. `now` is supplied by the
+    /// caller; the facade keeps no ambient clock, so link transaction time is deterministic.
+    ///
+    /// The caller is responsible for populating `config.endpoint` and `config.seed` from the same
+    /// completer configuration that built `evolver` — they are recorded in each call's provenance
+    /// audit (the `LinkEvolver` seam does not expose them), never used to drive behavior.
+    ///
+    /// # Errors
+    /// Returns [`EngineError::LinkEvolution`] if a store read or the final write fails. A model that
+    /// is unavailable or returns nothing usable is not an error.
+    pub async fn evolve_links<Lv>(
+        &self,
+        evolver: Lv,
+        namespace: &Namespace,
+        config: LinkEvolveConfig,
+        now: &Timestamp,
+    ) -> Result<LinkEvolveReport, EngineError>
+    where
+        Lv: LinkEvolver,
+    {
+        let pass = LinkEvolvePass::new(evolver, config);
+        let report = pass.evolve_links(&self.store, namespace, now).await?;
+        Ok(report)
+    }
 }
 
 /// An error from the memory facade.
@@ -259,6 +294,10 @@ pub enum EngineError {
     /// The optional off-cursor LLM distiller failed (a store read, embedding, or the write).
     #[error("distillation failed")]
     Distillation(#[from] DistillError),
+
+    /// The optional off-cursor LLM link evolver failed (a store read or the write).
+    #[error("link evolution failed")]
+    LinkEvolution(#[from] LinkEvolveError),
 
     /// The default capture privacy filter could not be built.
     #[error("could not initialize the capture filter: {0}")]

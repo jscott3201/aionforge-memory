@@ -18,6 +18,7 @@ use std::future::Future;
 use crate::completion::{CompleterModel, Completion, CompletionRequest};
 use crate::embedding::{EmbedderModel, Embedding};
 use crate::ids::Id;
+use crate::nodes::associative::Note;
 use crate::nodes::episodic::{Episode, Redaction};
 use crate::nodes::procedural::{RankedSkill, Skill};
 use crate::nodes::semantic::{Fact, SourceSpan};
@@ -512,6 +513,80 @@ impl<I: SkillInducer + ?Sized> SkillInducer for std::sync::Arc<I> {
     }
 
     fn identity(&self) -> &InducerIdentity {
+        (**self).identity()
+    }
+}
+
+/// The identity of the link-evolver that drew or revised a note link (M3.T09).
+///
+/// Mirrors [`SummarizerIdentity`]: recorded in every `link_evolve` audit so a later cross-family
+/// guard can tell which model family (or rule set) proposed a relationship, and so the
+/// deterministic rule evolver attributes its calls to a stable actor across runs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LinkEvolverIdentity {
+    /// Evolver model family, if model-backed (`None` for a pure rule evolver).
+    pub model_family: Option<String>,
+    /// Evolver model version, if model-backed.
+    pub model_version: Option<String>,
+    /// Version of the link-evolution rule set that proposed the link.
+    pub rule_version: String,
+}
+
+/// One relationship a [`LinkEvolver`] proposes from the source note to a candidate (M3.T09).
+///
+/// The `target_id` must be one of the candidate notes the evolver was offered — the driver drops
+/// a proposal that points anywhere else. `relationship_label` must be in the closed vocabulary
+/// (never free text, an anti-injection / anti-drift constraint); the driver re-validates it.
+/// `confidence` is the evolver's strength in `[0, 1]`; the driver drops proposals below its floor.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EvolvedLink {
+    /// The candidate note this link points to (must be one of the offered candidates).
+    pub target_id: Id,
+    /// The relationship label, from the closed vocabulary (the driver re-validates).
+    pub relationship_label: String,
+    /// Confidence in `[0, 1]`; below the driver's floor the proposal is dropped.
+    pub confidence: f64,
+}
+
+/// The note-link-evolution seam (M3.T09): propose relationships from one source note to a bounded
+/// set of nearby candidate notes, off by default and off the consolidation cursor.
+///
+/// Conservative by contract: `evolve` returns `None` to decline a source note it cannot evaluate
+/// (the model is unavailable, the reply is unusable), so the driver records the call and writes no
+/// edge — degrading to the deterministic rule tier rather than failing. An `Ok(Some(_))` with an
+/// empty vector means the evolver ran and found no relationship worth drawing. The driver owns all
+/// id, bi-temporal, and cascade-guard policy (which candidates to offer, the confidence floor, the
+/// per-run caps, create-vs-revise); the evolver only judges relatedness, exactly as the
+/// [`Summarizer`] only condenses and the note id stays the pass's policy.
+pub trait LinkEvolver: Send + Sync {
+    /// The typed error this seam surfaces.
+    type Error: std::error::Error + Send + Sync + 'static;
+
+    /// Propose relationships from `source` to any of `candidates`, or `None` to decline.
+    fn evolve(
+        &self,
+        source: &Note,
+        candidates: &[Note],
+    ) -> impl Future<Output = Result<Option<Vec<EvolvedLink>>, Self::Error>> + Send;
+
+    /// The identity recorded into every proposed link's provenance.
+    fn identity(&self) -> &LinkEvolverIdentity;
+}
+
+/// A shared evolver is itself an evolver (mirrors the [`Summarizer`] forwarding), so one instance
+/// can back the off-cursor driver without being cloned.
+impl<L: LinkEvolver + ?Sized> LinkEvolver for std::sync::Arc<L> {
+    type Error = L::Error;
+
+    fn evolve(
+        &self,
+        source: &Note,
+        candidates: &[Note],
+    ) -> impl Future<Output = Result<Option<Vec<EvolvedLink>>, Self::Error>> + Send {
+        (**self).evolve(source, candidates)
+    }
+
+    fn identity(&self) -> &LinkEvolverIdentity {
         (**self).identity()
     }
 }
