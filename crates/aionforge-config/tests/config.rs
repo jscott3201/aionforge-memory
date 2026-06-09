@@ -197,6 +197,103 @@ fn signed_writes_bound_the_clock_skew_tolerance() {
 }
 
 #[test]
+fn promotion_gates_are_validated_only_when_enabled() {
+    use aionforge_config::CategoryPromotionRule;
+
+    // Off by default: a nonsense quorum and threshold are inert and never validated.
+    let mut config = Config::default();
+    config.promotion.enabled = false;
+    config.promotion.default_k = 1;
+    config.promotion.default_threshold = 0.0;
+    config
+        .validate()
+        .expect("an off promotion policy ignores its gates");
+
+    // On: a quorum of one is not a quorum.
+    let mut config = Config::default();
+    config.promotion.enabled = true;
+    config.promotion.default_k = 1;
+    assert!(
+        matches!(config.validate(), Err(ConfigError::Invalid { key, .. }) if key == "promotion.default_k"),
+        "a quorum of one is rejected"
+    );
+
+    // On: a threshold at or below 0.5 lets the uninformative prior alone clear it.
+    let mut config = Config::default();
+    config.promotion.enabled = true;
+    config.promotion.default_threshold = 0.5;
+    assert!(
+        matches!(config.validate(), Err(ConfigError::Invalid { key, .. }) if key == "promotion.default_threshold"),
+        "a threshold at 0.5 is rejected"
+    );
+
+    // On: a threshold above 1.0 is unreachable and would lock promotion shut.
+    let mut config = Config::default();
+    config.promotion.enabled = true;
+    config.promotion.default_threshold = 1.0001;
+    assert!(
+        matches!(config.validate(), Err(ConfigError::Invalid { key, .. }) if key == "promotion.default_threshold"),
+        "a threshold above 1.0 is rejected"
+    );
+
+    // On: a NaN threshold fails every ordered comparison and is rejected.
+    let mut config = Config::default();
+    config.promotion.enabled = true;
+    config.promotion.default_threshold = f64::NAN;
+    assert!(
+        matches!(config.validate(), Err(ConfigError::Invalid { key, .. }) if key == "promotion.default_threshold"),
+        "a NaN threshold is rejected"
+    );
+
+    // On: a non-positive Beta prior is rejected.
+    let mut config = Config::default();
+    config.promotion.enabled = true;
+    config.promotion.prior_alpha = 0.0;
+    assert!(
+        matches!(config.validate(), Err(ConfigError::Invalid { key, .. }) if key == "promotion.prior_alpha"),
+        "a zero prior is rejected"
+    );
+
+    // On: an empty default category leaves no bucket for uncategorized attestations.
+    let mut config = Config::default();
+    config.promotion.enabled = true;
+    config.promotion.default_category = "  ".to_string();
+    assert!(
+        matches!(config.validate(), Err(ConfigError::Missing(key)) if key == "promotion.default_category"),
+        "an empty default category is rejected"
+    );
+
+    // On: a per-category override is held to the same bounds, naming the category.
+    let mut config = Config::default();
+    config.promotion.enabled = true;
+    config.promotion.categories.insert(
+        "pii".to_string(),
+        CategoryPromotionRule {
+            k: 5,
+            threshold: 1.5,
+        },
+    );
+    assert!(
+        matches!(config.validate(), Err(ConfigError::Invalid { key, .. }) if key == "promotion.categories.pii.threshold"),
+        "a bad per-category threshold is rejected and names the category"
+    );
+
+    // On: sensible higher-k, higher-threshold sensitive overrides validate.
+    let mut config = Config::default();
+    config.promotion.enabled = true;
+    config.promotion.categories.insert(
+        "pii".to_string(),
+        CategoryPromotionRule {
+            k: 5,
+            threshold: 0.99,
+        },
+    );
+    config
+        .validate()
+        .expect("a stricter sensitive-category override is valid");
+}
+
+#[test]
 fn plain_http_is_rejected_unless_loopback() {
     let allowed = [
         "http://localhost:1234/v1",

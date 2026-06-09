@@ -54,8 +54,9 @@ const SCALAR_INDEXES: &[(&str, &str, TypedIndexKind)] = &[
     ("Fact", "predicate", TypedIndexKind::String),
     ("Fact", "status", TypedIndexKind::String),
     ("Fact", "object_entity_id", TypedIndexKind::Uuid),
-    // `id` is indexed on `Episode`, `Entity`, `Note`, `AuditEvent`, `Skill`, and `Agent` (not on
-    // every kind). Consolidation resolves an already-canonical subject entity's `NodeId` by its
+    ("Fact", "id", TypedIndexKind::Uuid),
+    // `id` is indexed on `Episode`, `Entity`, `Fact`, `Note`, `AuditEvent`, `Skill`, and `Agent`
+    // (not on every kind). Consolidation resolves an already-canonical subject entity's `NodeId` by its
     // domain id inside the flip txn when it wires the `ABOUT`/`MENTIONS` edges (M2.T04); it dedups
     // a content-addressed summary `Note` by id so replaying an episode never writes a second copy
     // (M2.T06); and it dedups a content-addressed `AuditEvent` by id for the same replay reason
@@ -70,8 +71,14 @@ const SCALAR_INDEXES: &[(&str, &str, TypedIndexKind)] = &[
     // (read as "absent") without an index, so the pre-check would silently no-op without it.
     // (Episode-id uniqueness itself is guaranteed by the `Episode.id UNIQUE` DDL at commit; the
     // index is what lets the pre-check reject a reused id cleanly, with an audit and without a
-    // wasted embed, before the commit would fail.) Other kinds are reached by node id directly,
-    // so they need no id index.
+    // wasted embed, before the commit would fail.) `Fact` is addressed by domain id by quorum
+    // promotion (06 §4, M4.T04): a promoted global copy takes a content-addressed,
+    // namespace-leading id (`global|{team_fact_id}|promoted`), and `promote_fact` probes that id
+    // (`fact_node_by_id`) to stay idempotent — on a replay it finds the existing global node and
+    // writes no second one. As with `Episode`, the `Fact.id UNIQUE` DDL is the commit-time
+    // backstop and `nodes_with_property_eq` returns `None` (read as "absent") without an index, so
+    // the probe needs the index to mean anything. Other kinds are reached by node id directly, so
+    // they need no id index.
     ("Entity", "id", TypedIndexKind::Uuid),
     ("Entity", "canonical_name", TypedIndexKind::String),
     ("Entity", "type", TypedIndexKind::String),

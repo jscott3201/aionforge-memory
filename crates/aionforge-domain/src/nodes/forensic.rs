@@ -143,8 +143,10 @@ impl AuditEvent {
 
 /// The resolution status of a promotion candidate (02 §4.12).
 ///
-/// Serialized in `snake_case`. Defaults to [`PromotionStatus::Pending`], the state
-/// a ledger entry is created in (the storage layer applies the DB `DEFAULT`).
+/// Serialized in `snake_case`. [`Default`] is [`PromotionStatus::Pending`], the state a
+/// candidate sits in before quorum is reached. The substrate writes the ledger row only on a
+/// terminal transition (`promoted` or `rejected`), each with an explicit status — there is no
+/// DB `DEFAULT`, so a row is never persisted with an implicit one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PromotionStatus {

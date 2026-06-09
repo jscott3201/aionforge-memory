@@ -56,14 +56,15 @@ fn migration_registers_all_native_indexes() {
     // §8: BM25 text indexes over the five content surfaces.
     assert_eq!(store.text_indexes().len(), 5, "text index count");
 
-    // §8 + §11: scalar property indexes — namespace on every kind (17) plus the 29 per-kind
+    // §8 + §11: scalar property indexes — namespace on every kind (17) plus the 30 per-kind
     // INDEXED entries in SCALAR_INDEXES (which include Entity.id, Note.id, AuditEvent.id for
     // consolidation resolution and audit dedup, Skill.id for the by-domain-id procedural
-    // lookups, Agent.id for provenance key resolution, and Episode.id for the signed-write
-    // collision pre-check, M4.T03) = 46.
+    // lookups, Agent.id for provenance key resolution, Episode.id for the signed-write
+    // collision pre-check (M4.T03), and Fact.id for the quorum-promotion global-copy
+    // idempotency probe (M4.T04)) = 47.
     assert_eq!(
         store.property_indexes().len(),
-        46,
+        47,
         "scalar property index count"
     );
 

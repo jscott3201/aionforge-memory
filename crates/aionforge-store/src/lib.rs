@@ -9,6 +9,7 @@
 //! id types are re-exported here.
 
 mod agent;
+mod attestation;
 mod audit;
 mod bad_pattern;
 mod capture_write;
@@ -28,6 +29,7 @@ mod indexes;
 mod materialize;
 mod migrate;
 mod note;
+mod promotion;
 mod provenance;
 mod providers;
 mod relates_to;
@@ -37,6 +39,7 @@ mod skill;
 mod skill_induction;
 mod store;
 
+pub use attestation::{AttestWriteIds, AttesterRecord};
 pub use capture_write::CaptureWriteIds;
 pub use catalog::SCHEMA_VERSION;
 pub use config::{DEFAULT_EMBEDDING_DIMENSION, StoreConfig, default_data_dir};
@@ -50,6 +53,7 @@ pub use materialize::{
 };
 pub use migrate::{MigrationPlan, MigrationReport, PendingChange};
 pub use note::MaterializedNote;
+pub use promotion::PromoteWriteIds;
 pub use providers::CandidateStateInfo;
 pub use relates_to::{LinkEdgeWrite, RelatesToLink};
 pub use schema::{EdgeTypeShape, NodeTypeShape, PropertyKind, PropertyShape, SchemaSnapshot};

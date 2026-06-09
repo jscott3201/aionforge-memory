@@ -36,6 +36,7 @@ pub mod namespace;
 pub mod nodes;
 pub mod signing;
 pub mod time;
+pub mod trust;
 pub mod value;
 pub mod verify;
 

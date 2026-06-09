@@ -1,5 +1,6 @@
 //! The configuration tree and its defaults, validation, and derived views.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use aionforge_store::{DEFAULT_EMBEDDING_DIMENSION, StoreConfig, default_data_dir};
@@ -31,7 +32,12 @@ const MAX_CLOCK_SKEW_TOLERANCE_MS: u64 = 300_000;
 /// usable config. No field holds a secret value: the embedder names the environment
 /// variable that holds its API key rather than carrying the key, so logging a `Config`
 /// never leaks one.
-#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// `Config` derives `PartialEq` but not `Eq`: [`PromotionConfig`] carries real-valued
+/// thresholds and Beta priors (`f64`), which are not `Eq`. Nothing depends on a total
+/// equality over a config, so the honest real-valued model is kept rather than encoding
+/// the probabilities as integers.
+#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
     /// On-disk state: where the WAL, snapshots, and logs live.
@@ -45,6 +51,9 @@ pub struct Config {
     pub retrieval: RetrievalConfig,
     /// Security posture toggles.
     pub security: SecurityConfig,
+    /// Quorum-promotion posture: the attestation count, posterior threshold, and Beta
+    /// priors that gate a team fact's promotion to global (06 §4). Off by default.
+    pub promotion: PromotionConfig,
 }
 
 /// On-disk state configuration.
@@ -188,6 +197,67 @@ impl Default for SecurityConfig {
             redaction: true,
         }
     }
+}
+
+/// Quorum-promotion posture (06 §4): when a team fact accumulates enough independent,
+/// signed attestations and a high enough reliability-weighted posterior, it promotes to
+/// the `global` namespace.
+///
+/// Off by default — a single-team or development deployment never promotes, with no
+/// overhead. Turning it on is a deliberate production decision. The `k` count and the
+/// posterior `threshold` are the two gates (both must clear); sensitive categories raise
+/// both via [`categories`](PromotionConfig::categories). The `prior_*` fields seed the
+/// Beta posterior over "this fact is correct"; the default Beta(1, 1) is uninformative.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PromotionConfig {
+    /// Whether quorum promotion runs at all. Off by default; when off, attestations are
+    /// still recorded but no fact is ever promoted.
+    pub enabled: bool,
+    /// The number of distinct, independent attesters required before a candidate is even
+    /// considered. A quorum of one is not a quorum, so this is validated `>= 2`.
+    pub default_k: u64,
+    /// The posterior bar a candidate must clear to promote, in `(0.5, 1.0]`. At or below
+    /// `0.5` the uninformative prior alone could clear it; above `1.0` is unreachable.
+    pub default_threshold: f64,
+    /// The Beta prior's `alpha` (pseudo-count of correctness) over a candidate. Default
+    /// `1.0`. Validated `> 0`.
+    pub prior_alpha: f64,
+    /// The Beta prior's `beta` (pseudo-count of incorrectness). Default `1.0`. Validated
+    /// `> 0`.
+    pub prior_beta: f64,
+    /// The category bucket an attestation with no explicit category falls into, used for
+    /// the per-category `k`/threshold lookup and the per-attester reliability read.
+    pub default_category: String,
+    /// Per-category overrides. A sensitive category (e.g. `pii`) raises `k` and the
+    /// threshold above the defaults. Empty by default; a `BTreeMap` keeps the rendered key
+    /// order canonical. When a candidate's attestations span several categories, the
+    /// strictest applicable rule governs.
+    pub categories: BTreeMap<String, CategoryPromotionRule>,
+}
+
+impl Default for PromotionConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            default_k: 3,
+            default_threshold: 0.95,
+            prior_alpha: 1.0,
+            prior_beta: 1.0,
+            default_category: "reliability".to_owned(),
+            categories: BTreeMap::new(),
+        }
+    }
+}
+
+/// A per-category promotion override (06 §4): a stricter `k` and posterior `threshold`
+/// for a named trust category.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CategoryPromotionRule {
+    /// The required distinct-attester count for this category. Validated `>= 2`.
+    pub k: u64,
+    /// The posterior bar for this category, in `(0.5, 1.0]`.
+    pub threshold: f64,
 }
 
 impl Config {
@@ -375,8 +445,65 @@ impl Config {
                 ));
             }
         }
+        if self.promotion.enabled {
+            validate_promotion_rule(
+                "promotion.default_k",
+                "promotion.default_threshold",
+                self.promotion.default_k,
+                self.promotion.default_threshold,
+            )?;
+            if !self.promotion.prior_alpha.is_finite() || self.promotion.prior_alpha <= 0.0 {
+                return Err(ConfigError::invalid(
+                    "promotion.prior_alpha",
+                    "must be a finite value greater than zero",
+                ));
+            }
+            if !self.promotion.prior_beta.is_finite() || self.promotion.prior_beta <= 0.0 {
+                return Err(ConfigError::invalid(
+                    "promotion.prior_beta",
+                    "must be a finite value greater than zero",
+                ));
+            }
+            if self.promotion.default_category.trim().is_empty() {
+                return Err(ConfigError::missing("promotion.default_category"));
+            }
+            for (category, rule) in &self.promotion.categories {
+                validate_promotion_rule(
+                    &format!("promotion.categories.{category}.k"),
+                    &format!("promotion.categories.{category}.threshold"),
+                    rule.k,
+                    rule.threshold,
+                )?;
+            }
+        }
         Ok(())
     }
+}
+
+/// Validate one `(k, threshold)` promotion gate: `k >= 2` (a quorum of one is not a
+/// quorum and reopens single-attester laundering) and `0.5 < threshold <= 1.0` (at or
+/// below `0.5` the uninformative prior alone could clear it; above `1.0` is unreachable
+/// for a bounded posterior, so it would lock the category shut). The `!(… )` form also
+/// rejects a `NaN` threshold, which fails every ordered comparison.
+fn validate_promotion_rule(
+    k_key: &str,
+    threshold_key: &str,
+    k: u64,
+    threshold: f64,
+) -> Result<(), ConfigError> {
+    if k < 2 {
+        return Err(ConfigError::invalid(
+            k_key.to_owned(),
+            "must be at least 2 (a quorum of one is not a quorum)",
+        ));
+    }
+    if !(threshold > 0.5 && threshold <= 1.0) {
+        return Err(ConfigError::invalid(
+            threshold_key.to_owned(),
+            "must be in the range (0.5, 1.0]",
+        ));
+    }
+    Ok(())
 }
 
 /// Whether an inference endpoint's transport is allowed (§8.4): `https://` anywhere, or
