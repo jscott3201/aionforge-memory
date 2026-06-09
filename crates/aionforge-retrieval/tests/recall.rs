@@ -559,10 +559,11 @@ async fn an_unavailable_embedder_degrades_to_lexical() {
         !bundle.explanation.embedder_available,
         "explanation flags the outage"
     );
-    assert_eq!(
+    assert!(
+        bundle.explanation.signals_run.contains(&Signal::Lexical)
+            && !bundle.explanation.signals_run.contains(&Signal::Dense),
+        "dense dropped out; lexical (and the trust re-rank over its results) carry the recall: {:?}",
         bundle.explanation.signals_run,
-        vec![Signal::Lexical],
-        "dense dropped out"
     );
     assert!(
         !bundle.structured.is_empty(),

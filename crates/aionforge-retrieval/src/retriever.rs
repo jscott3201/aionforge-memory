@@ -11,7 +11,7 @@
 //! and graph signals are gated to the classes the router enables expansion for (03 §3). The
 //! recency and trust signals land with their tasks.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::future::Future;
 use std::sync::Arc;
 use std::time::Instant;
@@ -36,8 +36,8 @@ use crate::precision::{derive_graph_seed, resolve_seed_entities};
 use crate::query::{RecallQuery, TemporalMode};
 use crate::router::{profile_for, route};
 use crate::signals::{
-    Signal, SignalRanking, dense_ranking_for, embed_query, graph_ranking_for, lexical_ranking,
-    ranking_from_hits,
+    RankedCandidate, Signal, SignalRanking, dense_ranking_for, embed_query, graph_ranking_for,
+    lexical_ranking, ranking_from_hits,
 };
 use crate::temporal::{fact_passes_temporal, fact_serialization_id};
 
@@ -256,6 +256,29 @@ impl<E: Embedder> HybridRetriever<E> {
             rankings.push(WeightedRanking::new(profile.weights.graph, facts));
             signals_run.push(Signal::Graph);
         }
+        bail_if_past(deadline)?;
+
+        // The trust re-rank (06 §5): order the candidates the search signals already surfaced by
+        // their stored trust — `Fact.stats.trust` (the reliability-folded value, M4.T05) for facts,
+        // `Episode.stats.trust` for episodes — so a low-trust fact sinks and a high-trust one rises
+        // within the relevant set. Trust is a quality re-rank, never a retrieval: it ranks only what
+        // the other signals found, per kind, so RRF folds it in like any other ranking and `select`
+        // routes each candidate by `fact_nodes` membership exactly as before. Skipped when the class
+        // gives trust no weight or no signal produced a candidate.
+        if profile.weights.trust > 0.0 {
+            let (fact_trust, episode_trust) = self.trust_rankings(&rankings, &fact_nodes)?;
+            let ran = !fact_trust.candidates.is_empty() || !episode_trust.candidates.is_empty();
+            if !fact_trust.candidates.is_empty() {
+                rankings.push(WeightedRanking::new(profile.weights.trust, fact_trust));
+            }
+            if !episode_trust.candidates.is_empty() {
+                rankings.push(WeightedRanking::new(profile.weights.trust, episode_trust));
+            }
+            if ran {
+                signals_run.push(Signal::Trust);
+            }
+        }
+
         let signals_ms = signals_started.elapsed().as_millis();
         bail_if_past(deadline)?;
 
@@ -511,6 +534,76 @@ impl<E: Embedder> HybridRetriever<E> {
             None => hits,
         };
         Ok(ranking_from_hits(Signal::Graph, hits))
+    }
+
+    /// Build the per-kind trust re-rankings over the candidates the search signals already
+    /// surfaced (03 §1 trust, 06 §5). A candidate is a fact iff a fact search produced it
+    /// (`fact_nodes`), so its trust is read from `Fact.stats.trust`; every other candidate is an
+    /// episode, read from `Episode.stats.trust`. Returns `(facts, episodes)`, each best-first by
+    /// trust. Trust never widens retrieval — it only re-orders what the other signals found.
+    fn trust_rankings(
+        &self,
+        rankings: &[WeightedRanking],
+        fact_nodes: &HashSet<NodeId>,
+    ) -> Result<(SignalRanking, SignalRanking), RetrievalError> {
+        let mut facts: BTreeSet<NodeId> = BTreeSet::new();
+        let mut episodes: BTreeSet<NodeId> = BTreeSet::new();
+        for weighted in rankings {
+            for candidate in &weighted.ranking.candidates {
+                if fact_nodes.contains(&candidate.node) {
+                    facts.insert(candidate.node);
+                } else {
+                    episodes.insert(candidate.node);
+                }
+            }
+        }
+        Ok((
+            self.trust_ranking(&facts, true)?,
+            self.trust_ranking(&episodes, false)?,
+        ))
+    }
+
+    /// One kind's trust ranking: read each node's stored trust and order it best-first (highest
+    /// trust first), with a *competition* rank so equal-trust candidates share a position. `is_fact`
+    /// selects the node reader and the stats field. A node that no longer resolves is dropped.
+    fn trust_ranking(
+        &self,
+        nodes: &BTreeSet<NodeId>,
+        is_fact: bool,
+    ) -> Result<SignalRanking, RetrievalError> {
+        let mut scored: Vec<(NodeId, f64)> = Vec::with_capacity(nodes.len());
+        for &node in nodes {
+            let trust = if is_fact {
+                self.store.fact_by_node_id(node)?.map(|f| f.stats.trust)
+            } else {
+                self.store.episode_by_node_id(node)?.map(|e| e.stats.trust)
+            };
+            if let Some(trust) = trust {
+                scored.push((node, trust));
+            }
+        }
+        // Order by trust descending, ties by node id so the order is deterministic. Then assign a
+        // *competition* rank — candidates with equal trust share a rank (0, 1, 1, 3, …). A uniform-
+        // trust set collapses to one rank, so in reciprocal-rank fusion the trust signal adds the
+        // same constant to every candidate and reorders nothing: trust only moves candidates where
+        // the values genuinely differ, never injecting a node-id bias where it carries no signal.
+        scored.sort_by(|a, b| {
+            b.1.partial_cmp(&a.1)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(a.0.cmp(&b.0))
+        });
+        let mut candidates = Vec::with_capacity(scored.len());
+        let mut rank = 0;
+        for (i, &(node, score)) in scored.iter().enumerate() {
+            if i > 0 && scored[i - 1].1.partial_cmp(&score) != Some(std::cmp::Ordering::Equal) {
+                rank = i;
+            }
+            candidates.push(RankedCandidate { node, rank, score });
+        }
+        Ok(SignalRanking {
+            signal: Signal::Trust,
+            candidates,
+        })
     }
 
     /// Resolve a fused fact candidate to an authorized, temporally-admitted entry, or

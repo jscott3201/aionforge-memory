@@ -434,15 +434,19 @@ async fn graph_expansion_surfaces_a_supports_chained_fact() {
 
     let bundle = recall(&r, QueryClass::MultiHop, TemporalMode::Current).await;
 
-    // Presence, and — decisively — the chained fact's *only* contribution is the graph
-    // signal. Dense never reaches it (far, past the fan-out) and lexical never reaches it
-    // (no shared token), so this proves graph expansion is what surfaced it, not a wide
-    // fan-out sweeping the small fixture or a node-id tie-break.
+    // Presence, and — decisively — no *search* signal other than graph reached the chained
+    // fact. Dense never reaches it (far, past the fan-out) and lexical never reaches it (no
+    // shared token), so graph expansion is what surfaced it, not a wide fan-out sweeping the
+    // small fixture or a node-id tie-break. Trust re-ranks whatever the search signals surface,
+    // so it contributes here too (M4.T05); that is expected and is not a surfacing signal.
     let chained_signals = fact_signals(&bundle, CHAINED_FACT).expect("chained fact present");
-    assert_eq!(
-        chained_signals,
-        vec![Signal::Graph],
-        "the chained fact is surfaced by the graph signal alone",
+    assert!(
+        chained_signals.contains(&Signal::Graph),
+        "graph expansion surfaced the chained fact: {chained_signals:?}",
+    );
+    assert!(
+        !chained_signals.contains(&Signal::Dense) && !chained_signals.contains(&Signal::Lexical),
+        "no dense or lexical search reached the chained fact: {chained_signals:?}",
     );
     assert!(
         bundle.explanation.signals_run.contains(&Signal::Graph),
