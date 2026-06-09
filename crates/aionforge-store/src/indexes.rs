@@ -45,7 +45,8 @@ const TEXT_INDEXES: &[(&str, &str)] = &[
 
 /// `(label, property)` for the per-kind `INDEXED` scalar fields (§4/§8). `namespace`
 /// is indexed on every kind (§11) and added separately, so it is not repeated here.
-/// Every field here is a `STRING` column.
+/// Each entry declares its own column type via [`TypedIndexKind`] (string, UUID, and —
+/// for `AuditEvent.occurred_at` — zoned datetime).
 const SCALAR_INDEXES: &[(&str, &str, TypedIndexKind)] = &[
     ("Episode", "role", TypedIndexKind::String),
     ("Episode", "agent_id", TypedIndexKind::Uuid),

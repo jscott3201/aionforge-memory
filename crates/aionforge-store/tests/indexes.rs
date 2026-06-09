@@ -179,25 +179,23 @@ fn id_column(store: &Store, query: &BoundQuery) -> Vec<String> {
 fn audit_events_filter_on_the_occurred_at_datetime_index() {
     let store = migrated();
 
-    // Three events at distinct instants, committed OUT of chronological order. `occurred_at` is
-    // the first ZONED DATETIME property index in the schema; a half-open `[t1, t3)` range filter
-    // over it exercises typed datetime comparison and the STRICT type-check of `occurred_at`
-    // through the real `to_node` write path.
-    let t1 = "2026-06-06T08:00:00-05:00[America/Chicago]";
-    let t2 = "2026-06-06T09:00:00-05:00[America/Chicago]";
-    let t3 = "2026-06-06T10:00:00-05:00[America/Chicago]";
-    store
-        .commit_audit(&audit_at("evt-2", t2))
-        .expect("commit t2");
-    store
-        .commit_audit(&audit_at("evt-1", t1))
-        .expect("commit t1");
-    store
-        .commit_audit(&audit_at("evt-3", t3))
-        .expect("commit t3");
+    // `occurred_at` is the first ZONED DATETIME property index in the schema. Events at distinct
+    // instants are committed OUT of chronological order, then a half-open `[t1, t3)` range filter
+    // over the index must select exactly the in-range set — exercising the STRICT type-check of
+    // `occurred_at` through the real `to_node` write path and the substrate's datetime comparison.
+    let t1 = "2026-06-06T08:00:00-05:00[America/Chicago]"; // 13:00 UTC
+    let t2 = "2026-06-06T09:00:00-05:00[America/Chicago]"; // 14:00 UTC
+    let t3 = "2026-06-06T10:00:00-05:00[America/Chicago]"; // 15:00 UTC
+    // The discriminator: same instant of 13:30 UTC, but written in a zone whose lexical string
+    // ("...T13:30...+00:00") sorts ABOVE `hi`'s ("...T10:00...-05:00"). A string comparison would
+    // wrongly exclude it from `< hi`; only a true instant comparison keeps it (13:30 < 15:00 UTC).
+    let tz = "2026-06-06T13:30:00+00:00[UTC]";
+    store.commit_audit(&audit_at("evt-2", t2)).expect("t2");
+    store.commit_audit(&audit_at("evt-1", t1)).expect("t1");
+    store.commit_audit(&audit_at("evt-3", t3)).expect("t3");
+    store.commit_audit(&audit_at("evt-tz", tz)).expect("tz");
 
-    // The range returns exactly evt-1 and evt-2; evt-3 is excluded at the open upper bound.
-    // Compared as a set (sorted in Rust) — ordering is the reader's job (PR-2 sorts the bounded
+    // Result as a set (sorted in Rust) — ordering is the reader's job (PR-2 sorts the bounded
     // result by `(occurred_at, id)` in Rust rather than leaning on GQL ORDER BY).
     let lo: Zoned = t1.parse().unwrap();
     let hi: Zoned = t3.parse().unwrap();
@@ -213,14 +211,17 @@ fn audit_events_filter_on_the_occurred_at_datetime_index() {
 
     let mut got = id_column(&store, &query);
     got.sort();
+    // evt-1 (lower bound, inclusive), evt-2, and evt-tz (kept only under instant comparison);
+    // evt-3 is excluded at the open upper bound.
     let mut want = vec![
         Id::from_content_hash(b"evt-1").to_string(),
         Id::from_content_hash(b"evt-2").to_string(),
+        Id::from_content_hash(b"evt-tz").to_string(),
     ];
     want.sort();
     assert_eq!(
         got, want,
-        "the range filter selects exactly the in-range events"
+        "the range filter selects the in-range events by instant, not by lexical string"
     );
 }
 
