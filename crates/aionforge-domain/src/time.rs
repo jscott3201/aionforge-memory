@@ -9,6 +9,18 @@ use serde::{Deserialize, Serialize};
 /// the engine's value at the boundary.
 pub type Timestamp = jiff::Zoned;
 
+/// The same instant restated in UTC.
+///
+/// Timestamps that cross host boundaries inside signed or pinned artifacts (audit
+/// `KeyRotation` windows, the keyring file) are stamped in UTC: an RFC 9557 string
+/// with an IANA zone annotation is re-checked against the *reader's* tz database on
+/// parse, so a zone-bracketed stamp can fail to parse on an untampered artifact after
+/// a tzdb revision. UTC has no rules to revise, which makes that conflict unreachable.
+#[must_use]
+pub fn to_utc(at: &Timestamp) -> Timestamp {
+    at.timestamp().to_zoned(jiff::tz::TimeZone::UTC)
+}
+
 /// The four-timestamp validity block carried by every bi-temporal edge (02 §5).
 ///
 /// Event time (`valid_from`/`valid_to`) records when the underlying fact was true
@@ -66,6 +78,17 @@ mod tests {
         jiff::Timestamp::new(secs, 0)
             .expect("valid instant")
             .to_zoned(jiff::tz::TimeZone::UTC)
+    }
+
+    #[test]
+    fn to_utc_keeps_the_instant_and_drops_the_zone_rules() {
+        let chicago: Timestamp = "2026-06-09T10:00:00-05:00[America/Chicago]"
+            .parse()
+            .expect("valid zoned datetime");
+        let utc = to_utc(&chicago);
+        assert_eq!(utc.timestamp(), chicago.timestamp());
+        let wire = serde_json::to_string(&utc).expect("serializes");
+        assert!(wire.contains("+00:00[UTC]"), "stamped in UTC, got {wire}");
     }
 
     #[test]
