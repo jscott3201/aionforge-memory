@@ -135,7 +135,7 @@ fn audit_kind_vocabulary() {
 
 #[test]
 fn edge_label_vocabulary() {
-    // §5: the 19 relationship names, SCREAMING_SNAKE_CASE.
+    // §5: the 18 relationship names, SCREAMING_SNAKE_CASE.
     let expected = [
         (EdgeLabel::Mentions, "MENTIONS"),
         (EdgeLabel::About, "ABOUT"),
