@@ -191,6 +191,26 @@ pub struct SecurityConfig {
     pub clock_skew_tolerance_ms: u64,
     /// Whether capture-side redaction of configured patterns is on.
     pub redaction: bool,
+    /// Whether the substrate signs the audit events it authors (06 §6). Off by default:
+    /// doing nothing leaves every audit event unsigned, exactly as before, with zero setup.
+    /// Turning it on auto-mints a self-managed substrate keypair on first run and stamps a
+    /// signature on every substrate-authored audit event, so the audit subgraph becomes
+    /// publicly verifiable. The verifier ships in the same change, so an enabled signature
+    /// always means something — there is no signed-but-unverifiable state.
+    pub sign_audit_events: bool,
+    /// The **name** of the environment variable holding a base64-encoded 32-byte Ed25519 seed,
+    /// or none to self-custody a seed file under the data directory (the default).
+    ///
+    /// This is the opt-in custody escalation, mirroring [`EmbedderConfig::api_key_env`]: name a
+    /// variable here to delegate the seed to an operator's secret manager instead of the on-disk
+    /// file. The seed itself never lives in the config; see [`Config::resolve_audit_seed`].
+    pub audit_key_env: Option<String>,
+    /// Reserved for cross-instance audit-key pinning (v2 federation, 06 line 5). **Not yet
+    /// consulted**: v1 anchors trust solely in the substrate's own out-of-band keyring file, so a
+    /// single-host deployment needs no external pins. The field name is reserved with an empty
+    /// default so adding federation later does not force a config migration. Setting it today has
+    /// no effect.
+    pub trusted_audit_keys: Vec<String>,
 }
 
 impl Default for SecurityConfig {
@@ -199,6 +219,9 @@ impl Default for SecurityConfig {
             signed_writes: false,
             clock_skew_tolerance_ms: 60_000,
             redaction: true,
+            sign_audit_events: false,
+            audit_key_env: None,
+            trusted_audit_keys: Vec::new(),
         }
     }
 }
@@ -407,6 +430,40 @@ impl Config {
     /// See [`Config::resolve_completer_api_key`].
     pub fn resolve_completer_api_key_from_env(&self) -> Result<Option<SecretString>, ConfigError> {
         self.resolve_completer_api_key(|name| std::env::var(name).ok())
+    }
+
+    /// Resolve the substrate audit-signing seed by reading the environment variable named in
+    /// `security.audit_key_env`, through the supplied lookup. Mirrors [`Config::resolve_api_key`]
+    /// for the opt-in audit-key custody escalation.
+    ///
+    /// The variable holds a base64-encoded 32-byte Ed25519 seed, which is **not** decoded here —
+    /// the trust layer owns that. Returns `Ok(None)` when no variable is named, the common case
+    /// where the substrate self-custodies a seed file under the data directory instead. The
+    /// returned [`SecretString`] redacts in logs and zeroizes on drop, and the seed never lives on
+    /// the [`Config`].
+    ///
+    /// # Errors
+    /// Returns [`ConfigError::SecretEnvMissing`] (naming the variable, never a value) when a
+    /// variable is named but unset.
+    pub fn resolve_audit_seed<F>(&self, lookup: F) -> Result<Option<SecretString>, ConfigError>
+    where
+        F: Fn(&str) -> Option<String>,
+    {
+        match &self.security.audit_key_env {
+            None => Ok(None),
+            Some(name) => match lookup(name) {
+                Some(value) => Ok(Some(SecretString::from(value))),
+                None => Err(ConfigError::SecretEnvMissing(name.clone())),
+            },
+        }
+    }
+
+    /// Resolve the substrate audit-signing seed from the process environment.
+    ///
+    /// # Errors
+    /// See [`Config::resolve_audit_seed`].
+    pub fn resolve_audit_seed_from_env(&self) -> Result<Option<SecretString>, ConfigError> {
+        self.resolve_audit_seed(|name| std::env::var(name).ok())
     }
 
     /// Check every binding invariant, returning the first violation with a clear,

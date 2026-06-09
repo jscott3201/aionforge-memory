@@ -45,7 +45,9 @@ pub use attestation::{AttestWriteIds, AttesterRecord};
 pub use audit_read::{AuditCursor, AuditHistory, MAX_AUDIT_PAGE};
 pub use capture_write::CaptureWriteIds;
 pub use catalog::SCHEMA_VERSION;
-pub use config::{DEFAULT_EMBEDDING_DIMENSION, StoreConfig, default_data_dir};
+pub use config::{
+    DEFAULT_EMBEDDING_DIMENSION, StoreConfig, default_data_dir, default_data_dir_checked,
+};
 pub use consolidation::{ConsolidationCursor, ConsolidationWorkItem, LagSnapshot};
 pub use distill::DistilledNoteWrite;
 pub use error::StoreError;

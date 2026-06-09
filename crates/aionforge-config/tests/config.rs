@@ -558,6 +558,91 @@ fn an_enabled_completer_rejects_a_remote_plaintext_endpoint() {
 }
 
 #[test]
+fn audit_signing_is_off_by_default() {
+    let config = Config::default();
+    assert!(
+        !config.security.sign_audit_events,
+        "audit signing is opt-in (doing nothing leaves events unsigned)"
+    );
+    assert!(
+        config.security.audit_key_env.is_none(),
+        "self-custody is the default; no env var is named"
+    );
+    assert!(
+        config.security.trusted_audit_keys.is_empty(),
+        "the reserved federation pin list is empty"
+    );
+    config
+        .validate()
+        .expect("the default (off) audit-signing posture validates");
+}
+
+#[test]
+fn the_environment_enables_audit_signing() {
+    Jail::expect_with(|jail| {
+        jail.set_env("AIONFORGE_SECURITY__SIGN_AUDIT_EVENTS", "true");
+        let config =
+            Config::from_figment(Config::figment(Path::new("config.toml"))).expect("load from env");
+        assert!(
+            config.security.sign_audit_events,
+            "the env layer turns audit signing on"
+        );
+        Ok(())
+    });
+}
+
+#[test]
+fn the_audit_seed_resolves_from_its_own_variable() {
+    let mut config = Config::default();
+    config.security.audit_key_env = Some("AIONFORGE_AUDIT_SEED".to_owned());
+    // The value is an opaque base64 seed to the config layer; it is not decoded here.
+    let secret = config
+        .resolve_audit_seed(|name| {
+            (name == "AIONFORGE_AUDIT_SEED").then(|| "c2VlZC1ieXRlcw==".to_owned())
+        })
+        .expect("resolve")
+        .expect("a seed is present");
+    assert_eq!(secret.expose_secret(), "c2VlZC1ieXRlcw==");
+    let secret_debug = format!("{secret:?}");
+    assert!(
+        !secret_debug.contains("c2VlZC1ieXRlcw=="),
+        "the seed redacts in its Debug output: {secret_debug}"
+    );
+    // The audit seed is independent of the embedder API key.
+    assert!(
+        config
+            .resolve_api_key(|_| None)
+            .expect("embedder resolve")
+            .is_none()
+    );
+}
+
+#[test]
+fn a_named_but_unset_audit_seed_variable_fails_clearly() {
+    let mut config = Config::default();
+    config.security.audit_key_env = Some("AIONFORGE_MISSING_SEED".to_owned());
+    let error = config
+        .resolve_audit_seed(|_| None)
+        .expect_err("an unset named seed variable is an error");
+    match error {
+        ConfigError::SecretEnvMissing(name) => assert_eq!(name, "AIONFORGE_MISSING_SEED"),
+        other => panic!("wrong error: {other}"),
+    }
+}
+
+#[test]
+fn no_audit_seed_variable_resolves_to_none() {
+    let config = Config::default();
+    assert!(config.security.audit_key_env.is_none());
+    assert!(
+        config
+            .resolve_audit_seed(|_| panic!("lookup must not run when no variable is named"))
+            .expect("resolve")
+            .is_none()
+    );
+}
+
+#[test]
 fn the_completer_api_key_resolves_from_its_own_variable() {
     let mut config = Config::default();
     config.completer.api_key_env = Some("AIONFORGE_CHAT_KEY".to_owned());
