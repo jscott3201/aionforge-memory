@@ -27,6 +27,10 @@ This is reference and guides, not planning or changelogs.
 - [Provenance signing](provenance-signing.md) — the off-by-default signed-write gate: the host signs
   and the substrate verifies, the host-supplied episode id and its collision guard, writer enrollment,
   the clock-skew window, and the audited refusals — all with the unsigned path untouched.
+- [Attestation and quorum promotion](attestation-and-promotion.md) — the off-by-default path a team
+  fact takes to global: explicit signed attestations, the sybil-bounded reliability-weighted posterior,
+  the count-and-threshold gates, the promoted global copy and its ledger, and the demotion that
+  quarantines the copy on lost support while leaving the namespace original untouched.
 
 ## Consolidation
 

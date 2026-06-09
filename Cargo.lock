@@ -232,6 +232,8 @@ dependencies = [
  "base64",
  "ed25519-dalek",
  "jiff",
+ "serde_json",
+ "thiserror",
  "uuid",
 ]
 

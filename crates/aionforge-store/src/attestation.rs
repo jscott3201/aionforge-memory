@@ -162,14 +162,37 @@ impl Store {
     pub fn fact_node_by_id(&self, id: &Id) -> Result<Option<NodeId>, StoreError> {
         fact_node_in(&self.graph().read(), id)
     }
+
+    /// The `NodeId` of the registered agent with this domain id, if one exists.
+    ///
+    /// A probe over the `Agent.id` index. Quorum promotion needs the attester's node id to wire
+    /// the `Fact -ATTESTED_BY-> Agent` edge — the gate resolves the agent's *key* by id, this
+    /// resolves its *node*. `Agent.id` is `UNIQUE`, so at most one node matches.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the id cannot be encoded for the lookup.
+    pub fn agent_node_by_id(&self, id: &Id) -> Result<Option<NodeId>, StoreError> {
+        node_by_id_in(&self.graph().read(), "Agent", id)
+    }
 }
 
-/// Resolve a fact's `NodeId` by its domain id within a given snapshot — the committed graph
+/// Resolve a `Fact`'s `NodeId` by its domain id within a given snapshot — the committed graph
 /// for [`Store::fact_node_by_id`], or a transaction's working graph (`mutator.read()`) for the
 /// in-txn idempotency probe in [`Store::promote_fact`], so the probe and its write share one
 /// view under the write lock.
 pub(crate) fn fact_node_in(snapshot: &SeleneGraph, id: &Id) -> Result<Option<NodeId>, StoreError> {
-    let label = db_string("Fact")?;
+    node_by_id_in(snapshot, "Fact", id)
+}
+
+/// Resolve a node's `NodeId` by its domain `id` within a snapshot, for a label whose `id` is
+/// scalar-indexed and `UNIQUE`. Returns `None` when no index is registered (read as absent) or
+/// no live row matches.
+fn node_by_id_in(
+    snapshot: &SeleneGraph,
+    label: &str,
+    id: &Id,
+) -> Result<Option<NodeId>, StoreError> {
+    let label = db_string(label)?;
     let prop = db_string(ID)?;
     let value = id_value(id)?;
     let Some(rows) = snapshot.nodes_with_property_eq(&label, &prop, &value) else {

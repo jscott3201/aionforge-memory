@@ -25,7 +25,11 @@ use aionforge_domain::namespace::Namespace;
 use aionforge_domain::time::Timestamp;
 use aionforge_retrieval::HybridRetriever;
 use aionforge_security::{CaptureFilter, SecurityError};
-use aionforge_trust::{Ed25519Verifier, SignedWriteGate, StoreKeyResolver, SystemWallClock};
+use aionforge_trust::{
+    AttestationGate, Ed25519Verifier, Promoter, SignedWriteGate, StoreKeyResolver, SystemWallClock,
+};
+
+use aionforge_domain::ids::Id;
 
 /// The widest sane clock-skew tolerance for signed writes (five minutes, 06 §3). Mirrors the
 /// `aionforge-config` ceiling; the engine keeps its own copy because it takes no config
@@ -52,6 +56,10 @@ pub use aionforge_retrieval::{
     RecallQuery, RetrieverConfig, Signal, SignalWeights, StructuredEntry, TemporalMode,
 };
 pub use aionforge_store::{Store, StoreConfig};
+pub use aionforge_trust::{
+    AttestReceipt, AttestRequest, CategoryRule, DemotionOutcome, PromotionError, PromotionOutcome,
+    PromotionPolicy,
+};
 
 /// How the facade configures the capture and retrieval paths.
 #[derive(Debug, Clone, Default)]
@@ -64,6 +72,11 @@ pub struct MemoryConfig {
     /// builds an Ed25519 provenance gate over the store's registered agent keys. The host maps
     /// `aionforge-config`'s `SecurityConfig` into this, so the engine takes no config dependency.
     pub security: SecurityGate,
+    /// Quorum-promotion policy (06 §4). Off by default; when enabled the engine builds the
+    /// attestation/promotion orchestrator. The host maps `aionforge-config`'s `PromotionConfig`
+    /// into this [`PromotionPolicy`]. The attestation skew gate reuses
+    /// `security.clock_skew_tolerance_ms`.
+    pub promotion: PromotionPolicy,
 }
 
 /// The engine's signed-write gating posture (06 §3, M4.T03).
@@ -123,6 +136,8 @@ pub struct Memory<E> {
     capturer: Capturer<CaptureFilter, Arc<E>>,
     retriever: HybridRetriever<Arc<E>>,
     authorizer: Arc<dyn Authorizer>,
+    /// The attestation/promotion orchestrator, present only when promotion is enabled (06 §4).
+    promoter: Option<Promoter>,
 }
 
 impl<E: Embedder> Memory<E> {
@@ -177,6 +192,26 @@ impl<E: Embedder> Memory<E> {
         } else {
             capturer
         };
+        // Quorum promotion (06 §4): when on, build the attestation/promotion orchestrator over the
+        // store's registered agent keys, reusing the signed-write skew knob. Off ⇒ no orchestrator,
+        // and the attestation API is inert.
+        config.promotion.validate().map_err(EngineError::Config)?;
+        let promoter = if config.promotion.enabled {
+            validate_promotion_skew(config.security.clock_skew_tolerance_ms)?;
+            let gate = AttestationGate::new(
+                Ed25519Verifier,
+                Arc::new(StoreKeyResolver::new(Arc::clone(&store))),
+                Arc::new(SystemWallClock),
+                config.security.clock_skew_tolerance_ms,
+            );
+            Some(Promoter::new(
+                Arc::clone(&store),
+                gate,
+                config.promotion.clone(),
+            ))
+        } else {
+            None
+        };
         let retriever = HybridRetriever::with_authorizer(
             Arc::clone(&store),
             Arc::clone(&embedder),
@@ -189,6 +224,7 @@ impl<E: Embedder> Memory<E> {
             capturer,
             retriever,
             authorizer,
+            promoter,
         })
     }
 
@@ -383,6 +419,82 @@ impl<E: Embedder + 'static> Memory<E> {
         let report = pass.evolve_links(&self.store, namespace, now).await?;
         Ok(report)
     }
+
+    /// Record a signed attestation of a fact and evaluate it for promotion (06 §4).
+    ///
+    /// Explicit-only: the attester must already know `request.fact_id` — there is no surface that
+    /// lists pending candidates. When promotion is off the call is inert (a receipt with
+    /// `recorded = false`). A refused attestation is audited and surfaces a coarse error.
+    ///
+    /// # Errors
+    /// Returns [`EngineError::Promotion`] for a rejected attestation, a clock-skew rejection, a
+    /// key-resolution backend fault, or a store failure.
+    pub fn attest(&self, request: AttestRequest) -> Result<AttestReceipt, EngineError> {
+        match &self.promoter {
+            Some(promoter) => Ok(promoter.attest(&request)?),
+            None => Ok(AttestReceipt {
+                recorded: false,
+                promoted: None,
+            }),
+        }
+    }
+
+    /// Evaluate a team fact for quorum promotion, promoting it when the reliability-weighted
+    /// posterior clears the per-category threshold with enough distinct attesters (06 §4).
+    ///
+    /// `now` is the caller's clock — the facade keeps no ambient clock, so the promotion's stored
+    /// transaction time is deterministic. Idempotent. Returns [`PromotionOutcome::Disabled`] when
+    /// promotion is off.
+    ///
+    /// # Errors
+    /// Returns [`EngineError::Promotion`] if a store read or the write fails.
+    pub fn evaluate_promotion(
+        &self,
+        fact_id: &Id,
+        now: &Timestamp,
+    ) -> Result<PromotionOutcome, EngineError> {
+        match &self.promoter {
+            Some(promoter) => Ok(promoter.evaluate_promotion(fact_id, now)?),
+            None => Ok(PromotionOutcome::Disabled),
+        }
+    }
+
+    /// Evaluate a promoted candidate for demotion on lost support: when the team original has
+    /// dropped out of the current-support set, quarantine the global copy and leave the namespace
+    /// original untouched (06 §4). `now` is the caller's clock. Idempotent. Returns
+    /// [`DemotionOutcome::Disabled`] when promotion is off.
+    ///
+    /// # Errors
+    /// Returns [`EngineError::Promotion`] if a store read or the write fails.
+    pub fn evaluate_demotion(
+        &self,
+        candidate_fact_id: &Id,
+        now: &Timestamp,
+    ) -> Result<DemotionOutcome, EngineError> {
+        match &self.promoter {
+            Some(promoter) => Ok(promoter.evaluate_demotion(candidate_fact_id, now)?),
+            None => Ok(DemotionOutcome::Disabled),
+        }
+    }
+}
+
+/// Validate the clock-skew tolerance the attestation gate reuses when promotion is on (06 §4),
+/// mirroring the signed-write bound. When signed writes are also on, [`SecurityGate::validate`]
+/// has already checked it; this covers promotion-on-but-signed-writes-off so a zero or oversized
+/// window is a configuration error, not a silent lockout.
+fn validate_promotion_skew(tolerance_ms: u64) -> Result<(), EngineError> {
+    if tolerance_ms == 0 {
+        return Err(EngineError::Config(
+            "security.clock_skew_tolerance_ms must be greater than zero when promotion is on"
+                .to_string(),
+        ));
+    }
+    if tolerance_ms > MAX_CLOCK_SKEW_TOLERANCE_MS {
+        return Err(EngineError::Config(
+            "security.clock_skew_tolerance_ms must be at most 300000 (five minutes)".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 /// An error from the memory facade.
@@ -408,6 +520,10 @@ pub enum EngineError {
     /// The optional off-cursor LLM link evolver failed (a store read or the write).
     #[error("link evolution failed")]
     LinkEvolution(#[from] LinkEvolveError),
+
+    /// The optional attestation/quorum-promotion path refused an attestation or failed (06 §4).
+    #[error("attestation or promotion failed")]
+    Promotion(#[from] PromotionError),
 
     /// The default capture privacy filter could not be built.
     #[error("could not initialize the capture filter: {0}")]
