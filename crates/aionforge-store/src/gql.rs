@@ -60,6 +60,20 @@ impl BoundQuery {
         self.bind(name, Value::Uuid(id.borrow().as_uuid()))
     }
 
+    /// Bind a parameter to a [`Timestamp`](aionforge_domain::time::Timestamp) as a native
+    /// `ZONED DATETIME` value (convenience over [`BoundQuery::bind`]). Lets a caller that cannot
+    /// name the engine's value type set a temporal edge or node property from a domain timestamp.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the parameter name exceeds the engine's string cap.
+    pub fn bind_timestamp(
+        self,
+        name: &str,
+        at: &aionforge_domain::time::Timestamp,
+    ) -> Result<Self, StoreError> {
+        self.bind(name, crate::convert::timestamp_value(at))
+    }
+
     pub(crate) fn source(&self) -> &str {
         &self.source
     }

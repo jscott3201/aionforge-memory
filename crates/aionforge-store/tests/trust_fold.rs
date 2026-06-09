@@ -45,6 +45,30 @@ fn insert_episode(store: &Store, agent: Id, seed: &[u8]) -> Id {
     id
 }
 
+/// Insert a raw `Episode` captured by `agent` with a custom write-time `trust` (the baseline the
+/// reliability recompute anchors to).
+fn insert_episode_with_trust(store: &Store, agent: Id, seed: &[u8], trust: f64) -> Id {
+    let id = Id::generate();
+    let mut stats = common::stats();
+    stats.trust = trust;
+    let episode = Episode {
+        identity: identity(id),
+        stats,
+        content: "source".to_string(),
+        role: Role::User,
+        captured_at: ts(NOW),
+        agent_id: agent,
+        session_id: None,
+        content_hash: ContentHash::of(seed),
+        embedding: None,
+        embedder_model: None,
+        consolidation_state: ConsolidationState::Raw,
+        origin: None,
+    };
+    store.insert_episode(&episode).expect("insert episode");
+    id
+}
+
 /// Wire a `DERIVED_FROM` edge fact → episode, the production attribution shape (the edge carries
 /// a required `derived_at`).
 fn derive(store: &Store, fact_id: &Id, episode_id: &Id) {
@@ -176,6 +200,97 @@ fn a_fact_with_no_derivation_has_no_producers() {
             .is_empty(),
         "no DERIVED_FROM edges means no attributable producers"
     );
+}
+
+#[test]
+fn facts_produced_by_lists_an_agents_distinct_facts() {
+    let store = store();
+    // Fact f is produced by ada (one episode) and bo (another).
+    let subj_f = entity("graph databases");
+    let f = fact(
+        subj_f.identity.id,
+        "preferred_by",
+        ObjectValue::Text("the team".to_string()),
+        "the team prefers graph databases",
+    );
+    let f_node: NodeId = assert_about(&store, &subj_f, &f, &open_window(FROM));
+    // Fact g is produced by ada alone, across two episodes (the dedup case).
+    let subj_g = entity("rust");
+    let g = fact(
+        subj_g.identity.id,
+        "is",
+        ObjectValue::Text("fast".to_string()),
+        "rust is fast",
+    );
+    let g_node: NodeId = assert_about(&store, &subj_g, &g, &open_window(FROM));
+
+    let ada = Id::generate();
+    let bo = Id::generate();
+    let f_ep_ada = insert_episode(&store, ada, b"f-ada");
+    let f_ep_bo = insert_episode(&store, bo, b"f-bo");
+    let g_ep1 = insert_episode(&store, ada, b"g-ada-1");
+    let g_ep2 = insert_episode(&store, ada, b"g-ada-2");
+    derive(&store, &f.identity.id, &f_ep_ada);
+    derive(&store, &f.identity.id, &f_ep_bo);
+    derive(&store, &g.identity.id, &g_ep1);
+    derive(&store, &g.identity.id, &g_ep2);
+
+    let ada_facts = store.facts_produced_by(&ada).expect("ada facts");
+    assert_eq!(
+        ada_facts.len(),
+        2,
+        "ada produced f and g; g over two episodes counts once"
+    );
+    assert!(ada_facts.contains(&f_node) && ada_facts.contains(&g_node));
+
+    assert_eq!(
+        store.facts_produced_by(&bo).expect("bo facts"),
+        vec![f_node],
+        "bo produced only f"
+    );
+
+    assert!(
+        store
+            .facts_produced_by(&Id::generate())
+            .expect("unknown agent")
+            .is_empty(),
+        "an agent with no episodes produced no facts"
+    );
+}
+
+#[test]
+fn fact_source_trust_mean_is_the_id_sorted_mean_of_source_episode_trust() {
+    let store = store();
+    let subject = entity("graph databases");
+    let f = fact(
+        subject.identity.id,
+        "preferred_by",
+        ObjectValue::Text("the team".to_string()),
+        "the team prefers graph databases",
+    );
+    let fact_node: NodeId = assert_about(&store, &subject, &f, &open_window(FROM));
+
+    // No source episode yet ⇒ no baseline.
+    assert!(
+        store
+            .fact_source_trust_mean(fact_node)
+            .expect("baseline")
+            .is_none(),
+        "a fact with no episode source has no baseline"
+    );
+
+    // Two source episodes with trust 0.6 and 1.0 ⇒ mean 0.8, independent of edge order.
+    let ada = Id::generate();
+    let ep_high = insert_episode_with_trust(&store, ada, b"hi", 1.0);
+    let ep_low = insert_episode_with_trust(&store, ada, b"lo", 0.6);
+    derive(&store, &f.identity.id, &ep_high);
+    derive(&store, &f.identity.id, &ep_low);
+
+    let baseline = store
+        .fact_source_trust_mean(fact_node)
+        .expect("baseline")
+        .expect("two sources");
+    assert!((baseline - 0.8).abs() < 1e-9, "mean of 0.6 and 1.0 is 0.8");
 }
 
 #[test]

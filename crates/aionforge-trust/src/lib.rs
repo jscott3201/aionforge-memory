@@ -4,8 +4,10 @@ pub mod attest_gate;
 pub mod gate;
 pub mod promoter;
 pub mod reliability;
+pub mod reliability_scorer;
 pub mod resolver;
 pub mod signing;
+mod system_audit;
 
 pub use attest_gate::{AttestError, AttestRejection, AttestationGate};
 pub use gate::{SignedWriteGate, SystemWallClock};
@@ -14,5 +16,6 @@ pub use promoter::{
     PromotionOutcome, PromotionPolicy,
 };
 pub use reliability::{ReliabilityEvent, ReliabilityFold, ReliabilityOutcome, ReliabilityPolicy};
+pub use reliability_scorer::{ReliabilityError, ReliabilityScorer};
 pub use resolver::StoreKeyResolver;
 pub use signing::Ed25519Verifier;

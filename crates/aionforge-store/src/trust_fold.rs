@@ -10,14 +10,16 @@
 //! `DERIVED_FROM` wiring all already exist. (`reliability_events` probes the `subject_id` index
 //! and filters `kind` in memory — see its doc; this PR registers no composite.)
 //!
-//! Everything here is **off-cursor** — a consolidation pass is read-only
+//! Everything here is **off-cursor**: a consolidation pass is read-only
 //! ([`crate::consolidation`]), so the trust fold runs from the engine facade, never from inside a
-//! pass. A split-out `impl Store`.
+//! pass. These readers and cache-refreshers are a split-out `impl Store` block.
 
 use aionforge_domain::edges::{Audit, DerivedFrom};
 use aionforge_domain::ids::Id;
 use aionforge_domain::nodes::agent::Agent;
+use aionforge_domain::nodes::episodic::Episode;
 use aionforge_domain::nodes::forensic::{AuditEvent, AuditKind};
+use aionforge_domain::nodes::semantic::Fact;
 use selene_core::{LabelDiff, PropertyDiff, PropertyMap, Value, db_string};
 use selene_graph::RowIndex;
 
@@ -27,6 +29,8 @@ use crate::error::StoreError;
 use crate::store::Store;
 use crate::{NodeId, agent, audit};
 
+/// The identity-block `id` property (mirrors [`crate::episode`]).
+const ID: &str = "id";
 /// Episode property carrying the capturing agent (mirrors [`crate::episode`]).
 const AGENT_ID: &str = "agent_id";
 /// The single JSON-blob property holding `Agent.trust_scores` (mirrors [`crate::agent`]).
@@ -71,6 +75,109 @@ impl Store {
         }
         agents.sort_unstable();
         Ok(agents)
+    }
+
+    /// The facts a given agent produced — the reverse of [`Store::producing_agents`], for the
+    /// reliability-trust recompute (06 §5, M4.T05).
+    ///
+    /// Walks the agent's episodes through the `Episode.agent_id` index, and for each the
+    /// *incoming* `DERIVED_FROM` edges (`Fact -DERIVED_FROM-> Episode`) back to the facts derived
+    /// from them, keeping only `Fact`-labeled neighbors — the edge is polymorphic, since a `Note`
+    /// also derives from an episode (`Note -DERIVED_FROM-> Episode`). Returns the distinct fact
+    /// nodes in discovery order. Like `producing_agents` this reads only the committed graph, so it
+    /// is an off-cursor read; the L2 scorer uses it to find which facts to re-derive `stats.trust`
+    /// for after an agent's reliability moves.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if a row or label lookup fails.
+    pub fn facts_produced_by(&self, agent_id: &Id) -> Result<Vec<NodeId>, StoreError> {
+        let snapshot = self.graph().read();
+        let episode_label = db_string(Episode::LABEL)?;
+        let agent_prop = db_string(AGENT_ID)?;
+        let agent_value = id_value(agent_id)?;
+        let Some(rows) = snapshot.nodes_with_property_eq(&episode_label, &agent_prop, &agent_value)
+        else {
+            return Ok(Vec::new());
+        };
+        let derived_label = db_string(DerivedFrom::LABEL)?;
+        let fact_label = db_string(Fact::LABEL)?;
+        let mut facts: Vec<NodeId> = Vec::new();
+        for row in rows.iter() {
+            let Some(episode) = snapshot.node_id_for_row(RowIndex::new(row)) else {
+                continue;
+            };
+            let Some(adjacency) = snapshot.incoming_edges(episode) else {
+                continue;
+            };
+            for edge in adjacency.iter_label(&derived_label) {
+                let fact = edge.neighbor;
+                // DERIVED_FROM is polymorphic — a Note derives from an episode too — so keep only
+                // the Fact-labeled producers and skip a Note (or anything else) on the edge.
+                let is_fact = snapshot
+                    .node_labels(fact)
+                    .is_some_and(|labels| labels.contains(&fact_label));
+                if is_fact && !facts.contains(&fact) {
+                    facts.push(fact);
+                }
+            }
+        }
+        Ok(facts)
+    }
+
+    /// A fact's write-time trust baseline: the mean of its source episodes' immutable `stats.trust`
+    /// (06 §5, M4.T05).
+    ///
+    /// Walks the fact's outgoing `DERIVED_FROM` edges to its source `Episode`s (the edge is
+    /// polymorphic, so non-`Episode` endpoints are skipped) and means their write-time `trust`,
+    /// summed in canonical episode-id order so the float is byte-identical on replay. Returns
+    /// `None` when the fact has no episode source — there is no baseline to anchor a reliability
+    /// recompute to. This reads the *source* episodes, **never the fact's own `stats.trust`** (the
+    /// cache the recompute rewrites), so the reliability recompute that consumes it stays a pure
+    /// function of primary state — no read-modify-write on the value it is recomputing.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if a source episode's `id` or `trust` cannot be decoded.
+    pub fn fact_source_trust_mean(&self, fact: NodeId) -> Result<Option<f64>, StoreError> {
+        let snapshot = self.graph().read();
+        let Some(adjacency) = snapshot.outgoing_edges(fact) else {
+            return Ok(None);
+        };
+        let derived_label = db_string(DerivedFrom::LABEL)?;
+        let episode_label = db_string(Episode::LABEL)?;
+        let trust_key = db_string(TRUST)?;
+        let id_key = db_string(ID)?;
+        let mut sources: Vec<(Id, f64)> = Vec::new();
+        for edge in adjacency.iter_label(&derived_label) {
+            let episode = edge.neighbor;
+            // DERIVED_FROM is polymorphic; only an Episode carries a write-time trust baseline.
+            let is_episode = snapshot
+                .node_labels(episode)
+                .is_some_and(|labels| labels.contains(&episode_label));
+            if !is_episode {
+                continue;
+            }
+            let Some(props) = snapshot.node_properties(episode) else {
+                continue;
+            };
+            let Some(Value::Float(trust)) = props.get(&trust_key).cloned() else {
+                continue;
+            };
+            let Some(id_value) = props.get(&id_key).cloned() else {
+                continue;
+            };
+            let id = as_id(&id_value)?;
+            // A fact deduped across episodes has one DERIVED_FROM per source; count each once.
+            if !sources.iter().any(|(seen, _)| *seen == id) {
+                sources.push((id, trust));
+            }
+        }
+        if sources.is_empty() {
+            return Ok(None);
+        }
+        // Sum in canonical id order so the mean is byte-identical regardless of edge iteration.
+        sources.sort_by_key(|(id, _)| *id);
+        let sum: f64 = sources.iter().map(|(_, trust)| *trust).sum();
+        Ok(Some(sum / sources.len() as f64))
     }
 
     /// The `ReliabilityUpdate` audit events recorded against an agent — the canonical log the L2

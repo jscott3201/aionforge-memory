@@ -34,6 +34,7 @@ use aionforge_domain::trust::beta_posterior;
 use aionforge_store::{AttesterRecord, CandidateSet, NodeId, Store, StoreError};
 
 use crate::attest_gate::{AttestError, AttestRejection, AttestationGate};
+use crate::system_audit::{content_id, system_identity};
 
 /// A per-category promotion rule: a stricter quorum and posterior bar for a named category.
 #[derive(Debug, Clone, PartialEq)]
@@ -666,25 +667,6 @@ impl Promoter {
             signature: String::new(),
             occurred_at: now.clone(),
         }
-    }
-}
-
-// The governance/promote audit ids are content-addressed on `(tag, subject)` with no cycle
-// component, so a same-cycle replay dedupes to a true no-op (the property the idempotent write-set
-// relies on). The trade-off: a second *genuine* promote/demote of the same fact in a later cycle
-// computes the same id and writes no new audit, so the audit subgraph holds one event per fact
-// lifetime, not per cycle. A deterministic cycle discriminator (e.g. a ledger version) lands with
-// the M4.T06 by-subject audit-history consumer that actually reads this back.
-fn content_id(tag: &str, key: &str) -> Id {
-    Id::from_content_hash(format!("{tag}|{key}").as_bytes())
-}
-
-fn system_identity(id: Id, now: &Timestamp) -> Identity {
-    Identity {
-        id,
-        ingested_at: now.clone(),
-        namespace: Namespace::System,
-        expired_at: None,
     }
 }
 
