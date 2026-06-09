@@ -42,7 +42,7 @@ use crate::summarize::contains_word;
 pub const DISTILL_RULE_VERSION: &str = "llm-distill-v1";
 
 /// The truncation sentinel: a completion that stopped at the token cap lost detail, so it is
-/// rejected rather than stored (mirrors `Completion::finish_reason`'s `"length"` contract).
+/// rejected rather than stored (mirrors [`Completion::finish_reason`](aionforge_domain::Completion::finish_reason)'s `"length"` contract).
 const TRUNCATED: &str = "length";
 
 /// An [`Summarizer`] that condenses a fact cluster with a chat [`Completer`] (M3.T08).

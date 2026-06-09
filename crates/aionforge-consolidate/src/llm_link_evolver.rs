@@ -37,7 +37,7 @@ use crate::prompt::escape;
 pub const LINK_EVOLVE_RULE_VERSION: &str = "llm-link-evolve-v1";
 
 /// The truncation sentinel: a completion that stopped at the token cap may have dropped LINK lines,
-/// so it is declined rather than parsed (mirrors `Completion::finish_reason`'s `"length"`).
+/// so it is declined rather than parsed (mirrors [`Completion::finish_reason`](aionforge_domain::Completion::finish_reason)'s `"length"`).
 const TRUNCATED: &str = "length";
 
 /// The line marker the model is asked to prefix each proposed relationship with.
