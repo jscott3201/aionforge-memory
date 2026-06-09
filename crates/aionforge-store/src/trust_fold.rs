@@ -183,33 +183,19 @@ impl Store {
     /// The `ReliabilityUpdate` audit events recorded against an agent — the canonical log the L2
     /// fold replays into `(alpha, beta, score)` (06 §5, M4.T05).
     ///
-    /// Probes the `AuditEvent.subject_id` index for `subject_id == agent_id` (the subject of a
-    /// reliability event is the agent whose score moved) and keeps only `ReliabilityUpdate` kinds.
+    /// A thin wrapper over the shared `audit_events_eq` spine (the by-subject reader the M4.T06
+    /// audit subgraph also uses): probes the `AuditEvent.subject_id` index for the agent
+    /// whose score moved, keeping only `ReliabilityUpdate` kinds. The fold is order-independent, so
+    /// the `(occurred_at, id)` sort the spine applies is harmless.
     ///
     /// # Errors
     /// Returns [`StoreError`] if an event row cannot be decoded.
     pub fn reliability_events(&self, agent_id: &Id) -> Result<Vec<AuditEvent>, StoreError> {
-        let snapshot = self.graph().read();
-        let label = db_string(AuditEvent::LABEL)?;
-        let prop = db_string(SUBJECT_ID)?;
-        let value = id_value(agent_id)?;
-        let Some(rows) = snapshot.nodes_with_property_eq(&label, &prop, &value) else {
-            return Ok(Vec::new());
-        };
-        let mut events = Vec::new();
-        for row in rows.iter() {
-            let Some(node) = snapshot.node_id_for_row(RowIndex::new(row)) else {
-                continue;
-            };
-            let Some(props) = snapshot.node_properties(node) else {
-                continue;
-            };
-            let event = audit::from_properties(props)?;
-            if event.kind == AuditKind::ReliabilityUpdate {
-                events.push(event);
-            }
-        }
-        Ok(events)
+        self.audit_events_eq(
+            SUBJECT_ID,
+            &id_value(agent_id)?,
+            Some(AuditKind::ReliabilityUpdate),
+        )
     }
 
     /// Record one `ReliabilityUpdate` event against its agent subject, idempotently (06 §5).
