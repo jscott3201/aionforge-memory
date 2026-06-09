@@ -16,7 +16,7 @@ use aionforge_domain::ids::Id;
 use aionforge_domain::namespace::Namespace;
 use aionforge_domain::nodes::agent::{Agent, AgentStatus, TrustCategory, TrustScores};
 use aionforge_domain::nodes::episodic::{ConsolidationState, Episode, Role};
-use aionforge_domain::nodes::forensic::PromotionStatus;
+use aionforge_domain::nodes::forensic::{AuditKind, PromotionStatus};
 use aionforge_domain::nodes::semantic::{Entity, Fact, FactStatus};
 use aionforge_domain::time::{BiTemporal, Timestamp};
 use aionforge_domain::value::ObjectValue;
@@ -34,6 +34,10 @@ fn ts() -> Timestamp {
     "2026-06-08T09:30:00-05:00[America/Chicago]"
         .parse()
         .expect("valid zoned datetime")
+}
+
+fn ts_at(s: &str) -> Timestamp {
+    s.parse().expect("valid zoned datetime")
 }
 
 fn store() -> Arc<Store> {
@@ -463,4 +467,84 @@ fn reliability_demotion_is_disabled_when_promotion_is_off() {
             .expect("eval"),
         DemotionOutcome::Disabled
     ));
+}
+
+/// The end-to-end payoff of the M4.T06 cross-cycle discriminator: a promote -> demote -> re-promote
+/// lifecycle for one subject lands as TWO distinct `Promote` rows in the by-subject audit history,
+/// not one collapsed row, and a same-instant replay is idempotent.
+#[test]
+fn a_governance_transition_recurs_as_a_distinct_audit_row_per_cycle() {
+    let store = store();
+    let promoter = promoter(Arc::clone(&store), true);
+    let scorer = scorer(Arc::clone(&store));
+
+    let t1 = ts_at("2026-06-08T09:00:00-05:00[America/Chicago]");
+    let t2 = ts_at("2026-06-08T10:00:00-05:00[America/Chicago]");
+    let t3 = ts_at("2026-06-08T11:00:00-05:00[America/Chicago]");
+
+    // Promote at t1 on two strong attesters (posterior 0.725 clears the 0.70 bar).
+    let ann = enroll(&store, 0.95);
+    let bo = enroll(&store, 0.95);
+    let (_team_node, fact_id) = team_fact(&store, "the team prefers graph databases");
+    attest(&store, &fact_id, &ann);
+    attest(&store, &fact_id, &bo);
+    let PromotionOutcome::Promoted { global_id, .. } =
+        promoter.evaluate_promotion(&fact_id, &t1).expect("promote")
+    else {
+        panic!("expected promotion at t1");
+    };
+
+    // A same-instant replay is idempotent — AlreadyPromoted, no second Promote row.
+    assert!(matches!(
+        promoter.evaluate_promotion(&fact_id, &t1).expect("replay"),
+        PromotionOutcome::AlreadyPromoted { .. }
+    ));
+
+    // Reliability-demote at t2: decay both attesters below the bar. The team original stays current,
+    // so this is the reliability path, and the ledger flips to Rejected (clearing AlreadyPromoted).
+    decay_attester(&store, &scorer, ann, 10);
+    decay_attester(&store, &scorer, bo, 11);
+    assert!(matches!(
+        promoter
+            .evaluate_reliability_demotion(&fact_id, &t2)
+            .expect("demote"),
+        DemotionOutcome::Demoted { .. }
+    ));
+
+    // Re-promote at t3: add enough fresh reliable attesters to clear the bar despite the two decayed
+    // ones — (1 + 2*0.333 + 8*0.95) / (2 + 10) = 0.772 >= 0.70.
+    for _ in 0..8 {
+        let fresh = enroll(&store, 0.95);
+        attest(&store, &fact_id, &fresh);
+    }
+    let PromotionOutcome::Promoted { global_id: g2, .. } = promoter
+        .evaluate_promotion(&fact_id, &t3)
+        .expect("re-promote")
+    else {
+        panic!("expected re-promotion at t3");
+    };
+    assert_eq!(
+        g2, global_id,
+        "re-promotion resurrects the same global node"
+    );
+
+    // The by-subject history holds the full lifecycle: two distinct Promote rows (t1, t3). Under the
+    // old content-only id scheme the second promote would collapse onto the first.
+    let history = store.audit_history(&fact_id, None, 50).expect("history");
+    let promotes: Vec<_> = history
+        .events
+        .iter()
+        .filter(|event| event.kind == AuditKind::Promote)
+        .collect();
+    assert_eq!(
+        promotes.len(),
+        2,
+        "promote -> demote -> re-promote is two Promote events, not one: {promotes:?}"
+    );
+    assert_ne!(
+        promotes[0].identity.id, promotes[1].identity.id,
+        "a distinct audit id per cycle"
+    );
+    assert_eq!(promotes[0].occurred_at, t1, "first promote at t1");
+    assert_eq!(promotes[1].occurred_at, t3, "re-promote at t3");
 }

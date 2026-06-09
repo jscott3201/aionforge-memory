@@ -34,7 +34,7 @@ use aionforge_domain::trust::beta_posterior;
 use aionforge_store::{AttesterRecord, CandidateSet, NodeId, Store, StoreError};
 
 use crate::attest_gate::{AttestError, AttestRejection, AttestationGate};
-use crate::system_audit::{content_id, system_identity};
+use crate::system_audit::{content_id, cycle_id, system_identity};
 
 /// A per-category promotion rule: a stricter quorum and posterior bar for a named category.
 #[derive(Debug, Clone, PartialEq)]
@@ -756,9 +756,12 @@ impl Promoter {
     }
 
     fn attest_audit(&self, req: &AttestRequest) -> AuditEvent {
+        // Attestation is not monotonic — a fact can be de-attested and re-attested by the same
+        // attester at a later instant — so the audit id folds `attested_at`, keeping each
+        // attestation a distinct row in the fact's history while a replay still dedupes.
         let key = format!("attest|{}|{}", req.fact_id, req.attester_id);
         AuditEvent {
-            identity: system_identity(content_id("attest", &key), &req.attested_at),
+            identity: system_identity(cycle_id("attest", &key, &req.attested_at), &req.attested_at),
             kind: AuditKind::Attest,
             subject_id: req.fact_id,
             actor_id: req.attester_id,
@@ -806,7 +809,11 @@ impl Promoter {
         now: &Timestamp,
     ) -> AuditEvent {
         AuditEvent {
-            identity: system_identity(content_id(tag, &subject.to_string()), now),
+            // A subject's governance transitions recur across cycles (promote -> demote ->
+            // re-promote), so the audit id folds `now` to keep each transition a distinct row in
+            // the subject's history. The promotion ledger and global copy keep their stable
+            // content_id — those must resurrect the same node on a re-derivation, not multiply.
+            identity: system_identity(cycle_id(tag, &subject.to_string(), now), now),
             kind,
             subject_id: subject,
             actor_id: subject,

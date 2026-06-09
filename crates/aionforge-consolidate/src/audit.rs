@@ -503,3 +503,62 @@ pub(crate) fn quarantine_audit(
         occurred_at: now.clone(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::quarantine_audit;
+    use aionforge_domain::ids::Id;
+    use aionforge_domain::namespace::Namespace;
+    use aionforge_domain::time::Timestamp;
+    use aionforge_domain::value::ObjectValue;
+
+    fn at(s: &str) -> Timestamp {
+        s.parse().expect("valid zoned datetime")
+    }
+
+    /// The load-bearing M4.T06 asymmetry: a consolidation audit id is content-only and ignores the
+    /// clock, the exact opposite of the governance `cycle_id` (which folds the instant). A
+    /// consolidation decision is content-idempotent — a re-tick re-supplies a fresh `now` — so
+    /// folding time here would let that re-tick mint a spurious duplicate, breaking same-graph-state
+    /// -> same-output. This guards against a future change that "fixes" consolidation to fold time.
+    #[test]
+    fn a_consolidation_audit_id_ignores_the_clock() {
+        let ns = Namespace::Team("ops".to_string());
+        let victim = Id::from_content_hash(b"victim");
+        let actor = Id::from_content_hash(b"actor");
+        let victim_obj = ObjectValue::Text("graph databases".to_string());
+        let survivor_obj = ObjectValue::Text("vector databases".to_string());
+
+        let early = quarantine_audit(
+            &ns,
+            "prefers",
+            &victim,
+            &victim_obj,
+            0.3,
+            &survivor_obj,
+            0.9,
+            &at("2026-06-06T09:00:00-05:00[America/Chicago]"),
+            &actor,
+        );
+        let late = quarantine_audit(
+            &ns,
+            "prefers",
+            &victim,
+            &victim_obj,
+            0.3,
+            &survivor_obj,
+            0.9,
+            &at("2026-06-06T15:30:00-05:00[America/Chicago]"),
+            &actor,
+        );
+
+        assert_eq!(
+            early.identity.id, late.identity.id,
+            "the same decision at a different instant is the same content-addressed audit id"
+        );
+        assert_ne!(
+            early.occurred_at, late.occurred_at,
+            "even though the recorded occurred_at differs"
+        );
+    }
+}
