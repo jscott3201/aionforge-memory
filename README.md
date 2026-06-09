@@ -1,4 +1,10 @@
-# Aionforge Memory
+<h1 align="center">
+  <img src=".github/assets/logo.svg" alt="Aionforge Memory" width="640">
+</h1>
+
+<p align="center">
+  Long-term memory for AI agents, built on selene-db.
+</p>
 
 > **Status: pre-alpha.** The design is settled and the build is underway, milestone
 > by milestone. Schema, APIs, and surfaces will still move around. Nothing here is
