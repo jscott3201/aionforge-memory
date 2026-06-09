@@ -61,7 +61,8 @@ the bar can end up stricter than any single category's rule).
 
 This layer **reads** an agent's reliability; it never changes it. Maintaining per-agent
 reliability — raising it when an agent's attestations hold up, lowering it when they're later
-invalidated — is trust scoring's job, which builds on this one. Until an agent has been scored it
+invalidated — is [trust scoring](trust-model.md)'s job, which builds on this one. Until an agent
+has been scored it
 contributes the uninformative `0.5`, which moves the posterior toward neither pole. So on a cold
 start, before any reliability has been earned, nothing promotes — the conservative default.
 

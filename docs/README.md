@@ -58,6 +58,10 @@ This is reference and guides, not planning or changelogs.
   fact takes to global: explicit signed attestations, the sybil-bounded reliability-weighted posterior,
   the count-and-threshold gates, the promoted global copy and its ledger, and the demotion that
   quarantines the copy on lost support while leaving the namespace original untouched.
+- [Trust scoring](trust-model.md) — the off-by-default reliability layer the line above reads from:
+  per-agent reliability folded from an append-only event log, the asymmetric loss/gain weights, the
+  recomputable fact-trust cache, the reliability-decay demotion that complements lost-support, and
+  the competition-ranked trust re-rank that orders recall without widening it.
 
 ## Substrate
 
