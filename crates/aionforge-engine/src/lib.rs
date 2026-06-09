@@ -58,7 +58,7 @@ pub use aionforge_retrieval::{
 pub use aionforge_store::{Store, StoreConfig};
 pub use aionforge_trust::{
     AttestReceipt, AttestRequest, CategoryRule, DemotionOutcome, PromotionError, PromotionOutcome,
-    PromotionPolicy,
+    PromotionPolicy, ReliabilityError, ReliabilityPolicy, ReliabilityScorer,
 };
 
 /// How the facade configures the capture and retrieval paths.
@@ -77,6 +77,11 @@ pub struct MemoryConfig {
     /// into this [`PromotionPolicy`]. The attestation skew gate reuses
     /// `security.clock_skew_tolerance_ms`.
     pub promotion: PromotionPolicy,
+    /// Trust-scoring policy (06 §5). Off by default; when enabled the engine builds the reliability
+    /// scorer, which folds the append-only reliability event log into each agent's trust cache. The
+    /// host maps `aionforge-config`'s `ReliabilityConfig` into this [`ReliabilityPolicy`], so the
+    /// engine takes no config dependency — the same indirection as the promotion policy.
+    pub reliability: ReliabilityPolicy,
 }
 
 /// The engine's signed-write gating posture (06 §3, M4.T03).
@@ -138,6 +143,10 @@ pub struct Memory<E> {
     authorizer: Arc<dyn Authorizer>,
     /// The attestation/promotion orchestrator, present only when promotion is enabled (06 §4).
     promoter: Option<Promoter>,
+    /// The reliability scorer, present only when trust scoring is enabled (06 §5). It folds the
+    /// reliability event log into agent and fact trust caches, and backs the refold-first
+    /// reliability-demotion sweep.
+    reliability_scorer: Option<ReliabilityScorer>,
 }
 
 impl<E: Embedder> Memory<E> {
@@ -176,6 +185,7 @@ impl<E: Embedder> Memory<E> {
         config.capture.validate().map_err(EngineError::Config)?;
         config.security.validate().map_err(EngineError::Config)?;
         config.promotion.validate().map_err(EngineError::Config)?;
+        config.reliability.validate().map_err(EngineError::Config)?;
         if config.promotion.enabled {
             validate_promotion_skew(config.security.clock_skew_tolerance_ms)?;
         }
@@ -221,6 +231,18 @@ impl<E: Embedder> Memory<E> {
         } else {
             None
         };
+        // Trust scoring (06 §5): when on, build the reliability scorer over the store. It writes only
+        // off-cursor (folding the reliability event log into the trust caches), so it takes no gate
+        // and no clock. The `Option<ReliabilityScorer>` is the single off-switch, mirroring the
+        // promoter — off ⇒ every reliability facade method is inert.
+        let reliability_scorer = if config.reliability.enabled {
+            Some(ReliabilityScorer::new(
+                Arc::clone(&store),
+                config.reliability.clone(),
+            ))
+        } else {
+            None
+        };
         let retriever = HybridRetriever::with_authorizer(
             Arc::clone(&store),
             Arc::clone(&embedder),
@@ -234,6 +256,7 @@ impl<E: Embedder> Memory<E> {
             retriever,
             authorizer,
             promoter,
+            reliability_scorer,
         })
     }
 
@@ -485,6 +508,134 @@ impl<E: Embedder + 'static> Memory<E> {
             None => Ok(DemotionOutcome::Disabled),
         }
     }
+
+    /// Refold the reliability caches for a set of agents from the committed event log: each agent's
+    /// trust scores and its produced facts' trust are recomputed (06 §5). Off-cursor and idempotent
+    /// — a no-move refold writes nothing. Does nothing and returns `Ok(())` when trust scoring is
+    /// off.
+    ///
+    /// # Errors
+    /// Returns [`EngineError::Reliability`] if a store read or a cache write fails.
+    pub fn refold_reliability(&self, agents: &[Id]) -> Result<(), EngineError> {
+        let Some(scorer) = &self.reliability_scorer else {
+            return Ok(());
+        };
+        for agent in agents {
+            scorer.refold_agent(agent)?;
+        }
+        Ok(())
+    }
+
+    /// Sweep a set of promoted candidates for reliability-decay demotion (06 §5). For each candidate
+    /// this refolds its attesters' reliability **first**, then evaluates the reliability-demotion
+    /// gate — honoring the scorer's refold-first contract, so the recomputed posterior reads fresh
+    /// reliability and the verdict is not arrival-order dependent. The refolded set is exactly the
+    /// attester set the gate reads, so the two never disagree.
+    ///
+    /// Reliability demotion needs both halves on: the scorer to refold and the promoter to evaluate.
+    /// With either off, every candidate reports [`DemotionOutcome::Disabled`]; an unknown candidate
+    /// reports [`DemotionOutcome::NoChange`]. `now` is the caller's clock.
+    ///
+    /// # Errors
+    /// Returns [`EngineError::Reliability`] if a refold fails, or [`EngineError::Promotion`] if the
+    /// demotion read or write fails.
+    pub fn sweep_reliability_demotions(
+        &self,
+        candidates: &[Id],
+        now: &Timestamp,
+    ) -> Result<Vec<DemotionOutcome>, EngineError> {
+        let (Some(scorer), Some(promoter)) = (&self.reliability_scorer, &self.promoter) else {
+            return Ok(vec![DemotionOutcome::Disabled; candidates.len()]);
+        };
+        let mut outcomes = Vec::with_capacity(candidates.len());
+        for candidate in candidates {
+            let Some(team_node) = self.store.fact_node_by_id(candidate)? else {
+                outcomes.push(DemotionOutcome::NoChange);
+                continue;
+            };
+            // Refold-first: refresh each attester from the committed event log before the gate reads
+            // its cache.
+            for attester in self.store.distinct_attesters(team_node)? {
+                scorer.refold_agent(&attester.attester_id)?;
+            }
+            outcomes.push(promoter.evaluate_reliability_demotion(candidate, now)?);
+        }
+        Ok(outcomes)
+    }
+
+    /// Record a producer decay (trigger D1): each distinct producing agent of a contradicted,
+    /// quarantined `victim_fact` takes a reliability decay, folded into its trust cache (06 §5).
+    /// Host-driven and off-cursor. Returns the number of decay events recorded — `0` when trust
+    /// scoring is off or the fact is unknown. Idempotent: a replay records nothing new.
+    ///
+    /// # Errors
+    /// Returns [`EngineError::Reliability`] if a store read or the cache write fails.
+    pub fn record_reliability_decay(
+        &self,
+        victim_fact: &Id,
+        now: &Timestamp,
+    ) -> Result<usize, EngineError> {
+        let Some(scorer) = &self.reliability_scorer else {
+            return Ok(0);
+        };
+        let Some(node) = self.store.fact_node_by_id(victim_fact)? else {
+            return Ok(0);
+        };
+        let events = scorer.quarantine_decay(node, now)?;
+        scorer.apply(&events)?;
+        Ok(events.len())
+    }
+
+    /// Record an attester decay (trigger D2): each distinct attester of a `demoted_fact` takes a
+    /// reliability decay in the fact's category (06 §5) — the symmetric partner of
+    /// [`Memory::record_reliability_decay`] for the demotion side. Host-driven and off-cursor.
+    /// Returns the number of decay events recorded — `0` when off or the fact is unknown. Idempotent.
+    ///
+    /// # Errors
+    /// Returns [`EngineError::Reliability`] if a store read or the cache write fails.
+    pub fn record_reliability_demotion(
+        &self,
+        demoted_fact: &Id,
+        now: &Timestamp,
+    ) -> Result<usize, EngineError> {
+        let Some(scorer) = &self.reliability_scorer else {
+            return Ok(0);
+        };
+        let Some(node) = self.store.fact_node_by_id(demoted_fact)? else {
+            return Ok(0);
+        };
+        let events = scorer.demotion_decay(node, now)?;
+        scorer.apply(&events)?;
+        Ok(events.len())
+    }
+
+    /// Record an agreement gain (trigger G1): when a later, distinct-authored `corroborating_fact`
+    /// carries what an earlier `asserted_fact`'s producers claimed, each of those producers earns a
+    /// reliability gain (06 §5). The scorer's distinct-author guard drops self-corroboration.
+    /// Host-driven and off-cursor. Returns the number of gain events recorded — `0` when off, either
+    /// fact is unknown, or the guard dropped them all. Idempotent.
+    ///
+    /// # Errors
+    /// Returns [`EngineError::Reliability`] if a store read or the cache write fails.
+    pub fn record_reliability_agreement(
+        &self,
+        asserted_fact: &Id,
+        corroborating_fact: &Id,
+        now: &Timestamp,
+    ) -> Result<usize, EngineError> {
+        let Some(scorer) = &self.reliability_scorer else {
+            return Ok(0);
+        };
+        let (Some(asserted), Some(corroborating)) = (
+            self.store.fact_node_by_id(asserted_fact)?,
+            self.store.fact_node_by_id(corroborating_fact)?,
+        ) else {
+            return Ok(0);
+        };
+        let events = scorer.agreement_gain(asserted, corroborating, now)?;
+        scorer.apply(&events)?;
+        Ok(events.len())
+    }
 }
 
 /// Validate the clock-skew tolerance the attestation gate reuses when promotion is on (06 §4),
@@ -533,6 +684,10 @@ pub enum EngineError {
     /// The optional attestation/quorum-promotion path refused an attestation or failed (06 §4).
     #[error("attestation or promotion failed")]
     Promotion(#[from] PromotionError),
+
+    /// The optional trust-scoring path failed (a store read or an off-cursor cache write, 06 §5).
+    #[error("reliability scoring failed")]
+    Reliability(#[from] ReliabilityError),
 
     /// The default capture privacy filter could not be built.
     #[error("could not initialize the capture filter: {0}")]
