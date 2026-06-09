@@ -198,6 +198,33 @@ fn episode_signals(bundle: &RecallBundle, content: &str) -> Option<Vec<Signal>> 
     })
 }
 
+fn episode_rank(bundle: &RecallBundle, content: &str) -> Option<usize> {
+    bundle
+        .structured
+        .iter()
+        .position(|e| matches!(e, StructuredEntry::Episode(ep) if ep.content == content))
+}
+
+/// Insert an episode with a given `trust` and content but NO embedding, so the dense signal cannot
+/// reach it and only the lexical signal (and the trust re-rank) order it.
+fn episode_no_embedding(store: &Store, content: &str, trust: f64, seed: u128) {
+    let episode = Episode {
+        identity: identity(Id::generate()),
+        stats: stats(trust),
+        content: content.to_string(),
+        role: Role::User,
+        captured_at: ts(T0),
+        agent_id: Id::generate(),
+        session_id: None,
+        content_hash: ContentHash::of(&seed.to_le_bytes()),
+        embedding: None,
+        embedder_model: None,
+        consolidation_state: ConsolidationState::Raw,
+        origin: None,
+    };
+    store.insert_episode(&episode).expect("insert episode");
+}
+
 fn retriever(store: Arc<Store>) -> HybridRetriever<FakeEmbedder> {
     HybridRetriever::new(
         store,
@@ -304,6 +331,63 @@ async fn the_trust_re_rank_attributes_to_episodes_too() {
         episode_signals(&bundle, "the recurring topic came up again")
             .is_some_and(|s| s.contains(&Signal::Trust)),
         "a surfaced episode carries a Trust contribution",
+    );
+}
+
+#[tokio::test]
+async fn the_trust_re_rank_lifts_a_high_trust_episode_over_its_better_ranked_peers() {
+    // The episode analogue of the decisive fact test, exercising the `is_fact == false` branch that
+    // reads `Episode.stats.trust`. The high-trust episode is created last, so dense ranks it dead
+    // last by node id; only trust can lift it over a lower-trust peer.
+    let store = store();
+    for i in 0..5 {
+        episode_with_trust(
+            &store,
+            &format!("low trust episode {i}"),
+            0.50 - 0.10 * i as f64,
+            i as u128,
+        );
+    }
+    episode_with_trust(&store, "the high trust episode", 0.95, 99);
+    let bundle = recall(&retriever(store), QueryClass::Temporal).await;
+
+    let high =
+        episode_rank(&bundle, "the high trust episode").expect("high-trust episode surfaced");
+    let last_low =
+        episode_rank(&bundle, "low trust episode 4").expect("low-trust episode surfaced");
+    assert!(
+        high < last_low,
+        "the high-trust episode (worst base rank) climbs over a lower-trust peer on trust \
+         (high #{high}, low #{last_low})",
+    );
+    assert!(
+        episode_signals(&bundle, "the high trust episode")
+            .is_some_and(|s| s.contains(&Signal::Trust)),
+        "the episode carries a Trust contribution",
+    );
+}
+
+const LONG_MATCH: &str =
+    "the recurring topic with a great deal of additional padding and filler words here";
+
+#[tokio::test]
+async fn a_uniform_trust_set_is_not_reordered_by_the_trust_signal() {
+    // Neutrality — the property the competition rank exists for. Two equal-trust episodes with NO
+    // embedding are ordered by the lexical signal alone, which favors the shorter, denser match
+    // (BM25 length normalization). The short match is created LAST (the worst node-id tie-break), so
+    // a trust ranking that spread equal-trust candidates by node id would cancel the lexical lift and
+    // sink it. The competition rank collapses equal trusts to one position, so trust adds a constant
+    // and the lexical order stands: the short match keeps the top slot.
+    let store = store();
+    episode_no_embedding(&store, LONG_MATCH, 0.80, 1);
+    episode_no_embedding(&store, QUERY, 0.80, 2);
+    let bundle = recall(&retriever(store), QueryClass::Temporal).await;
+
+    let short = episode_rank(&bundle, QUERY).expect("short match surfaced");
+    let long = episode_rank(&bundle, LONG_MATCH).expect("long match surfaced");
+    assert!(
+        short < long,
+        "uniform trust does not sink the lexically-preferred short match (short #{short}, long #{long})",
     );
 }
 

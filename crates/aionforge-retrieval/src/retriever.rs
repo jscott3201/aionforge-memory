@@ -595,7 +595,16 @@ impl<E: Embedder> HybridRetriever<E> {
         let mut candidates = Vec::with_capacity(scored.len());
         let mut rank = 0;
         for (i, &(node, score)) in scored.iter().enumerate() {
-            if i > 0 && scored[i - 1].1.partial_cmp(&score) != Some(std::cmp::Ordering::Equal) {
+            // Start a new rank only when this trust differs from the previous one, under the SAME
+            // convention the sort used (a non-comparable pair counts as equal), so the rank
+            // boundaries never disagree with the order.
+            if i > 0
+                && scored[i - 1]
+                    .1
+                    .partial_cmp(&score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    != std::cmp::Ordering::Equal
+            {
                 rank = i;
             }
             candidates.push(RankedCandidate { node, rank, score });

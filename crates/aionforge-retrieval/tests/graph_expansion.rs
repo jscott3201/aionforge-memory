@@ -445,8 +445,10 @@ async fn graph_expansion_surfaces_a_supports_chained_fact() {
         "graph expansion surfaced the chained fact: {chained_signals:?}",
     );
     assert!(
-        !chained_signals.contains(&Signal::Dense) && !chained_signals.contains(&Signal::Lexical),
-        "no dense or lexical search reached the chained fact: {chained_signals:?}",
+        !chained_signals.contains(&Signal::Dense)
+            && !chained_signals.contains(&Signal::Lexical)
+            && !chained_signals.contains(&Signal::Support),
+        "no other search signal (dense, lexical, support) reached the chained fact: {chained_signals:?}",
     );
     assert!(
         bundle.explanation.signals_run.contains(&Signal::Graph),
