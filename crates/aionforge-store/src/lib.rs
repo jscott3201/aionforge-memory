@@ -38,6 +38,7 @@ mod search;
 mod skill;
 mod skill_induction;
 mod store;
+mod trust_fold;
 
 pub use attestation::{AttestWriteIds, AttesterRecord};
 pub use capture_write::CaptureWriteIds;

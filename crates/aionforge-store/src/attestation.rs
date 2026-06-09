@@ -184,6 +184,13 @@ pub(crate) fn fact_node_in(snapshot: &SeleneGraph, id: &Id) -> Result<Option<Nod
     node_by_id_in(snapshot, "Fact", id)
 }
 
+/// Resolve an `Agent`'s `NodeId` by its domain id within a snapshot — the in-txn twin of
+/// [`Store::agent_node_by_id`], so a trust-fold write can probe and wire its `AUDIT` edge to the
+/// agent under one write lock.
+pub(crate) fn agent_node_in(snapshot: &SeleneGraph, id: &Id) -> Result<Option<NodeId>, StoreError> {
+    node_by_id_in(snapshot, "Agent", id)
+}
+
 /// Resolve a node's `NodeId` by its domain `id` within a snapshot, for a label whose `id` is
 /// scalar-indexed and `UNIQUE`. Returns `None` when no index is registered (read as absent) or
 /// no live row matches.
