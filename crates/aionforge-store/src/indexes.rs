@@ -8,9 +8,12 @@
 //! Both paths are made idempotent (introspect-then-skip for vector/text, `IF NOT
 //! EXISTS` for composites) so a re-run or a crash mid-migration is safe.
 //!
-//! Timestamp-bearing composite indexes from §8 are deferred: selene-db cannot index
-//! `ZONED DATETIME`, and the schema keeps timestamps zoned (§2/§3). Only the three
-//! pure-scalar composites are built here.
+//! selene-db now indexes `ZONED DATETIME` (a typed property index over `jiff::Zoned`,
+//! ordered by absolute instant), so the §8 audit temporal composites are built here:
+//! `AuditEvent.occurred_at` is the first datetime property index in the schema, and the
+//! `(subject_id, occurred_at)` / `(kind, occurred_at)` composites order a subject's (or
+//! a kind's) audit history at the index for the M4.T06 readers. Other §8 timestamp
+//! composites that no reader needs yet are still omitted.
 
 use selene_core::db_string;
 use selene_graph::{HnswIndexConfig, TypedIndexKind, VectorIndexConfig, VectorIndexKind};
@@ -42,7 +45,8 @@ const TEXT_INDEXES: &[(&str, &str)] = &[
 
 /// `(label, property)` for the per-kind `INDEXED` scalar fields (§4/§8). `namespace`
 /// is indexed on every kind (§11) and added separately, so it is not repeated here.
-/// Every field here is a `STRING` column.
+/// Each entry declares its own column type via [`TypedIndexKind`] (string, UUID, and —
+/// for `AuditEvent.occurred_at` — zoned datetime).
 const SCALAR_INDEXES: &[(&str, &str, TypedIndexKind)] = &[
     ("Episode", "role", TypedIndexKind::String),
     ("Episode", "agent_id", TypedIndexKind::Uuid),
@@ -96,16 +100,22 @@ const SCALAR_INDEXES: &[(&str, &str, TypedIndexKind)] = &[
     ("AuditEvent", "id", TypedIndexKind::Uuid),
     ("AuditEvent", "kind", TypedIndexKind::String),
     ("AuditEvent", "subject_id", TypedIndexKind::Uuid),
+    ("AuditEvent", "actor_id", TypedIndexKind::Uuid),
+    ("AuditEvent", "occurred_at", TypedIndexKind::ZonedDateTime),
     ("Promotion", "candidate_fact_id", TypedIndexKind::Uuid),
     ("Promotion", "status", TypedIndexKind::String),
 ];
 
-/// Composite indexes (§8). DDL-only — no Rust wrapper. The five timestamp-bearing
-/// composites are omitted (the engine cannot index `ZONED DATETIME`).
+/// Composite indexes (§8). DDL-only — no Rust wrapper. The `AuditEvent` temporal
+/// composites order a subject's (or a kind's) audit history by `occurred_at` at the
+/// index, so the by-subject and by-kind readers scan in instant order without a
+/// sort-after-scan. Other §8 timestamp composites that no reader needs yet are omitted.
 const COMPOSITE_INDEXES: &[&str] = &[
     "CREATE INDEX IF NOT EXISTS cidx_fact_subject_predicate ON :Fact(subject_id, predicate)",
     "CREATE INDEX IF NOT EXISTS cidx_fact_subject_status ON :Fact(subject_id, status)",
     "CREATE INDEX IF NOT EXISTS cidx_skill_name_version ON :Skill(name, version)",
+    "CREATE INDEX IF NOT EXISTS cidx_audit_subject_occurred ON :AuditEvent(subject_id, occurred_at)",
+    "CREATE INDEX IF NOT EXISTS cidx_audit_kind_occurred ON :AuditEvent(kind, occurred_at)",
 ];
 
 /// A registered vector index, for inventory and tests.

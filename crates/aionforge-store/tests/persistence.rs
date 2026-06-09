@@ -8,7 +8,10 @@
 
 use std::path::PathBuf;
 
+use aionforge_domain::blocks::Identity;
 use aionforge_domain::ids::Id;
+use aionforge_domain::namespace::Namespace;
+use aionforge_domain::nodes::forensic::{AuditEvent, AuditKind};
 use aionforge_store::{BoundQuery, QueryResult, Store, StoreConfig, Value};
 
 use jiff::Zoned;
@@ -78,6 +81,27 @@ fn insert_fact(store: &Store, id: &str, subject: &str) {
     store.execute(&query).expect("insert fact");
 }
 
+/// Commit a minimal `AuditEvent` with a specific `occurred_at`, so recovery has a real
+/// zoned-datetime value to rebuild the `occurred_at` index over.
+fn commit_audit_at(store: &Store, marker: &str, occurred: &str) {
+    let when: Zoned = occurred.parse().expect("valid zoned datetime");
+    let event = AuditEvent {
+        identity: Identity {
+            id: Id::from_content_hash(marker.as_bytes()),
+            ingested_at: now(),
+            namespace: Namespace::System,
+            expired_at: None,
+        },
+        kind: AuditKind::Promote,
+        subject_id: Id::from_content_hash(b"persist-subject"),
+        actor_id: Id::from_content_hash(b"substrate"),
+        payload: serde_json::json!({ "marker": marker }),
+        signature: String::new(),
+        occurred_at: when,
+    };
+    store.commit_audit(&event).expect("commit audit");
+}
+
 fn fact_count(store: &Store) -> usize {
     match store
         .execute(&BoundQuery::new("MATCH (f:Fact) RETURN f.id AS id"))
@@ -140,6 +164,12 @@ fn persistence_round_trips_schema_data_indexes_and_providers() {
             Store::open_persistent_migrated(&dir, config, &now()).expect("open and migrate");
         insert_fact(&store, "fact-1", "entity-a");
         insert_fact(&store, "fact-2", "entity-b");
+        // A real zoned-datetime row so recovery rebuilds the occurred_at index over actual data.
+        commit_audit_at(
+            &store,
+            "persist-audit",
+            "2026-06-06T09:00:00-05:00[America/Chicago]",
+        );
         let supersede = BoundQuery::new(
             "MATCH (a:Fact {id: $from}), (b:Fact {id: $to}) \
              INSERT (a)-[:SUPERSEDED_BY {valid_from: $ts, ingested_at: $ts, reason: $reason}]->(b)",
@@ -157,8 +187,8 @@ fn persistence_round_trips_schema_data_indexes_and_providers() {
         assert_eq!(store.schema_version().expect("schema version"), 1);
         assert_eq!(store.vector_indexes().len(), 7);
         assert_eq!(store.text_indexes().len(), 5);
-        assert_eq!(store.property_indexes().len(), 47);
-        assert_eq!(store.composite_indexes().len(), 3);
+        assert_eq!(store.property_indexes().len(), 49);
+        assert_eq!(store.composite_indexes().len(), 5);
         assert_eq!(fact_count(&store), 2);
         assert_eq!(provider_count(&store, "current_support_facts"), 1);
         // Drop releases the WAL file lock so recovery can reopen it in this process.
@@ -180,14 +210,58 @@ fn persistence_round_trips_schema_data_indexes_and_providers() {
     assert_eq!(recovered.text_indexes().len(), 5, "text indexes rebuilt");
     assert_eq!(
         recovered.property_indexes().len(),
-        47,
+        49,
         "property indexes rebuilt"
     );
     assert_eq!(
         recovered.composite_indexes().len(),
-        3,
+        5,
         "composite indexes rebuilt"
     );
+    // The first ZONED DATETIME property index in the schema rebuilds into the catalog from the WAL.
+    assert!(
+        recovered
+            .property_indexes()
+            .iter()
+            .any(|(label, prop)| label == "AuditEvent" && prop == "occurred_at"),
+        "AuditEvent.occurred_at datetime index is in the recovered catalog"
+    );
+    // And it functions over recovered data, not just its name: the persisted zoned-datetime value
+    // round-trips through the WAL and a half-open range query against the recovered store finds it.
+    let lo: Zoned = "2026-06-06T08:00:00-05:00[America/Chicago]"
+        .parse()
+        .unwrap();
+    let hi: Zoned = "2026-06-06T10:00:00-05:00[America/Chicago]"
+        .parse()
+        .unwrap();
+    let range = BoundQuery::new(
+        "MATCH (a:AuditEvent) WHERE a.occurred_at >= $lo AND a.occurred_at < $hi RETURN a.id",
+    )
+    .bind("lo", Value::ZonedDateTime(Box::new(lo)))
+    .unwrap()
+    .bind("hi", Value::ZonedDateTime(Box::new(hi)))
+    .unwrap();
+    match recovered
+        .execute(&range)
+        .expect("range query over recovered audit")
+    {
+        QueryResult::Rows(rows) => {
+            assert_eq!(
+                rows.row_count(),
+                1,
+                "the recovered audit event is found by occurred_at"
+            );
+            match rows.value(0, 0) {
+                Some(Value::Uuid(u)) => assert_eq!(
+                    u.to_string(),
+                    Id::from_content_hash(b"persist-audit").to_string(),
+                    "the matched id is the persisted audit event"
+                ),
+                other => panic!("id was not a uuid: {other:?}"),
+            }
+        }
+        other => panic!("unexpected query result: {other:?}"),
+    }
     assert_eq!(fact_count(&recovered), 2, "Fact rows survive");
     assert_eq!(
         provider_count(&recovered, "current_support_facts"),

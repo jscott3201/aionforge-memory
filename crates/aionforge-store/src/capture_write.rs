@@ -75,9 +75,10 @@ impl Store {
     /// produces no memory node, and the agent subject has no node in the capture flow. The event is
     /// instead discoverable by the **scalar `kind` and `subject_id` indexes** (`subject_id` is the
     /// agent, so an M4.T06 by-subject lookup over `subject_id` returns an agent's denied attempts).
-    /// The spec's `(kind, occurred_at)` / `(actor_id, occurred_at)` composites are deferred until
-    /// selene-db can index `ZONED DATETIME` (the gap noted in the `indexes` module); `actor_id` is not
-    /// scalar-indexed today, so an actor-only scan is the fallback for that axis.
+    /// The `(subject_id, occurred_at)` and `(kind, occurred_at)` composites are now built (the
+    /// `indexes` module), and `actor_id` is scalar-indexed, so the by-subject, by-kind, and by-actor
+    /// axes are all index-backed. The `(actor_id, occurred_at)` composite stays deferred — the
+    /// `actor_id` scalar index plus an `occurred_at` sort covers that axis until a workload needs it.
     ///
     /// # Errors
     /// Returns [`StoreError`] if translating the event or the commit fails.
