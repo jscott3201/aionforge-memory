@@ -1,6 +1,6 @@
 //! The L0 read/write surface trust scoring folds over (06 §5, M4.T05).
 //!
-//! Trust is doubly-derived state: the canonical record is an append-only set of
+//! Trust is doubly-derived state: the canonical record is an append-only multiset of
 //! `ReliabilityUpdate` [`AuditEvent`]s, and `Agent.trust_scores` (plus `Fact.stats.trust`) are
 //! recomputable caches the L2 fold rewrites. This module is the store seam that makes that work:
 //! it attributes an invalidated fact to its producing agents, reads an agent's reliability event

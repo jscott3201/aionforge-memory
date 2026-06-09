@@ -323,6 +323,76 @@ fn promotion_gates_are_validated_only_when_enabled() {
 }
 
 #[test]
+fn reliability_weights_are_validated_only_when_enabled() {
+    // Off by default: nonsense weights and priors are inert and never validated.
+    let mut config = Config::default();
+    config.reliability.enabled = false;
+    config.reliability.w_agree = 9.0;
+    config.reliability.prior_alpha = -1.0;
+    config
+        .validate()
+        .expect("an off reliability policy ignores its weights");
+
+    // On with the defaults validates: Beta(1, 1), w_agree 0.25 < w_contradict 1.0.
+    let mut config = Config::default();
+    config.reliability.enabled = true;
+    config
+        .validate()
+        .expect("the default reliability weights are valid when enabled");
+
+    // On: a non-positive Beta prior is rejected.
+    let mut config = Config::default();
+    config.reliability.enabled = true;
+    config.reliability.prior_alpha = 0.0;
+    assert!(
+        matches!(config.validate(), Err(ConfigError::Invalid { key, .. }) if key == "reliability.prior_alpha"),
+        "a zero prior is rejected"
+    );
+
+    // On: a negative weight could push a pseudo-count negative and is rejected.
+    let mut config = Config::default();
+    config.reliability.enabled = true;
+    config.reliability.w_contradict = -1.0;
+    assert!(
+        matches!(config.validate(), Err(ConfigError::Invalid { key, .. }) if key == "reliability.w_contradict"),
+        "a negative weight is rejected"
+    );
+
+    // On: a NaN weight fails the finiteness check.
+    let mut config = Config::default();
+    config.reliability.enabled = true;
+    config.reliability.w_attest_invalid = f64::NAN;
+    assert!(
+        matches!(config.validate(), Err(ConfigError::Invalid { key, .. }) if key == "reliability.w_attest_invalid"),
+        "a NaN weight is rejected"
+    );
+
+    // On: the asymmetry guard — agreement gain at or above contradiction decay is rejected.
+    let mut config = Config::default();
+    config.reliability.enabled = true;
+    config.reliability.w_agree = 1.0; // equal to the default w_contradict
+    assert!(
+        matches!(config.validate(), Err(ConfigError::Invalid { key, .. }) if key == "reliability.w_agree"),
+        "agreement gain that equals the decay is rejected (no strict asymmetry)"
+    );
+
+    // On: an empty default category leaves no bucket for uncategorized updates.
+    let mut config = Config::default();
+    config.reliability.enabled = true;
+    config.reliability.default_category = "  ".to_string();
+    assert!(
+        matches!(config.validate(), Err(ConfigError::Missing(key)) if key == "reliability.default_category"),
+        "an empty default category is rejected"
+    );
+
+    // On: a decay-only posture (w_agree = 0) is valid — zero is strictly below the decay.
+    let mut config = Config::default();
+    config.reliability.enabled = true;
+    config.reliability.w_agree = 0.0;
+    config.validate().expect("a decay-only posture is valid");
+}
+
+#[test]
 fn plain_http_is_rejected_unless_loopback() {
     let allowed = [
         "http://localhost:1234/v1",

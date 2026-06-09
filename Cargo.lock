@@ -232,6 +232,7 @@ dependencies = [
  "base64",
  "ed25519-dalek",
  "jiff",
+ "proptest",
  "serde_json",
  "thiserror",
  "uuid",

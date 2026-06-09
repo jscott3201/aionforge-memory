@@ -33,10 +33,10 @@ const MAX_CLOCK_SKEW_TOLERANCE_MS: u64 = 300_000;
 /// variable that holds its API key rather than carrying the key, so logging a `Config`
 /// never leaks one.
 ///
-/// `Config` derives `PartialEq` but not `Eq`: [`PromotionConfig`] carries real-valued
-/// thresholds and Beta priors (`f64`), which are not `Eq`. Nothing depends on a total
-/// equality over a config, so the honest real-valued model is kept rather than encoding
-/// the probabilities as integers.
+/// `Config` derives `PartialEq` but not `Eq`: [`PromotionConfig`] and [`ReliabilityConfig`]
+/// carry real-valued thresholds, weights, and Beta priors (`f64`), which are not `Eq`. Nothing
+/// depends on a total equality over a config, so the honest real-valued model is kept rather
+/// than encoding the probabilities as integers.
 #[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
@@ -54,6 +54,10 @@ pub struct Config {
     /// Quorum-promotion posture: the attestation count, posterior threshold, and Beta
     /// priors that gate a team fact's promotion to global (06 §4). Off by default.
     pub promotion: PromotionConfig,
+    /// Trust-scoring posture: the Beta prior and the asymmetric agreement/decay weights that
+    /// move an agent's reliability as its facts are corroborated or invalidated (06 §5). Off
+    /// by default.
+    pub reliability: ReliabilityConfig,
 }
 
 /// On-disk state configuration.
@@ -264,6 +268,65 @@ pub struct CategoryPromotionRule {
     pub k: u64,
     /// The posterior bar for this category, in `(0.5, 1.0]`.
     pub threshold: f64,
+}
+
+/// Trust-scoring posture (06 §5): how an agent's per-category reliability moves as the facts
+/// it produced or attested are later corroborated or invalidated.
+///
+/// Off by default — a deployment that does not score reliability records no
+/// `ReliabilityUpdate` events and leaves every agent at its neutral prior, with no overhead.
+/// When on, reliability is **doubly-derived state**: the canonical record is an append-only
+/// multiset of `ReliabilityUpdate` audit events, and `Agent.trust_scores` (plus `Fact.stats.trust`)
+/// are recomputable caches folded from it. These knobs set the Beta prior every agent category
+/// starts at and the three event weights.
+///
+/// The weights are deliberately **asymmetric**: an agreement gain is smaller than a decay, so
+/// reliability is slow to farm and quick to lose. The guard `w_agree < w_contradict` makes
+/// that concrete — a producer can never earn back, through agreement, as much as one of its
+/// own contradicted facts costs it. (The attester channel is loss-only, so it needs no such
+/// guard.) `prior_*` seed the Beta over "this agent is reliable"; the default Beta(1, 1) is
+/// uninformative.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ReliabilityConfig {
+    /// Whether trust scoring runs at all. Off by default; when off, no reliability event is
+    /// recorded and every agent's trust stays at the prior.
+    pub enabled: bool,
+    /// The Beta prior's `alpha` (pseudo-count of reliable outcomes) every agent category
+    /// starts at. Default `1.0`. Validated finite `> 0`.
+    pub prior_alpha: f64,
+    /// The Beta prior's `beta` (pseudo-count of unreliable outcomes). Default `1.0`. Validated
+    /// finite `> 0`.
+    pub prior_beta: f64,
+    /// The trust category an update with no explicit category falls into, mirroring
+    /// [`PromotionConfig::default_category`] so the two subsystems bucket by the same name.
+    /// Validated non-empty when enabled.
+    pub default_category: String,
+    /// The decay a **producing** agent takes when one of its facts is contradicted and
+    /// quarantined (added to the category's Beta `beta`). Default `1.0`. Validated finite `>= 0`.
+    pub w_contradict: f64,
+    /// The decay an **attesting** agent takes when a fact it attested is later invalidated
+    /// (added to `beta`). Default `1.0`. Validated finite `>= 0`.
+    pub w_attest_invalid: f64,
+    /// The gain a **producing** agent earns when a later, distinct-authored canonical fact
+    /// corroborates its assertion (added to `alpha`). Default `0.25`, deliberately smaller than
+    /// the decay weights. Validated finite `>= 0` and strictly less than `w_contradict`. Set to
+    /// `0.0` to ship a decay-only posture.
+    pub w_agree: f64,
+}
+
+impl Default for ReliabilityConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            prior_alpha: 1.0,
+            prior_beta: 1.0,
+            default_category: "reliability".to_owned(),
+            w_contradict: 1.0,
+            w_attest_invalid: 1.0,
+            w_agree: 0.25,
+        }
+    }
 }
 
 impl Config {
@@ -486,6 +549,52 @@ impl Config {
                     self.promotion.prior_alpha,
                     self.promotion.prior_beta,
                 )?;
+            }
+        }
+        if self.reliability.enabled {
+            if !self.reliability.prior_alpha.is_finite() || self.reliability.prior_alpha <= 0.0 {
+                return Err(ConfigError::invalid(
+                    "reliability.prior_alpha",
+                    "must be a finite value greater than zero",
+                ));
+            }
+            if !self.reliability.prior_beta.is_finite() || self.reliability.prior_beta <= 0.0 {
+                return Err(ConfigError::invalid(
+                    "reliability.prior_beta",
+                    "must be a finite value greater than zero",
+                ));
+            }
+            if self.reliability.default_category.trim().is_empty() {
+                return Err(ConfigError::missing("reliability.default_category"));
+            }
+            // Each weight is a Beta pseudo-count, so it must be finite and non-negative or it
+            // could push a posterior parameter negative and break the bounded `[0, 1]` score.
+            for (key, weight) in [
+                ("reliability.w_contradict", self.reliability.w_contradict),
+                (
+                    "reliability.w_attest_invalid",
+                    self.reliability.w_attest_invalid,
+                ),
+                ("reliability.w_agree", self.reliability.w_agree),
+            ] {
+                if !weight.is_finite() || weight < 0.0 {
+                    return Err(ConfigError::invalid(
+                        key,
+                        "must be a finite value greater than or equal to zero",
+                    ));
+                }
+            }
+            // The asymmetry guard: a producer's agreement gain must stay strictly below its
+            // contradiction decay, so reliability can never be farmed back to neutral by
+            // pairing a corroboration against a contradiction. Both weights are already known
+            // finite from the loop above, so a plain `>=` is well-defined here. The attester
+            // channel is loss-only (no gain), so it needs no analogous guard.
+            if self.reliability.w_agree >= self.reliability.w_contradict {
+                return Err(ConfigError::invalid(
+                    "reliability.w_agree",
+                    "must be strictly less than reliability.w_contradict (agreement gain must \
+                     not outpace contradiction decay)",
+                ));
             }
         }
         Ok(())

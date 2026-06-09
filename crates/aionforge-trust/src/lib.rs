@@ -3,6 +3,7 @@
 pub mod attest_gate;
 pub mod gate;
 pub mod promoter;
+pub mod reliability;
 pub mod resolver;
 pub mod signing;
 
@@ -12,5 +13,6 @@ pub use promoter::{
     AttestReceipt, AttestRequest, CategoryRule, DemotionOutcome, Promoter, PromotionError,
     PromotionOutcome, PromotionPolicy,
 };
+pub use reliability::{ReliabilityEvent, ReliabilityFold, ReliabilityOutcome, ReliabilityPolicy};
 pub use resolver::StoreKeyResolver;
 pub use signing::Ed25519Verifier;

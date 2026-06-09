@@ -50,7 +50,8 @@ mod load;
 
 pub use config::{
     CategoryPromotionRule, CompleterConfig, Config, EmbedderConfig, PersistenceConfig,
-    PromotionConfig, RetrievalConfig, SecurityConfig, endpoint_transport_is_allowed,
+    PromotionConfig, ReliabilityConfig, RetrievalConfig, SecurityConfig,
+    endpoint_transport_is_allowed,
 };
 pub use error::ConfigError;
 pub use load::default_config_path;
