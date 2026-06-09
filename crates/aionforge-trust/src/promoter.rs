@@ -249,6 +249,46 @@ pub enum DemotionOutcome {
     },
 }
 
+/// Why a promoted fact is being demoted. Carries both the audit-payload reason string and the
+/// content-address tags for the paired demote/quarantine audits, kept on one type so a
+/// reliability-decay demotion never shares a content id with — or is mistaken for — a structural
+/// lost-support one in the audit subgraph. The two demotion triggers are state-disjoint (one fires
+/// only while the team original is current, the other only once it is not), so at most one ever
+/// applies to a given state; the distinct tags keep them legible across a fact's whole lifetime.
+#[derive(Clone, Copy)]
+enum DemotionReason {
+    /// The team original dropped out of the current-support set (superseded or contradicted).
+    LostSupport,
+    /// The team original is still current, but its attesters' reliability decayed below the bar.
+    ReliabilityDecay,
+}
+
+impl DemotionReason {
+    /// The `reason` written into the demote/quarantine audit payloads.
+    fn reason(self) -> &'static str {
+        match self {
+            Self::LostSupport => "lost_support",
+            Self::ReliabilityDecay => "reliability_decay",
+        }
+    }
+
+    /// The content-address tag for the `Demote` audit.
+    fn demote_tag(self) -> &'static str {
+        match self {
+            Self::LostSupport => "demote",
+            Self::ReliabilityDecay => "demote_reliability",
+        }
+    }
+
+    /// The content-address tag for the `Quarantine` audit.
+    fn quarantine_tag(self) -> &'static str {
+        match self {
+            Self::LostSupport => "quarantine",
+            Self::ReliabilityDecay => "quarantine_reliability",
+        }
+    }
+}
+
 /// Why an attestation or a promotion op failed. The caller-facing variants are deliberately
 /// coarse — an unknown attester, a bad signature, and an unknown fact all surface as one
 /// rejection, so the substrate is neither an enrollment nor a forge oracle (06 §4).
@@ -479,29 +519,136 @@ impl Promoter {
             return Ok(DemotionOutcome::NoChange);
         }
 
+        self.demote(
+            global_node,
+            team_node,
+            *candidate_fact_id,
+            global_id,
+            ledger.posterior,
+            ledger.k,
+            DemotionReason::LostSupport,
+            now,
+        )?;
+        Ok(DemotionOutcome::Demoted { global_id })
+    }
+
+    /// Evaluate a promoted candidate for **reliability-decay demotion**: the team original is still
+    /// structurally current, but its attesters' reliability has fallen far enough that the
+    /// quorum-weighted posterior no longer clears the strictest applicable threshold. Quarantine
+    /// the global copy and leave the team original untouched. Idempotent.
+    ///
+    /// This is the state-disjoint complement of [`Self::evaluate_demotion`]: that path fires only
+    /// once the team original has **lost support** (dropped out of `current_support_facts`); this
+    /// one fires only while it is **still current**. The two therefore never both apply to one
+    /// state, and they write audits under distinct tags so the subgraph keeps a reliability
+    /// demotion apart from a structural one.
+    ///
+    /// **Refold-first contract.** This reads each attester's *current* `Agent.trust_scores`; it
+    /// does not refold them. A caller that wants the verdict to reflect freshly-decayed reliability
+    /// (the engine sweep) must refold the attesters before calling, or the recomputed posterior
+    /// reads a stale cache and the demotion decision becomes arrival-order dependent.
+    ///
+    /// # Errors
+    /// [`PromotionError::Store`] if a read or the write fails.
+    pub fn evaluate_reliability_demotion(
+        &self,
+        candidate_fact_id: &Id,
+        now: &Timestamp,
+    ) -> Result<DemotionOutcome, PromotionError> {
+        if !self.policy.enabled {
+            return Ok(DemotionOutcome::Disabled);
+        }
+        let Some(ledger) = self.store.promotion_by_candidate(candidate_fact_id)? else {
+            return Ok(DemotionOutcome::NoChange);
+        };
+        if ledger.status != PromotionStatus::Promoted {
+            return Ok(DemotionOutcome::NoChange);
+        }
+        let Some(global_id) = ledger.promoted_fact_id else {
+            return Ok(DemotionOutcome::NoChange);
+        };
+        let (Some(global_node), Some(team_node)) = (
+            self.store.fact_node_by_id(&global_id)?,
+            self.store.fact_node_by_id(candidate_fact_id)?,
+        ) else {
+            return Ok(DemotionOutcome::NoChange);
+        };
+        // Reliability demotion fires only while the team original is STILL current — the exact
+        // complement of the lost-support gate in `evaluate_demotion`. A team fact that has dropped
+        // out of the support set is the structural path's job; deferring here keeps the two
+        // disjoint and never double-demotes one state.
+        if !self.is_current(team_node)? {
+            return Ok(DemotionOutcome::NoChange);
+        }
+
+        // Re-run the promotion gate against the attesters' CURRENT reliability (the caller is
+        // responsible for refolding it first). Attestations only accrue, so the live failure mode
+        // is the posterior falling below the bar; we still negate the full gate so a tightened
+        // policy (a raised `k`) also demotes rather than silently leaving a now-under-quorum fact
+        // promoted.
+        let attesters = self.store.distinct_attesters(team_node)?;
+        let (needed_k, threshold) = self.strictest_rule(&attesters);
+        let posterior = self.posterior(&attesters)?;
+        let k = attesters.len() as u64;
+        if k >= needed_k && posterior >= threshold {
+            return Ok(DemotionOutcome::NoChange);
+        }
+
+        self.demote(
+            global_node,
+            team_node,
+            *candidate_fact_id,
+            global_id,
+            posterior,
+            k,
+            DemotionReason::ReliabilityDecay,
+            now,
+        )?;
+        Ok(DemotionOutcome::Demoted { global_id })
+    }
+
+    /// Materialize a demotion through the store's single atomic write-set: close the global copy's
+    /// `PROMOTED_TO` into a `DEMOTED_FROM`, quarantine the global node, flip the ledger to
+    /// `Rejected`, and write the paired demote + quarantine governance audits. [`DemotionReason`]
+    /// supplies the audit-payload reason and the two content-address tags, so a reliability-decay
+    /// demotion and a structural one never share an audit id. The store write is idempotent, so a
+    /// replayed demotion converges to a no-op.
+    #[allow(clippy::too_many_arguments)]
+    fn demote(
+        &self,
+        global_node: NodeId,
+        team_node: NodeId,
+        candidate_fact_id: Id,
+        global_id: Id,
+        posterior: f64,
+        k: u64,
+        reason: DemotionReason,
+        now: &Timestamp,
+    ) -> Result<(), PromotionError> {
         let demoted = DemotedFrom {
             temporal: open_window(now),
         };
         let rejected = self.ledger(
-            *candidate_fact_id,
+            candidate_fact_id,
             Some(global_id),
-            ledger.posterior,
-            ledger.k,
+            posterior,
+            k,
             PromotionStatus::Rejected,
             now,
         );
+        let payload = demote_payload(candidate_fact_id, global_id, posterior, k, reason.reason());
         let demote_audit = self.governance_audit(
             AuditKind::Demote,
             global_id,
-            demote_payload(*candidate_fact_id, global_id, ledger.posterior, ledger.k),
-            "demote",
+            payload.clone(),
+            reason.demote_tag(),
             now,
         );
         let quarantine_audit = self.governance_audit(
             AuditKind::Quarantine,
             global_id,
-            demote_payload(*candidate_fact_id, global_id, ledger.posterior, ledger.k),
-            "quarantine",
+            payload,
+            reason.quarantine_tag(),
             now,
         );
         self.store.demote_fact(
@@ -513,7 +660,7 @@ impl Promoter {
             &demote_audit,
             &quarantine_audit,
         )?;
-        Ok(DemotionOutcome::Demoted { global_id })
+        Ok(())
     }
 
     /// The reliability-weighted Beta posterior over a candidate's distinct attesters, summed in
@@ -704,11 +851,17 @@ fn promote_payload(candidate: Id, posterior: f64, k: u64, threshold: f64) -> ser
     })
 }
 
-fn demote_payload(candidate: Id, global: Id, posterior: f64, k: u64) -> serde_json::Value {
+fn demote_payload(
+    candidate: Id,
+    global: Id,
+    posterior: f64,
+    k: u64,
+    reason: &str,
+) -> serde_json::Value {
     serde_json::json!({
         "candidate_fact_id": candidate.to_string(),
         "promoted_fact_id": global.to_string(),
-        "reason": "lost_support",
+        "reason": reason,
         "posterior": posterior,
         "k": k,
     })
@@ -740,5 +893,32 @@ fn rejection_to_error(rejection: AttestRejection) -> PromotionError {
             skew_ms,
             tolerance_ms,
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::DemotionReason;
+
+    /// The structural and reliability demotions must never share an audit content id, and the
+    /// structural tags must stay byte-for-byte what they were before the shared-helper refactor —
+    /// the content-addressed audit id is `(tag, subject)`, so a changed tag would either collide
+    /// the two paths or silently re-key the existing lost-support audit.
+    #[test]
+    fn demotion_reason_tags_are_distinct_and_structural_tags_are_pinned() {
+        let lost = DemotionReason::LostSupport;
+        let decay = DemotionReason::ReliabilityDecay;
+
+        assert_eq!(lost.reason(), "lost_support");
+        assert_eq!(lost.demote_tag(), "demote");
+        assert_eq!(lost.quarantine_tag(), "quarantine");
+
+        assert_eq!(decay.reason(), "reliability_decay");
+        assert_eq!(decay.demote_tag(), "demote_reliability");
+        assert_eq!(decay.quarantine_tag(), "quarantine_reliability");
+
+        assert_ne!(lost.reason(), decay.reason());
+        assert_ne!(lost.demote_tag(), decay.demote_tag());
+        assert_ne!(lost.quarantine_tag(), decay.quarantine_tag());
     }
 }
