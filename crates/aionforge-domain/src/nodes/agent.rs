@@ -32,9 +32,11 @@ pub struct TrustCategory {
 
 /// The per-category trust map carried on an agent (`Agent.trust_scores`, 02 §6.5).
 ///
-/// Maps a trust category name to its [`TrustCategory`] parameters. Storage updates
-/// it by merge-patch on each reliability update. A `BTreeMap` keeps the rendered
-/// JSON key order canonical. Carries floats, so it derives `PartialEq` only.
+/// Maps a trust category name to its [`TrustCategory`] parameters. This is a
+/// recomputable cache: the canonical state is the append-only log of reliability
+/// events, and storage rewrites a category here only when folding that log changes
+/// the value. A `BTreeMap` keeps the rendered JSON key order canonical. Carries
+/// floats, so it derives `PartialEq` only.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct TrustScores(pub BTreeMap<String, TrustCategory>);
 
