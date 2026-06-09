@@ -3,7 +3,34 @@
 System documentation for Aionforge Memory — how the pieces work and how to use them.
 This is reference and guides, not planning or changelogs.
 
-## Subsystems
+## Reading and writing
+
+- [Capture](capture.md) — the fast write path: the privacy/injection filter and the origin
+  block, exact-then-near dedup, the ADD-or-nothing decision, embedding and provenance, and the
+  single durable-before-visible commit.
+- [Retrieval](retrieval.md) — native hybrid recall: BM25 and vector (with exact rerank) through
+  the engine, RRF fusion, the query-class router, the high-precision default path, and the
+  deterministic dual-view recall bundle.
+- [Graph signals](graph-signals.md) — the two associative signals: seeded Personalized PageRank
+  over query-mention entities, and graph-expanded support scoring, each gated to the query classes
+  it helps.
+
+## Memory over time
+
+- [The bi-temporal model](bi-temporal-model.md) — event time versus transaction time, the four
+  retrieval modes (current / as-of / as-known-at / history), non-destructive supersession and
+  contradiction, and the maintained current-state providers rebuilt from the primary graph.
+- [Consolidation](consolidation.md) — the asynchronous, deterministic pipeline that turns raw
+  episodes into facts and notes: the durable cursor and crash-safe scheduler, fact extraction and
+  entity resolution, supersession/contradiction detection with quarantine, and non-lossy summarization.
+- [Concurrent merge](concurrent-merge.md) — how concurrent writes about the same thing come together
+  into one state: a functional fact converges to a single current value chosen by event time then
+  object, so the outcome does not depend on processing order, and the loser is kept in history.
+- [The merge model (CRDTs)](crdt-model.md) — the formal companion to concurrent merge: which CRDT
+  each memory type stands in for (add-wins set, multi-value register, last-write-wins stats), why
+  convergence here is just merge determinism, and why the logical clock is derived, not stored.
+
+## Procedural and generative layers
 
 - [Procedural memory](procedural-memory.md) — skills stored as data: versioning,
   reliability, reliability-weighted retrieval, bad-pattern avoidance, and conservative
@@ -31,15 +58,6 @@ This is reference and guides, not planning or changelogs.
   fact takes to global: explicit signed attestations, the sybil-bounded reliability-weighted posterior,
   the count-and-threshold gates, the promoted global copy and its ledger, and the demotion that
   quarantines the copy on lost support while leaving the namespace original untouched.
-
-## Consolidation
-
-- [Concurrent merge](concurrent-merge.md) — how concurrent writes about the same thing come together
-  into one state: a functional fact converges to a single current value chosen by event time then
-  object, so the outcome does not depend on processing order, and the loser is kept in history.
-- [The merge model (CRDTs)](crdt-model.md) — the formal companion to concurrent merge: which CRDT
-  each memory type stands in for (add-wins set, multi-value register, last-write-wins stats), why
-  convergence here is just merge determinism, and why the logical clock is derived, not stored.
 
 ## Substrate
 
