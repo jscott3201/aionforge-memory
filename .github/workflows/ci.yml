@@ -5,7 +5,8 @@
 # ubuntu+macOS matrix, and a version tag drives the gated publish (release.yml).
 #
 # Near-instant gates always run: rustfmt, file-size cap (700 LOC), no-secret scan,
-# the GQL parameter-binding gate, and the store-only-selene gate. When the source
+# the GQL parameter-binding gate, the store-only-selene gate, and the audit-keygen
+# confinement gate. When the source
 # or dependency manifests change, the build-test job (clippy + nextest + doctests
 # on ubuntu) and, on manifest changes, cargo-deny + THIRDPARTY.md currency run too,
 # so a PR cannot merge code that fails to compile, lint, or test. Doc-only PRs skip
@@ -105,6 +106,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: bash .github/scripts/check-store-only-selene.sh
+
+  audit-keygen-gate:
+    name: audit-keygen confinement gate
+    if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash .github/scripts/check-audit-keygen-confined.sh
 
   build-test:
     name: build, clippy, test (ubuntu)

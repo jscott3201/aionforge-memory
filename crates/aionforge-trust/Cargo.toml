@@ -12,8 +12,10 @@ description = "Namespaces, CRDT merge, Ed25519 provenance, attestation/quorum pr
 [dependencies]
 aionforge-domain = { path = "../aionforge-domain", version = "0.1.0" }
 aionforge-store = { path = "../aionforge-store", version = "0.1.0" }
-ed25519-dalek = { workspace = true }
+ed25519-dalek = { workspace = true, features = ["rand_core"] }
 base64 = { workspace = true }
+rand_core = { workspace = true }
+zeroize = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 

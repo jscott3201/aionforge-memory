@@ -68,8 +68,8 @@ mod tests {
         Id::from_uuid(uuid::Uuid::from_u128(seed))
     }
 
-    /// A deterministic keypair from a fixed seed — no RNG, so the fixture is stable across
-    /// runs and the `rand_core` feature stays out of the dependency tree.
+    /// A deterministic keypair from a fixed seed — no RNG, so the fixture is stable
+    /// across runs. Key generation lives solely in `audit_signer.rs` (CI-gated).
     fn signing_key(seed: u8) -> SigningKey {
         SigningKey::from_bytes(&[seed; 32])
     }

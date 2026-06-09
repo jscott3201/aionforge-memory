@@ -26,4 +26,7 @@ bash .github/scripts/check-no-gql-interpolation.sh
 echo "[pre-commit] store-only-selene gate"
 bash .github/scripts/check-store-only-selene.sh
 
+echo "[pre-commit] audit-keygen confinement gate"
+bash .github/scripts/check-audit-keygen-confined.sh
+
 echo "[pre-commit] ok"

@@ -1,6 +1,7 @@
 //! Namespaces, CRDT merge, Ed25519 provenance, attestation/quorum promotion, trust scoring, and the audit subgraph.
 
 pub mod attest_gate;
+pub mod audit_signer;
 pub mod gate;
 pub mod promoter;
 pub mod reliability;
@@ -10,6 +11,7 @@ pub mod signing;
 mod system_audit;
 
 pub use attest_gate::{AttestError, AttestRejection, AttestationGate};
+pub use audit_signer::{AuditSigner, KeyError, SecretSeed};
 pub use gate::{SignedWriteGate, SystemWallClock};
 pub use promoter::{
     AttestReceipt, AttestRequest, CategoryRule, DemotionOutcome, Promoter, PromotionError,

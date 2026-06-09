@@ -3935,6 +3935,7 @@ THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF ANY KIND, EXPRES
 Used by:
 - rand v0.9.4 — https://github.com/rust-random/rand
 - rand_chacha v0.9.0 — https://github.com/rust-random/rand
+- rand_core v0.6.4 — https://github.com/rust-random/rand
 - rand_core v0.9.5 — https://github.com/rust-random/rand
 - rand_xorshift v0.4.0 — https://github.com/rust-random/rngs
 

@@ -102,6 +102,11 @@ skip = [
   # r-efi: getrandom's UEFI backend, dragged in at two lines by the two getrandom
   # versions above.
   { name = "r-efi", version = "=5.3.0" },
+  # rand_core: 0.6 is the line ed25519-dalek 2.x links, made graph-reachable by the
+  # audit-key mint (M4.T06, the rand_core feature on the trust crate's dalek line);
+  # 0.9 via imbl (selene-graph) is the newest and stays unskipped. Dedup needs a
+  # dalek release on the rand 0.9 line.
+  { name = "rand_core", version = "=0.6.4" },
   # windows-sys (Windows targets only): 0.52 via the tokio/mio generation, 0.61 via
   # newer crates which stays unskipped.
   { name = "windows-sys", version = "=0.52.0" },

@@ -83,14 +83,24 @@ rustls = { version = "0.23", default-features = false, features = ["ring"] }
 # Capture-side privacy/injection filter patterns (M1.T02). Already in the tree
 # transitively via selene-db, so this direct pin reuses that exact locked version.
 regex = "1"
-# Ed25519 provenance signing (M4.T03, 06 §3). The trust layer VERIFIES only — private
-# keys never enter the substrate. Default features (std, fast, zeroize); the `rand_core`
-# feature is deliberately NOT enabled, so the signing layer generates no keys and pulls
-# no RNG of its own (keys are loaded from bytes, never generated in-process). rand_core
-# 0.6.4 is already in the tree (proptest, plus the dalek/signature verify chain) and is
-# license-clean, so this adds no new rand_core line. base64 decodes the stored key/signature.
+# Ed25519 signing seams (M4.T03 write provenance, 06 §3; M4.T06 audit signing, 06 §6).
+# The WRITER channel verifies only — a host's private key never enters the substrate.
+# The AUDIT channel is the one author carve-out: the substrate signs the audit events it
+# emits itself, with a key minted in exactly one place (`AuditSigner::mint`). The
+# `rand_core` feature that makes keygen reachable is enabled on the trust crate's
+# dependency line only, and because feature unification compiles that code wherever
+# dalek is linked, the call-level guarantee is held by
+# .github/scripts/check-audit-keygen-confined.sh. base64 decodes the stored key/signature.
 ed25519-dalek = { version = "2.1" }
 base64 = "0.22"
+# OS CSPRNG handle for the audit-key mint — the workspace's only direct RNG-API
+# caller, confined to audit_signer.rs (CI-gated; indirect entropy such as uuid's v7
+# id minting is separate and out of the gate's scope). The 0.6 line is the one
+# ed25519-dalek 2.1 links, so this adds no second rand_core version to the tree.
+rand_core = { version = "0.6.4", features = ["getrandom"] }
+# Wipes the audit-signing seed on drop. Already in the tree via ed25519-dalek's
+# default `zeroize` feature; this direct pin adds no new version.
+zeroize = "1.8"
 
 # --- Test / dev dependencies (versions match selene-db). ---
 proptest = { version = "1.11", default-features = false, features = ["std"] }
