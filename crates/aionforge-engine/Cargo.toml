@@ -30,6 +30,9 @@ tokio = { workspace = true }
 # Test-only: sign provenance payloads with a fixed-seed keypair to exercise the signed-write
 # gate end to end (M4.T03). Already pinned at the workspace; no new versions enter the tree.
 ed25519-dalek = { workspace = true }
+# Test-only: build audit payloads and read them back in the facade tests (M4.T06). Already
+# pinned at the workspace.
+serde_json = { workspace = true }
 base64 = { workspace = true }
 
 [lints]

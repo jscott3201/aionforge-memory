@@ -26,7 +26,8 @@ use aionforge_domain::time::Timestamp;
 use aionforge_retrieval::HybridRetriever;
 use aionforge_security::{CaptureFilter, SecurityError};
 use aionforge_trust::{
-    AttestationGate, Ed25519Verifier, Promoter, SignedWriteGate, StoreKeyResolver, SystemWallClock,
+    AttestationGate, AuditVerifier, Ed25519Verifier, Promoter, SignedWriteGate, StoreKeyResolver,
+    SystemWallClock,
 };
 
 use aionforge_domain::ids::Id;
@@ -57,9 +58,13 @@ pub use aionforge_retrieval::{
 };
 pub use aionforge_store::{Store, StoreConfig};
 pub use aionforge_trust::{
-    AttestReceipt, AttestRequest, CategoryRule, DemotionOutcome, PromotionError, PromotionOutcome,
-    PromotionPolicy, ReliabilityError, ReliabilityPolicy, ReliabilityScorer,
+    AttestReceipt, AttestRequest, AuditStatus, CategoryRule, DemotionOutcome, PromotionError,
+    PromotionOutcome, PromotionPolicy, ReliabilityError, ReliabilityPolicy, ReliabilityScorer,
 };
+
+mod audit;
+pub use aionforge_store::{AuditCursor, MAX_AUDIT_PAGE};
+pub use audit::{AuditPage, AuditRecord, AuditVerification};
 
 /// How the facade configures the capture and retrieval paths.
 #[derive(Debug, Clone, Default)]
@@ -147,6 +152,11 @@ pub struct Memory<E> {
     /// reliability event log into agent and fact trust caches, and backs the refold-first
     /// reliability-demotion sweep.
     reliability_scorer: Option<ReliabilityScorer>,
+    /// The audit-signature verifier for the read facade (06 §6, M4.T06). `None` until audit
+    /// signing is wired: PR-5g builds it from the keyring when `sign_audit_events` is enabled,
+    /// alongside the signer. While `None`, every audit read maps to
+    /// [`AuditVerification::NotEnabled`] — the substrate never fabricates a checked verdict.
+    audit_verifier: Option<AuditVerifier>,
 }
 
 impl<E: Embedder> Memory<E> {
@@ -257,6 +267,9 @@ impl<E: Embedder> Memory<E> {
             authorizer,
             promoter,
             reliability_scorer,
+            // Wired by the audit-signing engine slice (M4.T06 PR-5g); until then the read
+            // facade reports `NotEnabled` per row rather than inventing a verdict.
+            audit_verifier: None,
         })
     }
 
@@ -267,6 +280,11 @@ impl<E: Embedder> Memory<E> {
     #[must_use]
     pub fn authorizer(&self) -> &Arc<dyn Authorizer> {
         &self.authorizer
+    }
+
+    /// The audit-signature verifier, when audit signing is enabled (M4.T06).
+    pub(crate) fn audit_verifier(&self) -> Option<&AuditVerifier> {
+        self.audit_verifier.as_ref()
     }
 
     /// Open an in-memory memory: a fresh store sized to the embedder's dimension,

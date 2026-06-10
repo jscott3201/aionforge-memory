@@ -195,6 +195,7 @@ impl Store {
             SUBJECT_ID,
             &id_value(agent_id)?,
             Some(AuditKind::ReliabilityUpdate),
+            None,
         )
     }
 

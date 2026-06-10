@@ -27,7 +27,7 @@ use selene_graph::RowIndex;
 use serde::{Deserialize, Serialize};
 
 use crate::audit;
-use crate::convert::{enum_value, id_value};
+use crate::convert::{as_id, as_timestamp, enum_value, id_value};
 use crate::error::StoreError;
 use crate::store::Store;
 
@@ -54,8 +54,11 @@ pub struct AuditCursor {
 }
 
 impl AuditCursor {
-    /// The cursor pointing at a given event.
-    fn of(event: &AuditEvent) -> Self {
+    /// The cursor pointing at a given event. Public so a caller filtering rows ABOVE this
+    /// pagination (the engine's namespace-scoped facade, M4.T06) can resume from the last
+    /// row it consumed rather than the last row of an L0 page.
+    #[must_use]
+    pub fn of(event: &AuditEvent) -> Self {
         Self {
             occurred_at: event.occurred_at.clone(),
             id: event.identity.id,
@@ -112,7 +115,7 @@ impl Store {
         after: Option<&AuditCursor>,
         limit: usize,
     ) -> Result<AuditHistory, StoreError> {
-        let events = self.audit_events_eq(SUBJECT_ID, &id_value(subject_id)?, None)?;
+        let events = self.audit_events_eq(SUBJECT_ID, &id_value(subject_id)?, None, after)?;
         Ok(paginate(events, after, limit))
     }
 
@@ -127,7 +130,7 @@ impl Store {
         after: Option<&AuditCursor>,
         limit: usize,
     ) -> Result<AuditHistory, StoreError> {
-        let events = self.audit_events_eq(KIND, &enum_value(&kind)?, None)?;
+        let events = self.audit_events_eq(KIND, &enum_value(&kind)?, None, after)?;
         Ok(paginate(events, after, limit))
     }
 
@@ -143,7 +146,7 @@ impl Store {
         after: Option<&AuditCursor>,
         limit: usize,
     ) -> Result<AuditHistory, StoreError> {
-        let events = self.audit_events_eq(SUBJECT_ID, &id_value(subject_id)?, Some(kind))?;
+        let events = self.audit_events_eq(SUBJECT_ID, &id_value(subject_id)?, Some(kind), after)?;
         Ok(paginate(events, after, limit))
     }
 
@@ -173,6 +176,7 @@ impl Store {
         prop: &str,
         value: &Value,
         kind: Option<AuditKind>,
+        after: Option<&AuditCursor>,
     ) -> Result<Vec<AuditEvent>, StoreError> {
         let snapshot = self.graph().read();
         let label = db_string(AuditEvent::LABEL)?;
@@ -180,6 +184,8 @@ impl Store {
         let Some(rows) = snapshot.nodes_with_property_eq(&label, &prop, value) else {
             return Ok(Vec::new());
         };
+        let occurred_key = db_string("occurred_at")?;
+        let id_key = db_string("id")?;
         let mut events = Vec::new();
         for row in rows.iter() {
             let Some(node) = snapshot.node_id_for_row(RowIndex::new(row)) else {
@@ -188,6 +194,21 @@ impl Store {
             let Some(props) = snapshot.node_properties(node) else {
                 continue;
             };
+            // Keyset trim BEFORE the full decode: a refilling caller (the engine facade
+            // re-driving this reader above its visibility filter) would otherwise pay a
+            // full decode — JSON payload included — and a re-sort of every already-consumed
+            // row on every refill, O(N²/limit) over a mostly-hidden history. Comparing the
+            // two scalar keyset properties keeps the consumed prefix nearly free; a row
+            // missing either falls through to the full decode, which surfaces the error.
+            if let Some(cursor) = after {
+                let occurred = props.get(&occurred_key).map(as_timestamp).transpose()?;
+                let id = props.get(&id_key).map(as_id).transpose()?;
+                if let (Some(occurred), Some(id)) = (occurred, id)
+                    && (&occurred, &id) <= (&cursor.occurred_at, &cursor.id)
+                {
+                    continue;
+                }
+            }
             let event = audit::from_properties(props)?;
             if kind.is_none_or(|wanted| event.kind == wanted) {
                 events.push(event);
