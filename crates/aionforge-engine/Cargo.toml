@@ -21,6 +21,9 @@ aionforge-trust = { path = "../aionforge-trust", version = "0.1.0" }
 aionforge-forget = { path = "../aionforge-forget", version = "0.1.0" }
 aionforge-security = { path = "../aionforge-security", version = "0.1.0" }
 thiserror = { workspace = true }
+# The audit-signing seed crosses the engine as a host-resolved SecretString (the engine
+# never reads the environment itself); same redaction/zeroize posture as the config crate.
+secrecy = { workspace = true }
 miette = { workspace = true }
 
 [dev-dependencies]

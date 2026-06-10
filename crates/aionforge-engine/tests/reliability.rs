@@ -101,7 +101,7 @@ fn memory(store: &Arc<Store>, promote: bool) -> Memory<FakeEmbedder> {
         },
         ..MemoryConfig::default()
     };
-    Memory::new(Arc::clone(store), FakeEmbedder::new(), config).expect("memory")
+    Memory::new(Arc::clone(store), FakeEmbedder::new(), config, &ts()).expect("memory")
 }
 
 fn stats(trust: f64) -> Stats {
@@ -464,7 +464,8 @@ fn the_reliability_facade_is_inert_when_trust_scoring_is_off() {
         },
         ..MemoryConfig::default()
     };
-    let memory = Memory::new(Arc::clone(&store), FakeEmbedder::new(), config).expect("memory");
+    let memory =
+        Memory::new(Arc::clone(&store), FakeEmbedder::new(), config, &ts()).expect("memory");
     let some = Id::generate();
 
     assert!(memory.refold_reliability(&[some]).is_ok());

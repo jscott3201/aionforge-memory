@@ -105,6 +105,20 @@ pub struct SecurityGate {
     /// The clock-skew tolerance in milliseconds for signed writes; validated to lie in
     /// `(0, 300_000]` when `signed_writes` is on.
     pub clock_skew_tolerance_ms: u64,
+    /// Whether the substrate signs the audit events it authors (06 §6, M4.T06). Off by
+    /// default; when on, the engine provisions seed custody + the keyring anchor at
+    /// construction, installs the commit-time signer on the store, and verifies rows on
+    /// the audit read facade. The host maps `aionforge-config`'s
+    /// `security.sign_audit_events` into this.
+    pub sign_audit_events: bool,
+    /// The data directory hosting the audit seed file and keyring anchor. Required when
+    /// `sign_audit_events` is on (the custody layer refuses relative/unsafe paths).
+    pub audit_data_dir: Option<std::path::PathBuf>,
+    /// The host-resolved env-custody seed (base64), when the deployment opted into
+    /// env-var custody via `audit_key_env`. The engine never reads the environment —
+    /// the host resolves the named variable (`Config::resolve_audit_seed`) and maps the
+    /// secret in. `None` selects file custody (load-or-mint under `audit_data_dir`).
+    pub audit_seed: Option<secrecy::SecretString>,
 }
 
 impl Default for SecurityGate {
@@ -112,6 +126,9 @@ impl Default for SecurityGate {
         Self {
             signed_writes: false,
             clock_skew_tolerance_ms: 60_000,
+            sign_audit_events: false,
+            audit_data_dir: None,
+            audit_seed: None,
         }
     }
 }
@@ -120,6 +137,14 @@ impl SecurityGate {
     /// Check the skew bound when signed writes are on (06 §3). Mirrors the `aionforge-config`
     /// rule so the engine validates its own copy regardless of how the host populated it.
     fn validate(&self) -> Result<(), String> {
+        if self.sign_audit_events && self.audit_data_dir.is_none() {
+            return Err(
+                "security.sign_audit_events requires a data directory for the audit seed \
+                 and keyring anchor (set audit_data_dir; a relative or unsafe path is \
+                 refused by the custody layer)"
+                    .to_string(),
+            );
+        }
         if self.signed_writes {
             if self.clock_skew_tolerance_ms == 0 {
                 return Err(
@@ -173,8 +198,13 @@ impl<E: Embedder> Memory<E> {
     /// or — with promotion on — a zero or oversized clock-skew tolerance) is out of range, or
     /// [`EngineError::Filter`] if the default privacy filter fails to compile, which the
     /// security crate's tests guard against.
-    pub fn new(store: Arc<Store>, embedder: E, config: MemoryConfig) -> Result<Self, EngineError> {
-        Self::with_authorizer(store, embedder, config, Arc::new(DefaultAuthorizer))
+    pub fn new(
+        store: Arc<Store>,
+        embedder: E,
+        config: MemoryConfig,
+        now: &Timestamp,
+    ) -> Result<Self, EngineError> {
+        Self::with_authorizer(store, embedder, config, Arc::new(DefaultAuthorizer), now)
     }
 
     /// Build a memory with an explicit namespace authority — the injection point for a stricter
@@ -187,6 +217,7 @@ impl<E: Embedder> Memory<E> {
         embedder: E,
         config: MemoryConfig,
         authorizer: Arc<dyn Authorizer>,
+        now: &Timestamp,
     ) -> Result<Self, EngineError> {
         // Front-load all configuration validation, before any subsystem is constructed, so an
         // invalid policy is rejected up front and never interleaves with a side-effecting build
@@ -253,6 +284,34 @@ impl<E: Embedder> Memory<E> {
         } else {
             None
         };
+        // Substrate audit signing (06 §6, M4.T06): provision custody + the keyring anchor,
+        // install the commit-time signer on the store, and keep the keyring-anchored
+        // verifier for the read facade — one branch, one off-switch. The genesis event is
+        // committed through the audit write funnel: content-addressed, so a replay dedups
+        // to a no-op and a genesis-crash window heals (the 5d protocol). This is the only
+        // place `sign_audit_events` is read.
+        let audit_verifier = if config.security.sign_audit_events {
+            let data_dir = config
+                .security
+                .audit_data_dir
+                .as_deref()
+                .expect("validated above: sign_audit_events requires audit_data_dir");
+            let provision = aionforge_trust::provision_audit_signing(
+                data_dir,
+                config.security.audit_seed.as_ref(),
+                now,
+            )
+            .map_err(|err| EngineError::AuditSigning(Box::new(err)))?;
+            store
+                .install_audit_signer(Arc::new(provision.signer))
+                .map_err(EngineError::Store)?;
+            if let Some(genesis_event) = &provision.genesis_event {
+                store.commit_audit(genesis_event)?;
+            }
+            Some(provision.verifier)
+        } else {
+            None
+        };
         let retriever = HybridRetriever::with_authorizer(
             Arc::clone(&store),
             Arc::clone(&embedder),
@@ -267,9 +326,7 @@ impl<E: Embedder> Memory<E> {
             authorizer,
             promoter,
             reliability_scorer,
-            // Wired by the audit-signing engine slice (M4.T06 PR-5g); until then the read
-            // facade reports `NotEnabled` per row rather than inventing a verdict.
-            audit_verifier: None,
+            audit_verifier,
         })
     }
 
@@ -303,7 +360,7 @@ impl<E: Embedder> Memory<E> {
             embedding_dimension: embedder.model().dimension,
         })?;
         store.migrate(now)?;
-        Self::new(Arc::new(store), embedder, config)
+        Self::new(Arc::new(store), embedder, config, now)
     }
 
     /// Capture one event on the fast path (04 §1).
@@ -694,6 +751,11 @@ pub enum EngineError {
     /// The retrieval path failed.
     #[error("retrieval failed")]
     Retrieval(#[from] aionforge_retrieval::RetrievalError),
+
+    /// Audit-signing provisioning failed at startup (custody, keyring anchor, or a seed
+    /// that does not match the anchored keyring). Signing was requested, so this is fatal.
+    #[error("audit signing could not be provisioned")]
+    AuditSigning(#[source] Box<aionforge_trust::ProvisionError>),
 
     /// The optional off-cursor LLM distiller failed (a store read, embedding, or the write).
     #[error("distillation failed")]

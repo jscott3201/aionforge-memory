@@ -221,8 +221,13 @@ fn a_quorum_above_threshold_promotes_a_team_fact_to_global() {
     let ada = enroll(&store, &key_a, "reliability", 0.95);
     let bo = enroll(&store, &key_b, "reliability", 0.95);
     let (_, fact_id) = team_fact(&store, "the team prefers graph databases");
-    let memory = Memory::new(Arc::clone(&store), FakeEmbedder::new(), policy(2, 0.7))
-        .expect("build promoting memory");
+    let memory = Memory::new(
+        Arc::clone(&store),
+        FakeEmbedder::new(),
+        policy(2, 0.7),
+        &ts(),
+    )
+    .expect("build promoting memory");
 
     // First attester: below the quorum of 2, so nothing promotes yet.
     let first = memory
@@ -260,7 +265,8 @@ fn the_default_policy_promotes_under_a_strong_consensus() {
     assert_eq!((defaults.default_k, defaults.default_threshold), (3, 0.80));
     let config = policy(defaults.default_k, defaults.default_threshold);
     let (_, fact_id) = team_fact(&store, "the default policy can actually promote");
-    let memory = Memory::new(Arc::clone(&store), FakeEmbedder::new(), config).expect("memory");
+    let memory =
+        Memory::new(Arc::clone(&store), FakeEmbedder::new(), config, &ts()).expect("memory");
 
     // Three near-perfect attesters meet the quorum of 3, but the bounded posterior (~0.794) is
     // just shy of 0.80 — both gates have to clear and the belief gate does not yet.
@@ -299,8 +305,13 @@ fn a_superseded_fact_does_not_promote_even_with_a_quorum() {
     let ada = enroll(&store, &key_a, "reliability", 0.95);
     let bo = enroll(&store, &key_b, "reliability", 0.95);
     let (team_node, fact_id) = team_fact(&store, "a claim that gets superseded");
-    let memory =
-        Memory::new(Arc::clone(&store), FakeEmbedder::new(), policy(2, 0.7)).expect("memory");
+    let memory = Memory::new(
+        Arc::clone(&store),
+        FakeEmbedder::new(),
+        policy(2, 0.7),
+        &ts(),
+    )
+    .expect("memory");
 
     // Supersede the fact before it is attested: it drops out of current_support_facts, so it has
     // lost standing even though its later attestations are perfectly valid.
@@ -345,8 +356,13 @@ fn a_superseded_fact_does_not_promote_even_with_a_quorum() {
 fn a_mediocre_swarm_never_clears_the_threshold() {
     let store = migrated_store();
     let (fact_node, fact_id) = team_fact(&store, "a contested claim");
-    let memory =
-        Memory::new(Arc::clone(&store), FakeEmbedder::new(), policy(2, 0.7)).expect("memory");
+    let memory = Memory::new(
+        Arc::clone(&store),
+        FakeEmbedder::new(),
+        policy(2, 0.7),
+        &ts(),
+    )
+    .expect("memory");
 
     // Eight attesters, each only r=0.6: the Beta posterior asymptotes to ~0.6, never to 0.7.
     for seed in 0..8u8 {
@@ -380,8 +396,13 @@ fn a_repeat_attestation_by_one_agent_counts_once() {
     let key = SigningKey::from_bytes(&[7u8; 32]);
     let ada = enroll(&store, &key, "reliability", 0.99);
     let (_, fact_id) = team_fact(&store, "single-agent claim");
-    let memory =
-        Memory::new(Arc::clone(&store), FakeEmbedder::new(), policy(2, 0.7)).expect("memory");
+    let memory = Memory::new(
+        Arc::clone(&store),
+        FakeEmbedder::new(),
+        policy(2, 0.7),
+        &ts(),
+    )
+    .expect("memory");
 
     memory
         .attest(attest_request(fact_id, ada, &key, "reliability"))
@@ -403,8 +424,13 @@ fn demotion_on_lost_support_quarantines_the_global_copy_and_leaves_the_original(
     let ada = enroll(&store, &key_a, "reliability", 0.95);
     let bo = enroll(&store, &key_b, "reliability", 0.95);
     let (team_node, fact_id) = team_fact(&store, "promote then lose support");
-    let memory =
-        Memory::new(Arc::clone(&store), FakeEmbedder::new(), policy(2, 0.7)).expect("memory");
+    let memory = Memory::new(
+        Arc::clone(&store),
+        FakeEmbedder::new(),
+        policy(2, 0.7),
+        &ts(),
+    )
+    .expect("memory");
 
     memory
         .attest(attest_request(fact_id, ada, &key_a, "reliability"))
@@ -473,6 +499,7 @@ fn promotion_off_records_nothing_and_evaluations_are_disabled() {
         Arc::clone(&store),
         FakeEmbedder::new(),
         MemoryConfig::default(),
+        &ts(),
     )
     .expect("default memory");
 
@@ -498,8 +525,13 @@ fn a_wrong_key_attestation_is_refused_with_a_coarse_error() {
     let attacker = SigningKey::from_bytes(&[9u8; 32]);
     let ada = enroll(&store, &enrolled, "reliability", 0.95);
     let (fact_node, fact_id) = team_fact(&store, "forge attempt");
-    let memory =
-        Memory::new(Arc::clone(&store), FakeEmbedder::new(), policy(2, 0.7)).expect("memory");
+    let memory = Memory::new(
+        Arc::clone(&store),
+        FakeEmbedder::new(),
+        policy(2, 0.7),
+        &ts(),
+    )
+    .expect("memory");
 
     // Signed by the attacker's key, not the one the store holds for `ada`.
     let error = memory
@@ -519,7 +551,7 @@ fn a_wrong_key_attestation_is_refused_with_a_coarse_error() {
 #[test]
 fn a_quorum_of_one_is_a_config_error() {
     let store = migrated_store();
-    let result = Memory::new(store, FakeEmbedder::new(), policy(1, 0.7));
+    let result = Memory::new(store, FakeEmbedder::new(), policy(1, 0.7), &ts());
     assert!(matches!(result, Err(EngineError::Config(_))));
 }
 
@@ -528,6 +560,6 @@ fn a_zero_skew_tolerance_with_promotion_on_is_a_config_error() {
     let store = migrated_store();
     let mut config = policy(2, 0.7);
     config.security.clock_skew_tolerance_ms = 0;
-    let result = Memory::new(store, FakeEmbedder::new(), config);
+    let result = Memory::new(store, FakeEmbedder::new(), config, &ts());
     assert!(matches!(result, Err(EngineError::Config(_))));
 }

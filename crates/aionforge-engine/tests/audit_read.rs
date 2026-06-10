@@ -74,6 +74,7 @@ fn memory() -> Memory<FakeEmbedder> {
         Arc::new(store),
         FakeEmbedder::new(),
         MemoryConfig::default(),
+        &ts("2026-06-09T08:00:00-05:00[America/Chicago]"),
     )
     .expect("memory")
 }
