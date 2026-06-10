@@ -17,7 +17,8 @@
 use aionforge_domain::contracts::Embedder;
 use aionforge_domain::ids::{ContentHash, Id};
 use aionforge_domain::time::{Timestamp, to_utc};
-use aionforge_forget::{CentroidOutcome, DriftBaseline, DriftSweepReport};
+use aionforge_forget::{CentroidOutcome, CoolingSweepReport, DriftBaseline, DriftSweepReport};
+use aionforge_store::CoolingCursor;
 
 use crate::{EngineError, Memory};
 
@@ -65,6 +66,32 @@ impl<E: Embedder> Memory<E> {
             return Ok(DriftSweepReport::default());
         };
         Ok(detector.sweep(self.embedder.model(), after, limit, now)?)
+    }
+
+    /// Sweep one page of recently-ingested facts and stamp the core-proximate ones'
+    /// cooling windows (05 §1): `cooled_until = now + cooling_window`, once per fact,
+    /// a `Cooled` audit row per applied stamp. The off-cursor twin of the in-cursor
+    /// materialization that deliberately leaves `cooled_until = None` — stamping at
+    /// admission would couple consolidation replay to off-cursor baseline state.
+    ///
+    /// **Host-driven cadence**, alongside [`Memory::sweep_drift`]: persist
+    /// [`CoolingSweepReport::next`] and pass it back as `after`; re-sweeping stamped
+    /// ground is a no-op. The stamp expires by rank-time comparison — nothing ever
+    /// un-cools a fact, so a misfire costs bounded rank for one window.
+    ///
+    /// # Errors
+    /// Returns [`EngineError::Store`] if the fact page, the block read, or a stamp
+    /// fails.
+    pub fn sweep_cooling(
+        &self,
+        after: Option<&CoolingCursor>,
+        limit: usize,
+        now: &Timestamp,
+    ) -> Result<CoolingSweepReport, EngineError> {
+        let Some(detector) = &self.drift_detector else {
+            return Ok(CoolingSweepReport::default());
+        };
+        Ok(detector.sweep_cooling(after, limit, now)?)
     }
 
     /// Compute the drift-baseline document for one live core block: the block's

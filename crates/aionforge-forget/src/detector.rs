@@ -122,6 +122,11 @@ impl DriftDetector {
         &self.policy
     }
 
+    /// The store this detector reads and stamps through (the cooling sweep's seam).
+    pub(crate) fn store(&self) -> &Store {
+        &self.store
+    }
+
     /// The namespace's current behavior centroid over `[now - window, now)`,
     /// restricted to episodes embedded in the live model's space.
     ///
@@ -336,9 +341,10 @@ pub struct DriftSweepReport {
     pub next: Option<Id>,
 }
 
-/// The substrate actor recorded on drift warnings: detection runs at substrate
-/// authority on the host's cadence and takes no principal, like the forgetter.
-fn drift_actor() -> Id {
+/// The substrate actor recorded on drift warnings and cooling stamps: detection runs
+/// at substrate authority on the host's cadence and takes no principal, like the
+/// forgetter.
+pub(crate) fn drift_actor() -> Id {
     Id::from_content_hash(b"aionforge/drift-detector-v1")
 }
 

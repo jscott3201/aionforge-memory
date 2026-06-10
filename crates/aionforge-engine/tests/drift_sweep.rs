@@ -13,8 +13,11 @@ use aionforge_domain::namespace::Namespace;
 use aionforge_domain::nodes::core::{BlockKind, CoreBlock};
 use aionforge_domain::nodes::episodic::{ConsolidationState, Episode, Role};
 use aionforge_domain::nodes::forensic::{AuditEvent, AuditKind};
+use aionforge_domain::nodes::semantic::{Fact, FactStatus};
+use aionforge_domain::value::ObjectValue;
 use aionforge_engine::{
-    BaselineComputation, DriftBaseline, DriftPolicy, DriftSweepReport, Memory, MemoryConfig,
+    BaselineComputation, CoolingSweepReport, DriftBaseline, DriftPolicy, DriftSweepReport, Memory,
+    MemoryConfig,
 };
 use aionforge_store::Store;
 
@@ -341,5 +344,50 @@ async fn steady_behavior_never_warns_and_pages_resume() {
     assert!(
         drift_warnings(&store).is_empty(),
         "zero drift commits no warning row"
+    );
+}
+
+#[tokio::test]
+async fn the_cooling_facade_is_gated_and_stamps_through_the_engine() {
+    // Off: no detector, empty report, no read.
+    let store = migrated_store();
+    let memory = common::memory(&store);
+    let report = memory.sweep_cooling(None, 50, &ts(30)).expect("sweep");
+    assert_eq!(report, CoolingSweepReport::default());
+
+    // On: a high-trust block anchored on axis(0); a fact embedded there cools.
+    let store = migrated_store();
+    let memory = drift_memory(&store);
+    let content = "never deploy on friday";
+    let anchored = block_with(b"anchored", content, Some(sound_baseline(content)));
+    insert_block(&store, &anchored);
+    let fact = Fact {
+        identity: Identity {
+            id: Id::from_content_hash(b"proximate-claim"),
+            ingested_at: ts(10),
+            namespace: agent_ns(),
+            expired_at: None,
+        },
+        stats: stats(),
+        subject_id: Id::from_content_hash(b"subject"),
+        predicate: "claims".to_string(),
+        object: ObjectValue::Text("a proximate claim".to_string()),
+        confidence: 0.9,
+        status: FactStatus::Active,
+        statement: "a proximate claim".to_string(),
+        embedding: Some(axis(0)),
+        embedder_model: Some(live_model()),
+        extraction: None,
+        cooled_until: None,
+    };
+    let node = store.insert_fact(&fact).expect("insert fact");
+
+    let report = memory.sweep_cooling(None, 50, &ts(30)).expect("sweep");
+    assert_eq!(report.facts_scanned, 1);
+    assert_eq!(report.facts_cooled, 1);
+    let read = store.fact_by_node_id(node).expect("read").expect("present");
+    assert!(
+        read.cooled_until.is_some(),
+        "the facade stamped the proximate fact"
     );
 }

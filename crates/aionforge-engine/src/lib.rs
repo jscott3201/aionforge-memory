@@ -54,16 +54,16 @@ pub use aionforge_domain::authz::{
     AuthorizationError, Authorizer, DefaultAuthorizer, DenyReason, Principal, VisibleSet,
 };
 pub use aionforge_forget::{
-    DriftBaseline, DriftPolicy, DriftSweepReport, EraseReport, ErasurePolicy, ForgetSweepPage,
-    ForgettingPolicy, PointErase, PointForget, PointPin, PointUnforget, PointUnpin,
-    ResidualRetention, SpareReason,
+    CoolingSweepReport, DriftBaseline, DriftPolicy, DriftSweepReport, EraseReport, ErasurePolicy,
+    ForgetSweepPage, ForgettingPolicy, PointErase, PointForget, PointPin, PointUnforget,
+    PointUnpin, ResidualRetention, SpareReason,
 };
 pub use aionforge_retrieval::{
     CoreBlockEntry, EpisodeEntry, FactEntry, QueryClass, RecallBundle, RecallExplanation,
     RecallOptions, RecallQuery, RetrieverConfig, Signal, SignalWeights, StructuredEntry,
     TemporalMode,
 };
-pub use aionforge_store::{ForgetCursor, Store, StoreConfig};
+pub use aionforge_store::{CoolingCursor, ForgetCursor, Store, StoreConfig};
 pub use aionforge_trust::{
     AttestReceipt, AttestRequest, AuditStatus, CategoryRule, CoreAttesterVote, CoreEditError,
     CoreEditOutcome, CoreEditPolicy, CoreEditReceipt, CoreEditRejection, CoreEditRequest,

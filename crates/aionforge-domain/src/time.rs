@@ -38,6 +38,21 @@ pub fn instant_before(at: &Timestamp, secs: u64) -> Timestamp {
         .to_zoned(jiff::tz::TimeZone::UTC)
 }
 
+/// The instant `secs` seconds after `at`, in UTC — [`instant_before`]'s twin, for
+/// window upper bounds like a cooling expiry. Saturates at the representable
+/// ceiling: a window that reaches past it simply ends at the ceiling.
+#[must_use]
+pub fn instant_after(at: &Timestamp, secs: u64) -> Timestamp {
+    let ceiling = jiff::Timestamp::MAX;
+    let seconds = at
+        .timestamp()
+        .as_second()
+        .saturating_add(i64::try_from(secs).unwrap_or(i64::MAX));
+    jiff::Timestamp::new(seconds.min(ceiling.as_second()), 0)
+        .unwrap_or(ceiling)
+        .to_zoned(jiff::tz::TimeZone::UTC)
+}
+
 /// The four-timestamp validity block carried by every bi-temporal edge (02 §5).
 ///
 /// Event time (`valid_from`/`valid_to`) records when the underlying fact was true
@@ -123,6 +138,19 @@ mod tests {
             instant_before(&now, u64::MAX).timestamp(),
             jiff::Timestamp::MIN,
             "an over-deep window starts at the representable floor"
+        );
+        let week_out = instant_after(&now, 604_800);
+        assert_eq!(
+            week_out.timestamp().as_second() - now.timestamp().as_second(),
+            604_800,
+            "the twin adds exact seconds"
+        );
+        // Second precision: `jiff::Timestamp::MAX` itself carries trailing
+        // nanoseconds, so the ceiling comparison is on the second.
+        assert_eq!(
+            instant_after(&now, u64::MAX).timestamp().as_second(),
+            jiff::Timestamp::MAX.as_second(),
+            "an over-long window ends at the representable ceiling"
         );
     }
 

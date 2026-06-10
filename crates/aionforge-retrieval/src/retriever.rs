@@ -19,12 +19,14 @@ use std::time::Instant;
 
 use aionforge_domain::authz::{Authorizer, DefaultAuthorizer, VisibleSet};
 use aionforge_domain::contracts::{Embedder, Retriever};
+use aionforge_domain::drift::effective_cooled_trust;
 use aionforge_domain::edges::About;
 use aionforge_domain::embedding::Embedding;
 use aionforge_domain::ids::{ContentHash, SerializationId};
 use aionforge_domain::nodes::core::CoreBlock;
 use aionforge_domain::nodes::episodic::{Episode, Role};
 use aionforge_domain::nodes::semantic::Fact;
+use aionforge_domain::time::Timestamp;
 use aionforge_store::{
     CandidateSet, ExpandDirection, ExpandEdge, NodeId, SearchKind, SetOp, Store,
 };
@@ -77,6 +79,15 @@ pub struct RetrieverConfig {
     pub episodic_half_life_secs: f64,
     /// Half-life for semantic and identity memory, in seconds, when decay is enabled.
     pub semantic_half_life_secs: f64,
+    /// Whether a fact's cooling stamp reduces its rank-time trust (05 §1, M5.T05).
+    /// Off by default; the host maps `DriftConfig.enabled` here. Like decay, the
+    /// modulation also needs the caller-stamped `options.now` — without a clock,
+    /// recall is byte-identical to a pre-cooling one.
+    pub cooling_enabled: bool,
+    /// The multiplier applied to a cooled fact's trust while `now` sits inside its
+    /// window, when cooling is enabled. In `(0, 1]`; out-of-range values are inert
+    /// (the domain guard never zeroes a rank on misconfiguration).
+    pub cooling_factor: f64,
 }
 
 impl Default for RetrieverConfig {
@@ -87,6 +98,8 @@ impl Default for RetrieverConfig {
             decay_enabled: false,
             episodic_half_life_secs: 604_800.0,
             semantic_half_life_secs: 31_536_000.0,
+            cooling_enabled: false,
+            cooling_factor: 0.5,
         }
     }
 }
@@ -285,7 +298,8 @@ impl<E: Embedder> HybridRetriever<E> {
         // routes each candidate by `fact_nodes` membership exactly as before. Skipped when the class
         // gives trust no weight or no signal produced a candidate.
         if profile.weights.trust > 0.0 {
-            let (fact_trust, episode_trust) = self.trust_rankings(&rankings, &fact_nodes)?;
+            let (fact_trust, episode_trust) =
+                self.trust_rankings(&rankings, &fact_nodes, query.options.now.as_ref())?;
             let ran = !fact_trust.candidates.is_empty() || !episode_trust.candidates.is_empty();
             if !fact_trust.candidates.is_empty() {
                 rankings.push(WeightedRanking::new(profile.weights.trust, fact_trust));
@@ -652,11 +666,12 @@ impl<E: Embedder> HybridRetriever<E> {
         &self,
         rankings: &[WeightedRanking],
         fact_nodes: &HashSet<NodeId>,
+        now: Option<&Timestamp>,
     ) -> Result<(SignalRanking, SignalRanking), RetrievalError> {
         let (facts, episodes) = rerank::surfaced(rankings, fact_nodes);
         Ok((
-            self.trust_ranking(&facts, true)?,
-            self.trust_ranking(&episodes, false)?,
+            self.trust_ranking(&facts, true, now)?,
+            self.trust_ranking(&episodes, false, now)?,
         ))
     }
 
@@ -664,15 +679,30 @@ impl<E: Embedder> HybridRetriever<E> {
     /// (highest trust first) under the shared competition rank, so equal-trust candidates
     /// share a position. `is_fact` selects the node reader and the stats field. A node
     /// that no longer resolves is dropped.
+    ///
+    /// A fact inside its cooling window ranks by its **effective** trust — the stored
+    /// scalar times the cooling factor (05 §1, M5.T05) — a pure read-time modulation
+    /// that survives a reliability refold and expires when the comparison stops
+    /// applying, never via a write. Gated exactly like decay: only when the policy
+    /// enables cooling *and* the caller stamped a clock. Episodes never cool.
     fn trust_ranking(
         &self,
         nodes: &BTreeSet<NodeId>,
         is_fact: bool,
+        now: Option<&Timestamp>,
     ) -> Result<SignalRanking, RetrievalError> {
         let mut scored: Vec<(NodeId, f64)> = Vec::with_capacity(nodes.len());
         for &node in nodes {
             let trust = if is_fact {
-                self.store.fact_by_node_id(node)?.map(|f| f.stats.trust)
+                self.store.fact_by_node_id(node)?.map(|f| match now {
+                    Some(now) if self.config.cooling_enabled => effective_cooled_trust(
+                        f.stats.trust,
+                        f.cooled_until.as_ref(),
+                        now,
+                        self.config.cooling_factor,
+                    ),
+                    _ => f.stats.trust,
+                })
             } else {
                 self.store.episode_by_node_id(node)?.map(|e| e.stats.trust)
             };

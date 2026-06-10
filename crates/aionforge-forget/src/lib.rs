@@ -17,6 +17,7 @@
 
 mod audit_addr;
 mod baseline;
+mod cooling;
 mod detector;
 mod eraser;
 mod forgetter;
@@ -24,6 +25,7 @@ mod pinning;
 mod policy;
 
 pub use baseline::DriftBaseline;
+pub use cooling::CoolingSweepReport;
 pub use detector::{
     BaselineNeed, BlockAssessment, CentroidOutcome, DriftDetector, DriftSweepReport,
     drift_warning_id,

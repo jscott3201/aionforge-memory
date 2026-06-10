@@ -19,6 +19,7 @@ mod compact;
 mod config;
 mod consolidation;
 mod convert;
+mod cooling;
 mod core_block;
 mod core_block_write;
 mod dedup;
@@ -59,6 +60,7 @@ pub use config::{
     DEFAULT_EMBEDDING_DIMENSION, StoreConfig, default_data_dir, default_data_dir_checked,
 };
 pub use consolidation::{ConsolidationCursor, ConsolidationWorkItem, LagSnapshot};
+pub use cooling::{CoolWrite, CoolingCandidate, CoolingCursor};
 pub use core_block_write::{CoreAttestation, CoreBlockReplacement, CoreEditWrite};
 pub use distill::DistilledNoteWrite;
 pub use drift_read::BehaviorVector;
