@@ -106,17 +106,20 @@ still holds low — that is, only if it would have been forgotten anyway absent 
 The unpin audit row is the durable record the stay was lifted.
 
 Every applied pin and unpin co-commits its audit row exactly like the forget writes:
-gated on a real state change, cycle-addressed (`pin → unpin → pin` is three rows), in
-the memory's own namespace, with the terse reason-and-kind payload — there is no
-decision basis to explain, because there is no decision gate. MCP exposure rides with
-the future PR that puts forget/unforget on that surface.
+gated on a real state change, one fresh row per applied transition (`pin → unpin → pin`
+is three rows, even inside a single millisecond), in the memory's own namespace, with
+the terse reason-and-kind payload — there is no decision basis to explain, because
+there is no decision gate. MCP exposure rides with the future PR that puts
+forget/unforget on that surface.
 
 ## The audit trail
 
 Every applied transition co-commits its audit row in the same transaction as the
 property flip, gated on a real state change — a crash-replay converges with no second
-row. Events are cycle-addressed: `forget → unforget → forget` is three real decisions,
-three rows. A forget row carries the decision basis in its payload — the reason
+row. Each applied transition is its own fresh row: `forget → unforget → forget` is
+three real decisions, three rows, even at a single instant. Idempotency lives in the
+state gate, never in the row id — a replay flips nothing and so audits nothing.
+A forget row carries the decision basis in its payload — the reason
 (`active_forgetting_sweep` or `manual`), the kind and tier, and the decayed importance
 and trust against their floors — so the reversible window is explainable after the
 fact. An unforget row carries its reason (`manual_unforget`) and the kind, nothing

@@ -1,10 +1,9 @@
 //! Shared audit addressing for the M5 lifecycle transitions (05 §2).
 //!
 //! Forget/unforget and pin/unpin record their decisions through the same addressing
-//! discipline, lifted here so the two surfaces can never drift apart: cycle-addressed
-//! event ids (a subject legitimately cycles through a transition more than once, and
-//! each crossing is a distinct row), identities in the **memory's own namespace**
-//! (agent-visible through the scoped audit reads, never hidden in `System`
+//! discipline, lifted here so the two surfaces can never drift apart: one fresh,
+//! time-ordered id per **applied** transition, identities in the **memory's own
+//! namespace** (agent-visible through the scoped audit reads, never hidden in `System`
 //! governance forensics), and one deterministic substrate actor.
 
 use aionforge_domain::blocks::Identity;
@@ -18,14 +17,19 @@ pub(crate) fn substrate_actor() -> Id {
     Id::from_content_hash(b"aionforge/forgetter-v1")
 }
 
-/// A content-addressed id over `(tag, subject)` plus the event's millisecond instant —
-/// the governance-transition discipline (`system_audit::cycle_id` precedent): a subject
-/// legitimately cycles forget → unforget → forget (or pin → unpin → pin), and each
-/// transition is a distinct row. Sound because emission is gated on a real state flip,
-/// and crash-safe because a replay re-supplies the same host `now`.
-pub(crate) fn cycle_id(tag: &str, subject: &Id, now: &Timestamp) -> Id {
-    let millis = now.timestamp().as_millisecond();
-    Id::from_content_hash(format!("{tag}|{subject}|{millis}").as_bytes())
+/// A fresh id for one applied transition — every real state flip is its own audit row,
+/// even `pin → unpin → pin` inside a single millisecond.
+///
+/// Deliberately **generated, not content-addressed**. Idempotency does not live in the
+/// id: the store writes flip-and-audit atomically and emit the audit only on a real
+/// state transition, so a crash-retry or double call is a state-gated no-op that never
+/// builds an event at all. A content hash over `(tag, subject, instant)` — the earlier
+/// shape — added nothing to that guarantee and *cost* a real defect: a subject crossing
+/// the same transition twice within one millisecond collided into one id, and the
+/// second crossing committed with its audit row silently deduplicated away, leaving a
+/// history whose last row contradicted the node's state.
+pub(crate) fn transition_id() -> Id {
+    Id::generate()
 }
 
 /// The audit identity for a lifecycle event: addressed to the **memory's own

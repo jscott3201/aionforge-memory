@@ -268,3 +268,52 @@ fn the_wal_round_trips_pin_state() {
     assert_eq!(audit_count(&recovered, AuditKind::Unpin), 1);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A deterministic stand-in for the substrate audit signer (the real one is Ed25519 in
+/// aionforge-trust): object-safe, content-derived output, no crypto.
+#[derive(Debug)]
+struct FakeSigner;
+impl aionforge_domain::verify::AuditEventSigner for FakeSigner {
+    fn sign(&self, event: &AuditEvent) -> String {
+        format!("fake-sig|{}", event.identity.id)
+    }
+}
+
+#[test]
+fn an_installed_signer_stamps_pin_audits_at_commit() {
+    let store = store();
+    store
+        .install_audit_signer(std::sync::Arc::new(FakeSigner))
+        .expect("install signer");
+    let fact = fact_with(FactStatus::Active, false);
+    store.insert_fact(&fact).expect("insert");
+    let (node, _) = node_and_pin(&store, &fact.identity.id);
+
+    let event = audit_event(AuditKind::Pin, fact.identity.id, "signed-pin");
+    assert_eq!(
+        store.set_pinned(node, &event).expect("pin"),
+        PinWrite::Applied
+    );
+    let row = &store
+        .audit_by_kind(AuditKind::Pin, None, 10)
+        .expect("audit")
+        .events[0];
+    assert_eq!(
+        row.signature,
+        format!("fake-sig|{}", event.identity.id),
+        "the blank pin event was stamped inside the commit by the installed signer"
+    );
+
+    // The replay path under a signer is still a state-gated no-op: no second row,
+    // and the stored signature is untouched.
+    assert_eq!(
+        store
+            .set_pinned(
+                node,
+                &audit_event(AuditKind::Pin, fact.identity.id, "signed-pin-replay"),
+            )
+            .expect("replay"),
+        PinWrite::Noop
+    );
+    assert_eq!(audit_count(&store, AuditKind::Pin), 1);
+}

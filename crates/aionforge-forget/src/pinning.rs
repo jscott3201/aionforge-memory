@@ -22,7 +22,7 @@ use aionforge_domain::nodes::forensic::{AuditEvent, AuditKind};
 use aionforge_domain::time::Timestamp;
 use aionforge_store::{ForgetCandidate, PinWrite, Store, StoreError};
 
-use crate::audit_addr::{cycle_id, namespace_identity, substrate_actor};
+use crate::audit_addr::{namespace_identity, substrate_actor, transition_id};
 use crate::forgetter::ALL_MEMORY_LABELS;
 
 /// The outcome of a point-pin.
@@ -56,7 +56,7 @@ pub fn pin(store: &Store, id: &Id, now: &Timestamp) -> Result<PointPin, StoreErr
     let Some(candidate) = store.memory_by_id(id, &ALL_MEMORY_LABELS)? else {
         return Ok(PointPin::NotFound);
     };
-    let audit = pin_audit(&candidate, now, "pin", AuditKind::Pin, "manual_pin");
+    let audit = pin_audit(&candidate, now, AuditKind::Pin, "manual_pin");
     match store.set_pinned(candidate.node, &audit)? {
         PinWrite::Applied => Ok(PointPin::Pinned),
         PinWrite::Noop => Ok(PointPin::AlreadyPinned),
@@ -72,29 +72,24 @@ pub fn unpin(store: &Store, id: &Id, now: &Timestamp) -> Result<PointUnpin, Stor
     let Some(candidate) = store.memory_by_id(id, &ALL_MEMORY_LABELS)? else {
         return Ok(PointUnpin::NotFound);
     };
-    let audit = pin_audit(&candidate, now, "unpin", AuditKind::Unpin, "manual_unpin");
+    let audit = pin_audit(&candidate, now, AuditKind::Unpin, "manual_unpin");
     match store.clear_pinned(candidate.node, &audit)? {
         PinWrite::Applied => Ok(PointUnpin::Unpinned),
         PinWrite::Noop => Ok(PointUnpin::NotPinned),
     }
 }
 
-/// The pin/unpin audit event: cycle-addressed, in the memory's own namespace, with the
-/// terse reason-and-kind payload (the unforget shape — there is no decision basis to
-/// explain, because there is no decision gate).
+/// The pin/unpin audit event: one fresh row per applied transition, in the memory's
+/// own namespace, with the terse reason-and-kind payload (the unforget shape — there
+/// is no decision basis to explain, because there is no decision gate).
 fn pin_audit(
     candidate: &ForgetCandidate,
     now: &Timestamp,
-    tag: &str,
     kind: AuditKind,
     reason: &str,
 ) -> AuditEvent {
     AuditEvent {
-        identity: namespace_identity(
-            cycle_id(tag, &candidate.identity.id, now),
-            candidate.identity.namespace.clone(),
-            now,
-        ),
+        identity: namespace_identity(transition_id(), candidate.identity.namespace.clone(), now),
         kind,
         subject_id: candidate.identity.id,
         actor_id: substrate_actor(),

@@ -1,5 +1,5 @@
 //! Point-op acceptance for pin/unpin (05 §2, M5.T02 rider): the ops resolve every
-//! `Stats`-bearing kind, audit in the memory's own namespace with the cycle discipline,
+//! `Stats`-bearing kind, audit one fresh row per applied transition in the memory's own namespace,
 //! protect a soft-forgotten memory without restoring it, and interact with the sweep as
 //! a stay, not a vault.
 
@@ -10,6 +10,7 @@ use aionforge_domain::ids::{ContentHash, Id};
 use aionforge_domain::namespace::Namespace;
 use aionforge_domain::nodes::episodic::{ConsolidationState, Episode, Role};
 use aionforge_domain::nodes::forensic::AuditKind;
+use aionforge_domain::nodes::procedural::{BadPattern, Skill};
 use aionforge_domain::nodes::semantic::{Entity, Fact, FactStatus};
 use aionforge_domain::time::Timestamp;
 use aionforge_domain::value::ObjectValue;
@@ -263,4 +264,117 @@ fn pinning_a_forgotten_memory_protects_without_restoring() {
         swept.forgotten, 0,
         "restored and pinned: the sweep spares it"
     );
+}
+
+#[test]
+fn a_same_instant_re_pin_cycle_is_three_distinct_audit_rows() {
+    let store = store();
+    let fact = low_fact();
+    store.insert_fact(&fact).expect("insert");
+    let t0 = now();
+
+    // pin -> unpin -> re-pin, all at one host instant: three real transitions, three
+    // rows. The audit id is generated per applied transition, so a sub-millisecond
+    // cycle can never collapse the re-pin into the first pin's row.
+    assert_eq!(
+        pin(&store, &fact.identity.id, &t0).expect("pin"),
+        PointPin::Pinned
+    );
+    assert_eq!(
+        unpin(&store, &fact.identity.id, &t0).expect("unpin"),
+        PointUnpin::Unpinned
+    );
+    assert_eq!(
+        pin(&store, &fact.identity.id, &t0).expect("re-pin"),
+        PointPin::Pinned
+    );
+    assert!(is_pinned(&store, &fact.identity.id, "Fact"));
+
+    let pins = store
+        .audit_by_kind(AuditKind::Pin, None, 10)
+        .expect("audit")
+        .events;
+    assert_eq!(
+        pins.len(),
+        2,
+        "two applied pins, two rows — even at one instant"
+    );
+    let unpins = store
+        .audit_by_kind(AuditKind::Unpin, None, 10)
+        .expect("audit")
+        .events;
+    assert_eq!(unpins.len(), 1);
+
+    // A true replay — same state, any instant — still audits nothing: idempotency
+    // lives in the state gate, not the id.
+    assert_eq!(
+        pin(&store, &fact.identity.id, &t0).expect("replay"),
+        PointPin::AlreadyPinned
+    );
+    assert_eq!(
+        store
+            .audit_by_kind(AuditKind::Pin, None, 10)
+            .expect("audit")
+            .events
+            .len(),
+        2
+    );
+}
+
+#[test]
+fn skills_and_bad_patterns_pin_like_every_other_kind() {
+    let store = store();
+
+    let body = "retry the deploy".to_string();
+    let skill = Skill {
+        identity: identity_in(Namespace::Global),
+        stats: low_stats(),
+        name: "deploy".to_string(),
+        version: 1,
+        description: "deploys the service".to_string(),
+        problem_embedding: None,
+        embedder_model: None,
+        language: "python".to_string(),
+        body: body.clone(),
+        params: serde_json::json!({}),
+        preconditions: None,
+        postconditions: None,
+        capabilities: Vec::new(),
+        success_count: 0,
+        failure_count: 0,
+        mean_latency_ms: None,
+        source_hash: ContentHash::of(body.as_bytes()),
+        last_success_at: None,
+        last_failure_at: None,
+        deprecated_at: None,
+        induced: false,
+    };
+    let skill_node = store.save_skill(&skill, None, &[]).expect("save skill");
+    assert_eq!(
+        pin(&store, &skill.identity.id, &now()).expect("pin"),
+        PointPin::Pinned
+    );
+    assert!(is_pinned(&store, &skill.identity.id, "Skill"));
+
+    // A bad pattern pins with NO policy toggle: the forget-side admission gate is
+    // about dooming negative knowledge; the pin can only protect it.
+    let pattern = BadPattern {
+        identity: identity_in(Namespace::Global),
+        stats: low_stats(),
+        description: "rolled back on a bad config".to_string(),
+        embedding: None,
+        embedder_model: None,
+        observed_at: long_ago(),
+    };
+    store
+        .save_bad_pattern(&pattern, skill_node)
+        .expect("save bad pattern");
+    assert_eq!(
+        pin(&store, &pattern.identity.id, &now()).expect("pin"),
+        PointPin::Pinned
+    );
+    assert!(is_pinned(&store, &pattern.identity.id, "BadPattern"));
+    // Note and CoreBlock complete the seven; neither has a public write surface yet
+    // (notes materialize through consolidation, core blocks land with M5.T04), so
+    // their pin coverage rides with those surfaces.
 }

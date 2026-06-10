@@ -22,7 +22,7 @@ use aionforge_domain::edges::Audit;
 use aionforge_domain::nodes::forensic::AuditEvent;
 use selene_core::{LabelDiff, PropertyDiff, PropertyMap, Value, db_string};
 
-use crate::convert::key;
+use crate::convert::{as_bool, key};
 use crate::error::StoreError;
 use crate::store::Store;
 use crate::{NodeId, audit};
@@ -77,12 +77,19 @@ impl Store {
         let mut txn = self.graph().begin_write();
         let outcome = {
             let mut mutator = txn.mutator();
-            // Probe under the write lock so the gate and the write are atomic.
+            // Probe under the write lock so the gate and the write are atomic. The
+            // read fails loud on a missing or non-bool value (the `as_bool(require)`
+            // convention every other `is_pinned` reader follows): the column is
+            // `NOT NULL DEFAULT FALSE` on every kind, so a malformed value is
+            // corruption to surface, never a state to silently no-op against.
             let already = {
                 let props = mutator.read().node_properties(node).ok_or_else(|| {
                     StoreError::invariant("pin write target has no properties".to_string())
                 })?;
-                matches!(props.get(&pinned_key), Some(Value::Bool(true)))
+                let value = props.get(&pinned_key).ok_or_else(|| {
+                    StoreError::decode("missing required property `is_pinned`".to_string())
+                })?;
+                as_bool(value)?
             };
             if already == set_to {
                 PinWrite::Noop

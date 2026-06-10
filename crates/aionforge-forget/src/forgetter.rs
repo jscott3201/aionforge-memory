@@ -31,7 +31,7 @@ use aionforge_domain::nodes::semantic::{Entity, Fact};
 use aionforge_domain::time::Timestamp;
 use aionforge_store::{ForgetCandidate, ForgetCursor, ForgetWrite, Store, StoreError};
 
-use crate::audit_addr::{cycle_id, namespace_identity, substrate_actor};
+use crate::audit_addr::{namespace_identity, substrate_actor, transition_id};
 use crate::policy::ForgettingPolicy;
 
 /// The incoming-edge allowlist that marks a memory as still depended upon — the
@@ -328,7 +328,7 @@ impl Forgetter {
         }
         let audit = AuditEvent {
             identity: namespace_identity(
-                cycle_id("unforget", id, now),
+                transition_id(),
                 candidate.identity.namespace.clone(),
                 now,
             ),
@@ -355,7 +355,8 @@ impl Forgetter {
             || (label == BadPattern::LABEL && self.policy.forget_bad_patterns)
     }
 
-    /// The forget audit event: cycle-addressed, in the memory's own namespace, recording
+    /// The forget audit event: one fresh row per applied transition, in the memory's own
+    /// namespace, recording
     /// the decision basis so the reversible window is explainable.
     fn forget_audit(
         &self,
@@ -381,7 +382,7 @@ impl Forgetter {
         );
         AuditEvent {
             identity: namespace_identity(
-                cycle_id("forget", &candidate.identity.id, now),
+                transition_id(),
                 candidate.identity.namespace.clone(),
                 now,
             ),

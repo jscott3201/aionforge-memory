@@ -515,3 +515,62 @@ fn the_bad_pattern_toggle_admits_the_kind_but_bypasses_no_axis() {
     );
     assert!(!is_expired(&store, &pattern.identity.id));
 }
+
+#[test]
+fn a_same_instant_forget_cycle_is_three_distinct_audit_rows() {
+    let store = store();
+    let forgetter = forgetter(&store);
+    let fact = low_fact();
+    store.insert_fact(&fact).expect("insert");
+    let t0 = now();
+
+    // forget -> unforget -> re-forget at one host instant: three real transitions,
+    // three rows. The audit id is generated per applied transition, so the
+    // sub-millisecond cycle can never collapse the re-forget into the first row.
+    assert_eq!(
+        forgetter.forget(&fact.identity.id, &t0).expect("forget"),
+        PointForget::Forgotten
+    );
+    assert_eq!(
+        forgetter
+            .unforget(&fact.identity.id, &t0)
+            .expect("unforget"),
+        PointUnforget::Restored
+    );
+    assert_eq!(
+        forgetter.forget(&fact.identity.id, &t0).expect("re-forget"),
+        PointForget::Forgotten
+    );
+    assert_eq!(
+        store
+            .audit_by_kind(AuditKind::Forget, None, 10)
+            .expect("audit")
+            .events
+            .len(),
+        2,
+        "two applied forgets, two rows — even at one instant"
+    );
+    assert_eq!(
+        store
+            .audit_by_kind(AuditKind::Unforget, None, 10)
+            .expect("audit")
+            .events
+            .len(),
+        1
+    );
+
+    // A true replay — same state, same instant — still audits nothing: idempotency
+    // lives in the state gate, not the id.
+    assert_eq!(
+        forgetter.forget(&fact.identity.id, &t0).expect("replay"),
+        PointForget::AlreadyForgotten
+    );
+    assert_eq!(
+        store
+            .audit_by_kind(AuditKind::Forget, None, 10)
+            .expect("audit")
+            .events
+            .len(),
+        2
+    );
+}
