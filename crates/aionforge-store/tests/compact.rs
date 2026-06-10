@@ -199,3 +199,48 @@ fn a_compacted_store_still_recovers_from_its_wal() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn edge_counters_move_through_the_full_reclaim_arc() {
+    let store = store();
+    let erased = episode("edge-carrying erased source", 0);
+    let derivative = episode("derived and erased with it", 1);
+    let e_node = store.insert_episode(&erased).expect("insert");
+    let d_node = store.insert_episode(&derivative).expect("insert");
+    let bound = aionforge_store::BoundQuery::new(
+        "MATCH (a:Episode {id: $from}), (b:Episode {id: $to}) \
+         INSERT (a)-[:DERIVED_FROM {derived_at: $ts}]->(b)",
+    )
+    .bind_uuid("from", derivative.identity.id)
+    .unwrap()
+    .bind_uuid("to", erased.identity.id)
+    .unwrap()
+    .bind("ts", aionforge_store::Value::ZonedDateTime(Box::new(now())))
+    .unwrap();
+    store.execute(&bound).expect("insert DERIVED_FROM edge");
+
+    store
+        .hard_purge(
+            &[e_node, d_node],
+            &purge_audit(erased.identity.id, "compact-edges"),
+        )
+        .expect("purge");
+    let before = store.compaction_pressure();
+    assert!(
+        before.reclaimable_edges >= 1,
+        "the severed edge is a reclaimable row: {before:?}"
+    );
+    assert!(before.allocated_nodes > before.live_nodes);
+
+    let report = store.compact().expect("compact");
+    assert!(
+        report.reclaimed_edges >= 1,
+        "the dead edge row was dropped: {report:?}"
+    );
+    let after = store.compaction_pressure();
+    assert_eq!(after.reclaimable_edges, 0);
+    assert_eq!(
+        after.allocated_nodes, after.live_nodes,
+        "dense after the rebuild: every allocated row is live"
+    );
+}

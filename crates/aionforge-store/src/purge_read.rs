@@ -29,7 +29,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use aionforge_domain::edges::{DerivedFrom, HasProvenance};
+use aionforge_domain::edges::{DerivedFrom, HasProvenance, PromotedTo};
 use aionforge_domain::ids::Id;
 use selene_core::db_string;
 
@@ -247,6 +247,40 @@ impl Store {
             spared_multiparent,
             provenance_count,
         }))
+    }
+
+    /// The domain ids of every node a member of `nodes` points at through an outgoing
+    /// `PROMOTED_TO` edge — the cross-namespace shadow copies an erasure leaves alive
+    /// (05 §3, M5.T03). Reported, never followed: the core cascade stops at the
+    /// namespace boundary, and the caller surfaces these so the survivor is named
+    /// rather than silently forgotten about.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if a read or decode fails.
+    pub fn promoted_targets(&self, nodes: &[NodeId]) -> Result<Vec<Id>, StoreError> {
+        let snapshot = self.graph().read();
+        let promoted = db_string(PromotedTo::LABEL)?;
+        let id_key = db_string("id")?;
+        let mut seen: HashSet<NodeId> = HashSet::new();
+        let mut targets = Vec::new();
+        for &node in nodes {
+            let Some(adjacency) = snapshot.outgoing_edges(node) else {
+                continue;
+            };
+            for edge in adjacency.iter_label(&promoted) {
+                if !seen.insert(edge.neighbor) {
+                    continue;
+                }
+                let Some(props) = snapshot.node_properties(edge.neighbor) else {
+                    continue;
+                };
+                let value = props.get(&id_key).ok_or_else(|| {
+                    StoreError::decode("promoted target missing required property `id`".to_string())
+                })?;
+                targets.push(as_id(value)?);
+            }
+        }
+        Ok(targets)
     }
 }
 

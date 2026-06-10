@@ -164,3 +164,50 @@ mod tests {
         }
     }
 }
+
+/// Right-to-erasure policy: the off-switch and the cascade caps (05 §3, M5.T03).
+///
+/// Deliberately a **separate switch** from [`ForgettingPolicy::enabled`]: forgetting is
+/// reversible and erasure is not, so enabling the soft path must never silently arm the
+/// destructive one. Defaults are off, with caps sized so a runaway derivation graph is
+/// refused rather than destroyed in one oversized transaction — the cap values are
+/// owner-ratified policy, not physics.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ErasurePolicy {
+    /// Master off-switch. When false the engine builds no [`Eraser`](crate::Eraser)
+    /// and every erase surface answers disabled.
+    pub enabled: bool,
+    /// The deepest derivation level a cascade may reach (the seed is depth 0).
+    pub max_cascade_depth: usize,
+    /// The most nodes one cascade may destroy, provenance records included.
+    pub max_cascade_nodes: usize,
+}
+
+impl Default for ErasurePolicy {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            max_cascade_depth: 32,
+            max_cascade_nodes: 5_000,
+        }
+    }
+}
+
+impl ErasurePolicy {
+    /// Re-validate the engine's own copy of the policy. Vacuous when disabled.
+    ///
+    /// # Errors
+    /// Returns a message naming the offending knob, the reliability-policy shape.
+    pub fn validate(&self) -> Result<(), String> {
+        if !self.enabled {
+            return Ok(());
+        }
+        if self.max_cascade_depth == 0 {
+            return Err("erasure.max_cascade_depth must be at least 1".to_string());
+        }
+        if self.max_cascade_nodes == 0 {
+            return Err("erasure.max_cascade_nodes must be at least 1".to_string());
+        }
+        Ok(())
+    }
+}

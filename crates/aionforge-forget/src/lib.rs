@@ -13,12 +13,14 @@
 //! this crate as they land.
 
 mod audit_addr;
+mod eraser;
 mod forgetter;
 mod pinning;
 mod policy;
 
+pub use eraser::{EraseReport, Eraser, PointErase, ResidualRetention};
 pub use forgetter::{
     ForgetDecision, ForgetSweepPage, Forgetter, PointForget, PointUnforget, SpareReason,
 };
 pub use pinning::{PointPin, PointUnpin, pin, unpin};
-pub use policy::ForgettingPolicy;
+pub use policy::{ErasurePolicy, ForgettingPolicy};
