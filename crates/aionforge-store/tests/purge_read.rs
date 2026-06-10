@@ -1,0 +1,372 @@
+//! Store-level tests for the erasure-cascade closure walk (05 §3, M5.T03): the
+//! fixed-point transitive closure over incoming `DERIVED_FROM`, the multi-parent
+//! survival rule, the cycle guard, cap refusals decided read-only, shared entities
+//! never followed, and the exclusively-owned provenance additions.
+
+use aionforge_domain::blocks::{Identity, Stats};
+use aionforge_domain::ids::{ContentHash, Id};
+use aionforge_domain::namespace::Namespace;
+use aionforge_domain::nodes::episodic::{ConsolidationState, Episode, Role};
+use aionforge_domain::nodes::forensic::{AuditEvent, AuditKind, ProvenanceRecord};
+use aionforge_domain::nodes::semantic::{Entity, Fact, FactStatus};
+use aionforge_domain::time::Timestamp;
+use aionforge_domain::value::ObjectValue;
+use aionforge_store::{
+    BoundQuery, CascadeCaps, ClosureOutcome, NodeId, PurgeClosure, Store, StoreConfig, Value,
+};
+
+fn ts(text: &str) -> Timestamp {
+    text.parse().expect("valid zoned datetime literal")
+}
+
+fn now() -> Timestamp {
+    ts("2026-06-06T12:00:00-05:00[America/Chicago]")
+}
+
+fn store() -> Store {
+    let store = Store::open_with_config(StoreConfig {
+        embedding_dimension: 4,
+    })
+    .expect("open store");
+    store
+        .migrate(&ts("2026-01-01T00:00:00-06:00[America/Chicago]"))
+        .expect("migrate store");
+    store
+}
+
+fn caps() -> CascadeCaps {
+    CascadeCaps {
+        max_depth: 16,
+        max_nodes: 200,
+    }
+}
+
+fn identity() -> Identity {
+    Identity {
+        id: Id::generate(),
+        ingested_at: ts("2026-06-01T09:00:00-05:00[America/Chicago]"),
+        namespace: Namespace::Global,
+        expired_at: None,
+    }
+}
+
+fn stats() -> Stats {
+    Stats {
+        importance: 0.5,
+        trust: 0.5,
+        last_access: ts("2026-06-01T09:00:00-05:00[America/Chicago]"),
+        access_count_recent: 0,
+        referenced_count: 0,
+        surprise: 0.1,
+        is_pinned: false,
+    }
+}
+
+fn episode(content: &str) -> Episode {
+    Episode {
+        identity: identity(),
+        stats: stats(),
+        content: content.to_string(),
+        role: Role::User,
+        captured_at: now(),
+        agent_id: Id::from_content_hash(b"purge-agent"),
+        session_id: None,
+        content_hash: ContentHash::of(content.as_bytes()),
+        embedding: None,
+        embedder_model: None,
+        consolidation_state: ConsolidationState::Raw,
+        origin: None,
+    }
+}
+
+fn fact(statement: &str) -> Fact {
+    Fact {
+        identity: identity(),
+        stats: stats(),
+        subject_id: Id::from_content_hash(b"subject"),
+        predicate: "tests".to_string(),
+        object: ObjectValue::Text(statement.to_string()),
+        confidence: 0.9,
+        status: FactStatus::Active,
+        statement: statement.to_string(),
+        embedding: None,
+        embedder_model: None,
+        extraction: None,
+    }
+}
+
+fn derived_edge(store: &Store, query: &'static str, from: &Id, to: &Id) {
+    let bound = BoundQuery::new(query)
+        .bind_uuid("from", from)
+        .unwrap()
+        .bind_uuid("to", to)
+        .unwrap()
+        .bind("ts", Value::ZonedDateTime(Box::new(now())))
+        .unwrap();
+    store.execute(&bound).expect("insert DERIVED_FROM edge");
+}
+
+const FACT_FROM_EPISODE: &str = "MATCH (a:Fact {id: $from}), (b:Episode {id: $to}) \
+     INSERT (a)-[:DERIVED_FROM {derived_at: $ts}]->(b)";
+const FACT_FROM_FACT: &str = "MATCH (a:Fact {id: $from}), (b:Fact {id: $to}) \
+     INSERT (a)-[:DERIVED_FROM {derived_at: $ts}]->(b)";
+const EPISODE_FROM_EPISODE: &str = "MATCH (a:Episode {id: $from}), (b:Episode {id: $to}) \
+     INSERT (a)-[:DERIVED_FROM {derived_at: $ts}]->(b)";
+
+fn mentions_edge(store: &Store, episode_id: &Id, entity_id: &Id) {
+    let bound = BoundQuery::new(
+        "MATCH (a:Episode {id: $from}), (b:Entity {id: $to}) \
+         INSERT (a)-[:MENTIONS {valid_from: $ts, ingested_at: $ts}]->(b)",
+    )
+    .bind_uuid("from", episode_id)
+    .unwrap()
+    .bind_uuid("to", entity_id)
+    .unwrap()
+    .bind("ts", Value::ZonedDateTime(Box::new(now())))
+    .unwrap();
+    store.execute(&bound).expect("insert MENTIONS edge");
+}
+
+fn computed(outcome: ClosureOutcome) -> PurgeClosure {
+    match outcome {
+        ClosureOutcome::Computed(closure) => closure,
+        ClosureOutcome::TooLarge { .. } => panic!("expected a computed closure"),
+    }
+}
+
+#[test]
+fn a_linear_chain_and_fanout_close_transitively() {
+    let store = store();
+    let e = episode("source episode");
+    let f1 = fact("first derivative");
+    let f2 = fact("second derivative");
+    let f1b = fact("derivative of the first derivative");
+    let e_node = store.insert_episode(&e).expect("insert");
+    let f1_node = store.insert_fact(&f1).expect("insert");
+    let f2_node = store.insert_fact(&f2).expect("insert");
+    let f1b_node = store.insert_fact(&f1b).expect("insert");
+    derived_edge(&store, FACT_FROM_EPISODE, &f1.identity.id, &e.identity.id);
+    derived_edge(&store, FACT_FROM_EPISODE, &f2.identity.id, &e.identity.id);
+    derived_edge(&store, FACT_FROM_FACT, &f1b.identity.id, &f1.identity.id);
+
+    let closure = computed(store.derived_from_closure(e_node, &caps()).expect("walk"));
+    let nodes: Vec<NodeId> = closure.nodes.clone();
+    assert_eq!(nodes.len(), 4, "seed + two children + one grandchild");
+    for member in [e_node, f1_node, f2_node, f1b_node] {
+        assert!(nodes.contains(&member));
+    }
+    assert_eq!(closure.cascade_depth, 2);
+    assert_eq!(closure.nodes[0], e_node, "the seed leads the closure");
+    assert_eq!(closure.node_ids[0], e.identity.id, "ids are index-parallel");
+    assert!(closure.spared_multiparent.is_empty());
+    assert_eq!(closure.provenance_count, 0);
+}
+
+#[test]
+fn a_multi_parent_derivative_survives_and_is_reported() {
+    let store = store();
+    let e1 = episode("erased source");
+    let e2 = episode("surviving source");
+    let shared = fact("deduped fact derived from both");
+    let e1_node = store.insert_episode(&e1).expect("insert");
+    let e2_node = store.insert_episode(&e2).expect("insert");
+    let shared_node = store.insert_fact(&shared).expect("insert");
+    derived_edge(
+        &store,
+        FACT_FROM_EPISODE,
+        &shared.identity.id,
+        &e1.identity.id,
+    );
+    derived_edge(
+        &store,
+        FACT_FROM_EPISODE,
+        &shared.identity.id,
+        &e2.identity.id,
+    );
+
+    let closure = computed(store.derived_from_closure(e1_node, &caps()).expect("walk"));
+    assert_eq!(closure.nodes, vec![e1_node], "only the seed is doomed");
+    assert!(!closure.nodes.contains(&shared_node));
+    assert!(!closure.nodes.contains(&e2_node));
+    assert_eq!(
+        closure.spared_multiparent,
+        vec![shared.identity.id],
+        "the survivor is reported, never silently skipped"
+    );
+}
+
+#[test]
+fn the_fixed_point_admits_a_late_arriving_sibling_source() {
+    let store = store();
+    // E2 is itself derived from E1; F is derived from BOTH. When F is discovered via
+    // E1 its source E2 may not be doomed yet — only the fixed-point re-evaluation
+    // admits it. A single forward pass would wrongly spare F.
+    let e1 = episode("root source");
+    let e2 = episode("derived source");
+    let f = fact("derived from both");
+    let e1_node = store.insert_episode(&e1).expect("insert");
+    let e2_node = store.insert_episode(&e2).expect("insert");
+    let f_node = store.insert_fact(&f).expect("insert");
+    derived_edge(
+        &store,
+        EPISODE_FROM_EPISODE,
+        &e2.identity.id,
+        &e1.identity.id,
+    );
+    derived_edge(&store, FACT_FROM_EPISODE, &f.identity.id, &e1.identity.id);
+    derived_edge(&store, FACT_FROM_EPISODE, &f.identity.id, &e2.identity.id);
+
+    let closure = computed(store.derived_from_closure(e1_node, &caps()).expect("walk"));
+    assert_eq!(closure.nodes.len(), 3, "all three fall together");
+    for member in [e1_node, e2_node, f_node] {
+        assert!(closure.nodes.contains(&member));
+    }
+    assert!(closure.spared_multiparent.is_empty());
+    assert_eq!(
+        closure.cascade_depth, 2,
+        "F sits one past its deepest source"
+    );
+}
+
+#[test]
+fn a_malformed_cycle_terminates() {
+    let store = store();
+    let a = fact("cycle a");
+    let b = fact("cycle b");
+    let a_node = store.insert_fact(&a).expect("insert");
+    let b_node = store.insert_fact(&b).expect("insert");
+    derived_edge(&store, FACT_FROM_FACT, &a.identity.id, &b.identity.id);
+    derived_edge(&store, FACT_FROM_FACT, &b.identity.id, &a.identity.id);
+
+    let closure = computed(store.derived_from_closure(a_node, &caps()).expect("walk"));
+    assert_eq!(
+        closure.nodes.len(),
+        2,
+        "both cycle members, exactly once each"
+    );
+    assert!(closure.nodes.contains(&a_node));
+    assert!(closure.nodes.contains(&b_node));
+}
+
+#[test]
+fn exceeding_either_cap_refuses_before_any_write_could_follow() {
+    let store = store();
+    let e = episode("capped source");
+    let f1 = fact("level one");
+    let f2 = fact("level two");
+    let e_node = store.insert_episode(&e).expect("insert");
+    store.insert_fact(&f1).expect("insert");
+    store.insert_fact(&f2).expect("insert");
+    derived_edge(&store, FACT_FROM_EPISODE, &f1.identity.id, &e.identity.id);
+    derived_edge(&store, FACT_FROM_FACT, &f2.identity.id, &f1.identity.id);
+
+    let depth_refused = store
+        .derived_from_closure(
+            e_node,
+            &CascadeCaps {
+                max_depth: 1,
+                max_nodes: 200,
+            },
+        )
+        .expect("walk");
+    assert!(
+        matches!(depth_refused, ClosureOutcome::TooLarge { depth_observed, .. } if depth_observed == 2),
+        "the depth cap refuses: {depth_refused:?}"
+    );
+
+    let node_refused = store
+        .derived_from_closure(
+            e_node,
+            &CascadeCaps {
+                max_depth: 16,
+                max_nodes: 2,
+            },
+        )
+        .expect("walk");
+    assert!(
+        matches!(node_refused, ClosureOutcome::TooLarge { nodes_observed, .. } if nodes_observed == 3),
+        "the node cap refuses: {node_refused:?}"
+    );
+}
+
+#[test]
+fn shared_entities_are_never_followed() {
+    let store = store();
+    let e = episode("entity-mentioning source");
+    let entity = Entity {
+        identity: identity(),
+        stats: stats(),
+        canonical_name: "selene".to_string(),
+        entity_type: "Project".to_string(),
+        aliases: Vec::new(),
+        description: None,
+        embedding: None,
+        embedder_model: None,
+        attributes: None,
+    };
+    let e_node = store.insert_episode(&e).expect("insert");
+    let entity_node = store.insert_entity(&entity).expect("insert");
+    mentions_edge(&store, &e.identity.id, &entity.identity.id);
+
+    let closure = computed(store.derived_from_closure(e_node, &caps()).expect("walk"));
+    assert_eq!(closure.nodes, vec![e_node]);
+    assert!(
+        !closure.nodes.contains(&entity_node),
+        "MENTIONS is not a cascade edge; the shared entity survives"
+    );
+}
+
+#[test]
+fn a_captured_episode_brings_its_provenance_record() {
+    let store = store();
+    let e = episode("captured with provenance");
+    let provenance = ProvenanceRecord {
+        identity: identity(),
+        subject_id: e.identity.id,
+        writer_agent_id: Id::from_content_hash(b"purge-agent"),
+        signature: "sig".to_string(),
+        source_episode_ids: Vec::new(),
+        model_family: "test".to_string(),
+        model_version: None,
+        trust_at_write: 0.5,
+    };
+    let audit = AuditEvent {
+        identity: identity(),
+        kind: AuditKind::Capture,
+        subject_id: e.identity.id,
+        actor_id: Id::from_content_hash(b"purge-agent"),
+        payload: serde_json::json!({"reason": "test"}),
+        signature: String::new(),
+        occurred_at: now(),
+    };
+    let ids = store
+        .commit_capture(&e, &provenance, &audit)
+        .expect("capture");
+
+    let closure = computed(
+        store
+            .derived_from_closure(ids.episode, &caps())
+            .expect("walk"),
+    );
+    assert_eq!(
+        closure.nodes.len(),
+        2,
+        "the episode and its provenance record"
+    );
+    assert!(closure.nodes.contains(&ids.provenance));
+    assert_eq!(closure.provenance_count, 1);
+    assert!(
+        closure.node_ids.contains(&provenance.identity.id),
+        "the provenance record resolves into the id-only spine"
+    );
+}
+
+#[test]
+fn a_fact_seed_with_no_derivatives_is_a_singleton_closure() {
+    let store = store();
+    let f = fact("standalone");
+    let f_node = store.insert_fact(&f).expect("insert");
+    let closure = computed(store.derived_from_closure(f_node, &caps()).expect("walk"));
+    assert_eq!(closure.nodes, vec![f_node]);
+    assert_eq!(closure.cascade_depth, 0);
+}
