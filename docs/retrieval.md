@@ -42,7 +42,8 @@ by the effective decayed importance, recency by the ingestion instant) and can n
 a recall. The importance and recency re-ranks run only when the caller supplies a clock on
 the query's options; there is no ambient clock in the retrieval path. The MCP server is
 such a caller: its `search` handler stamps the host's wall clock onto every recall, exactly
-as `capture` stamps `captured_at`, so MCP-served recalls always carry both re-ranks.
+as `capture` stamps `captured_at` — the clock is always supplied, and each query class
+still decides whether it weights those re-ranks (the quote class keeps them off).
 
 ## RRF fusion
 
