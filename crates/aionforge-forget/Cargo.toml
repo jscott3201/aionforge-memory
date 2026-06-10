@@ -13,6 +13,7 @@ description = "Decay and importance, active forgetting, erasure cascade, atteste
 aionforge-domain = { path = "../aionforge-domain", version = "0.1.0" }
 aionforge-store = { path = "../aionforge-store", version = "0.1.0" }
 aionforge-embed = { path = "../aionforge-embed", version = "0.1.0" }
+serde_json = { workspace = true }
 
 [lints]
 workspace = true

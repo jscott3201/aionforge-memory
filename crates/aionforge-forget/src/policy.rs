@@ -1,0 +1,166 @@
+//! The engine-facing forgetting policy (05 §2, M5.T02).
+//!
+//! The host maps `aionforge-config`'s `ForgettingConfig` plus the decay section's tier
+//! half-lives into this struct, the same indirection as the reliability policy, so
+//! neither the engine nor this crate takes a config dependency. The half-lives ride
+//! along because sweep-time decay must agree with rank-time decay — they are the same
+//! two knobs, never re-declared — and they arrive regardless of whether rank-time decay
+//! is enabled (the half-lives are always defined; `decay.enabled` only gates their
+//! application at rank time).
+
+/// Active-forgetting policy: the off-switch, the floors a candidate must sit below on
+/// every axis, and the tier half-lives the decayed-importance axis reads.
+///
+/// Defaults are off and conservative, mirroring the config section: a memory written
+/// with the default capture importance and trust is never a candidate until it has
+/// genuinely faded.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ForgettingPolicy {
+    /// Master off-switch. When false the engine builds no [`Forgetter`](crate::Forgetter)
+    /// and every forget surface is inert.
+    pub enabled: bool,
+    /// A candidate is low-importance only when its decayed importance sits below this.
+    pub importance_floor: f64,
+    /// A candidate is low-trust only when its per-memory trust scalar sits below this.
+    pub trust_floor: f64,
+    /// A candidate must be at least this old (seconds since ingestion) to be forgettable.
+    pub min_age_secs: u64,
+    /// Per-page candidate cap for the sweep.
+    pub batch_cap: usize,
+    /// Whether `BadPattern` records may be point-forgotten. Negative knowledge is
+    /// protected by default.
+    pub forget_bad_patterns: bool,
+    /// Episodic-tier half-life in seconds, from the decay section.
+    pub episodic_half_life_secs: f64,
+    /// Semantic-tier half-life in seconds, from the decay section.
+    pub semantic_half_life_secs: f64,
+}
+
+impl Default for ForgettingPolicy {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            importance_floor: 0.05,
+            trust_floor: 0.30,
+            min_age_secs: 2_592_000,
+            batch_cap: 200,
+            forget_bad_patterns: false,
+            episodic_half_life_secs: 604_800.0,
+            semantic_half_life_secs: 31_536_000.0,
+        }
+    }
+}
+
+impl ForgettingPolicy {
+    /// Re-validate the engine's own copy of the policy, mirroring the config section's
+    /// rules plus the half-life sanity this side owns. Vacuous when disabled.
+    ///
+    /// # Errors
+    /// Returns a message naming the offending knob, the reliability-policy shape.
+    pub fn validate(&self) -> Result<(), String> {
+        if !self.enabled {
+            return Ok(());
+        }
+        for (key, floor) in [
+            ("forgetting importance_floor", self.importance_floor),
+            ("forgetting trust_floor", self.trust_floor),
+        ] {
+            if !(floor.is_finite() && (0.0..=1.0).contains(&floor)) {
+                return Err(format!(
+                    "{key} must be a finite value in the range [0.0, 1.0]"
+                ));
+            }
+        }
+        if self.batch_cap == 0 {
+            return Err("forgetting batch_cap must be greater than zero".to_string());
+        }
+        if self.importance_floor >= 1.0 && self.trust_floor >= 1.0 {
+            return Err(
+                "forgetting floors must not both sit at 1.0 (nearly every unpinned \
+                 memory would become a sweep candidate)"
+                    .to_string(),
+            );
+        }
+        for (key, half_life) in [
+            ("episodic half-life", self.episodic_half_life_secs),
+            ("semantic half-life", self.semantic_half_life_secs),
+        ] {
+            // The pure decay function treats a non-positive half-life as inert (no
+            // decay), which would silently turn the importance axis into "stored value
+            // only"; reject the misconfiguration where it is visible instead.
+            if !half_life.is_finite() || half_life <= 0.0 {
+                return Err(format!(
+                    "{key} must be a finite value greater than zero when forgetting is \
+                     enabled"
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn defaults_are_off_and_valid_when_enabled() {
+        let policy = ForgettingPolicy::default();
+        assert!(!policy.enabled);
+        policy.validate().expect("off validates vacuously");
+        let enabled = ForgettingPolicy {
+            enabled: true,
+            ..ForgettingPolicy::default()
+        };
+        enabled.validate().expect("enabled defaults validate");
+    }
+
+    #[test]
+    fn a_disabled_policy_never_rejects() {
+        let policy = ForgettingPolicy {
+            enabled: false,
+            importance_floor: f64::NAN,
+            batch_cap: 0,
+            episodic_half_life_secs: -1.0,
+            ..ForgettingPolicy::default()
+        };
+        policy.validate().expect("inert values are never rejected");
+    }
+
+    #[test]
+    fn enabled_validation_rejects_each_bad_knob() {
+        let base = ForgettingPolicy {
+            enabled: true,
+            ..ForgettingPolicy::default()
+        };
+        for bad in [
+            ForgettingPolicy {
+                importance_floor: 1.5,
+                ..base.clone()
+            },
+            ForgettingPolicy {
+                trust_floor: f64::NAN,
+                ..base.clone()
+            },
+            ForgettingPolicy {
+                batch_cap: 0,
+                ..base.clone()
+            },
+            ForgettingPolicy {
+                importance_floor: 1.0,
+                trust_floor: 1.0,
+                ..base.clone()
+            },
+            ForgettingPolicy {
+                episodic_half_life_secs: 0.0,
+                ..base.clone()
+            },
+            ForgettingPolicy {
+                semantic_half_life_secs: f64::INFINITY,
+                ..base.clone()
+            },
+        ] {
+            assert!(bad.validate().is_err(), "{bad:?} must be rejected");
+        }
+    }
+}

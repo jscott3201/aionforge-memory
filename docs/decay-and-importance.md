@@ -100,6 +100,17 @@ and un-forgetting a demotion's expiry would resurrect what governance retired �
 re-promotion owns that path. Reversibility holds until the retention prune physically
 removes the record.
 
+The orchestrator ties the layers together, cheapest protection first: pinned, then the
+promotion-lineage and attestation probes (governance territory and the M5.T03 boundary),
+then the pure axes through the domain predicate. A point-forget runs the same full gate
+as the sweep — a host cannot force-forget a protected memory, and instead of a silent
+no-op it learns which protection held (pinned, attested, lineage, referenced, too young,
+the kind itself, or an axis still above its floor). Un-forget takes no eligibility gate
+on the way back: restoring a memory is always safe, only the demotion shape stays
+refused. Every applied forget writes its decision basis into the audit payload — kind,
+tier, the decayed importance and trust against their floors — so the reversible window
+is explainable after the fact.
+
 ## The caller's clock
 
 There is no ambient clock in the retrieval path (03 §6). The importance and recency

@@ -187,6 +187,67 @@ impl Store {
         Ok(ForgetCandidatePage { candidates, next })
     }
 
+    /// The node carrying `id` under the first of `labels` that has it, with the blocks
+    /// the forgetting gates read — the point-op resolver (05 §2, M5.T02).
+    ///
+    /// Unlike the candidate page this does **not** filter `expired_at`: un-forget must
+    /// find an already-forgotten node, and a point-forget of an expired node must be
+    /// able to report "already forgotten" rather than "not found". Ids are unique per
+    /// kind and the caller's label set is disjoint by construction, so first-hit is the
+    /// only hit.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if a lookup or block decode fails.
+    pub fn memory_by_id(
+        &self,
+        id: &Id,
+        labels: &[&str],
+    ) -> Result<Option<ForgetCandidate>, StoreError> {
+        let snapshot = self.graph().read();
+        for label in labels {
+            let Some(node) = convert::node_by_id(&snapshot, label, id)? else {
+                continue;
+            };
+            let Some(props) = snapshot.node_properties(node) else {
+                continue;
+            };
+            let (identity, stats) = blocks_from_properties(props)?;
+            return Ok(Some(ForgetCandidate {
+                node,
+                label: (*label).to_string(),
+                identity,
+                stats,
+            }));
+        }
+        Ok(None)
+    }
+
+    /// Whether any edge with one of `labels` touches this node, in **either** direction —
+    /// the attestation and promotion-lineage exemption probe (05 §2, M5.T02).
+    ///
+    /// Presence-based on purpose: an attestation is write-once with no de-attest path,
+    /// and promotion lineage marks a node as governance's territory even after the
+    /// window closes (a closed lineage edge still means `needs_resurrection` and the
+    /// demotion guard can collide with a soft-forget). Sparing on a closed edge is the
+    /// conservative side.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if a label or edge read fails.
+    pub fn has_adjacent_edge(&self, node: NodeId, labels: &[&str]) -> Result<bool, StoreError> {
+        let snapshot = self.graph().read();
+        for adjacency in [snapshot.incoming_edges(node), snapshot.outgoing_edges(node)]
+            .into_iter()
+            .flatten()
+        {
+            for label in labels {
+                if adjacency.iter_label(&db_string(label)?).next().is_some() {
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
+    }
+
     /// Whether any **live** incoming edge from the protecting allowlist points at this
     /// node — the "unreferenced" eligibility axis, inverted (05 §2, M5.T02).
     ///
