@@ -101,6 +101,12 @@ pub struct RecallOptions {
     /// surfaces (03 §4). Conservative default `false`; automatic sensitivity detection is
     /// deferred to a later milestone.
     pub sensitive: bool,
+    /// The caller-supplied "now" the importance and recency re-ranks read against (05 §2,
+    /// M5.T01). `None` — the default, and the honest "no clock was provided" state — runs
+    /// neither re-rank, leaving the recall byte-identical to a pre-decay one. There is no
+    /// ambient clock in the retrieval path, so these signals exist only when the caller
+    /// stamps this.
+    pub now: Option<Timestamp>,
 }
 
 impl Default for RecallOptions {
@@ -113,6 +119,7 @@ impl Default for RecallOptions {
             include_expired: false,
             fanout: 0,
             sensitive: false,
+            now: None,
         }
     }
 }

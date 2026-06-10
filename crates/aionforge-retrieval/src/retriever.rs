@@ -34,10 +34,11 @@ use crate::error::RetrievalError;
 use crate::fusion::{DEFAULT_RRF_K, FusedCandidate, WeightedRanking, fuse};
 use crate::precision::{derive_graph_seed, resolve_seed_entities};
 use crate::query::{RecallQuery, TemporalMode};
+use crate::rerank;
 use crate::router::{profile_for, route};
 use crate::signals::{
-    RankedCandidate, Signal, SignalRanking, dense_ranking_for, embed_query, graph_ranking_for,
-    lexical_ranking, ranking_from_hits,
+    Signal, SignalRanking, dense_ranking_for, embed_query, graph_ranking_for, lexical_ranking,
+    ranking_from_hits,
 };
 use crate::temporal::{fact_passes_temporal, fact_serialization_id};
 
@@ -50,7 +51,7 @@ const EPISODE_KIND_TAG: &str = "episode";
 const MAX_EXPANSION_DEPTH: usize = 1;
 
 /// Tuning for the retriever that is not per-query.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RetrieverConfig {
     /// How many candidates each signal pulls before fusion, when a query does not set
     /// its own fan-out. A wider fan-out gives fusion and the diversity cap more to
@@ -61,6 +62,15 @@ pub struct RetrieverConfig {
     /// support expansion (the dense pass alone stands); the value is clamped to
     /// `MAX_EXPANSION_DEPTH`. v1 expands a single hop.
     pub support_expansion_depth: usize,
+    /// Whether elapsed time sinks effective importance in the importance re-rank (05 §2,
+    /// M5.T01). Off by default: the re-rank then orders by the raw stored importance —
+    /// the signal still participates; this switch governs only whether time decays the
+    /// value. The engine maps `DecayConfig` here.
+    pub decay_enabled: bool,
+    /// Half-life for episodic memory, in seconds, when decay is enabled.
+    pub episodic_half_life_secs: f64,
+    /// Half-life for semantic and identity memory, in seconds, when decay is enabled.
+    pub semantic_half_life_secs: f64,
 }
 
 impl Default for RetrieverConfig {
@@ -68,6 +78,9 @@ impl Default for RetrieverConfig {
         Self {
             default_fanout: 50,
             support_expansion_depth: 1,
+            decay_enabled: false,
+            episodic_half_life_secs: 604_800.0,
+            semantic_half_life_secs: 31_536_000.0,
         }
     }
 }
@@ -276,6 +289,50 @@ impl<E: Embedder> HybridRetriever<E> {
             }
             if ran {
                 signals_run.push(Signal::Trust);
+            }
+        }
+
+        // The importance and recency re-ranks (05 §2, M5.T01): order the same surfaced set
+        // by effective (decayed) importance and by ingestion recency, each folded into RRF
+        // exactly like trust. Both exist only when the caller stamped `options.now` — there
+        // is no ambient clock in the retrieval path, so a query without a clock recalls
+        // byte-identically to a pre-decay one.
+        if let Some(now) = &query.options.now {
+            let (fact_set, episode_set) = rerank::surfaced(&rankings, &fact_nodes);
+            if profile.weights.importance > 0.0 {
+                let facts =
+                    rerank::importance_ranking(&self.store, &fact_set, true, now, &self.config)?;
+                let episodes = rerank::importance_ranking(
+                    &self.store,
+                    &episode_set,
+                    false,
+                    now,
+                    &self.config,
+                )?;
+                let ran = !facts.candidates.is_empty() || !episodes.candidates.is_empty();
+                if !facts.candidates.is_empty() {
+                    rankings.push(WeightedRanking::new(profile.weights.importance, facts));
+                }
+                if !episodes.candidates.is_empty() {
+                    rankings.push(WeightedRanking::new(profile.weights.importance, episodes));
+                }
+                if ran {
+                    signals_run.push(Signal::Importance);
+                }
+            }
+            if profile.weights.recency > 0.0 {
+                let facts = rerank::recency_ranking(&self.store, &fact_set, true)?;
+                let episodes = rerank::recency_ranking(&self.store, &episode_set, false)?;
+                let ran = !facts.candidates.is_empty() || !episodes.candidates.is_empty();
+                if !facts.candidates.is_empty() {
+                    rankings.push(WeightedRanking::new(profile.weights.recency, facts));
+                }
+                if !episodes.candidates.is_empty() {
+                    rankings.push(WeightedRanking::new(profile.weights.recency, episodes));
+                }
+                if ran {
+                    signals_run.push(Signal::Recency);
+                }
             }
         }
 
@@ -546,26 +603,17 @@ impl<E: Embedder> HybridRetriever<E> {
         rankings: &[WeightedRanking],
         fact_nodes: &HashSet<NodeId>,
     ) -> Result<(SignalRanking, SignalRanking), RetrievalError> {
-        let mut facts: BTreeSet<NodeId> = BTreeSet::new();
-        let mut episodes: BTreeSet<NodeId> = BTreeSet::new();
-        for weighted in rankings {
-            for candidate in &weighted.ranking.candidates {
-                if fact_nodes.contains(&candidate.node) {
-                    facts.insert(candidate.node);
-                } else {
-                    episodes.insert(candidate.node);
-                }
-            }
-        }
+        let (facts, episodes) = rerank::surfaced(rankings, fact_nodes);
         Ok((
             self.trust_ranking(&facts, true)?,
             self.trust_ranking(&episodes, false)?,
         ))
     }
 
-    /// One kind's trust ranking: read each node's stored trust and order it best-first (highest
-    /// trust first), with a *competition* rank so equal-trust candidates share a position. `is_fact`
-    /// selects the node reader and the stats field. A node that no longer resolves is dropped.
+    /// One kind's trust ranking: read each node's stored trust and order it best-first
+    /// (highest trust first) under the shared competition rank, so equal-trust candidates
+    /// share a position. `is_fact` selects the node reader and the stats field. A node
+    /// that no longer resolves is dropped.
     fn trust_ranking(
         &self,
         nodes: &BTreeSet<NodeId>,
@@ -582,37 +630,7 @@ impl<E: Embedder> HybridRetriever<E> {
                 scored.push((node, trust));
             }
         }
-        // Order by trust descending, ties by node id so the order is deterministic. Then assign a
-        // *competition* rank — candidates with equal trust share a rank (0, 1, 1, 3, …). A uniform-
-        // trust set collapses to one rank, so in reciprocal-rank fusion the trust signal adds the
-        // same constant to every candidate and reorders nothing: trust only moves candidates where
-        // the values genuinely differ, never injecting a node-id bias where it carries no signal.
-        scored.sort_by(|a, b| {
-            b.1.partial_cmp(&a.1)
-                .unwrap_or(std::cmp::Ordering::Equal)
-                .then(a.0.cmp(&b.0))
-        });
-        let mut candidates = Vec::with_capacity(scored.len());
-        let mut rank = 0;
-        for (i, &(node, score)) in scored.iter().enumerate() {
-            // Start a new rank only when this trust differs from the previous one, under the SAME
-            // convention the sort used (a non-comparable pair counts as equal), so the rank
-            // boundaries never disagree with the order.
-            if i > 0
-                && scored[i - 1]
-                    .1
-                    .partial_cmp(&score)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-                    != std::cmp::Ordering::Equal
-            {
-                rank = i;
-            }
-            candidates.push(RankedCandidate { node, rank, score });
-        }
-        Ok(SignalRanking {
-            signal: Signal::Trust,
-            candidates,
-        })
+        Ok(rerank::competition_ranked(Signal::Trust, scored))
     }
 
     /// Resolve a fused fact candidate to an authorized, temporally-admitted entry, or

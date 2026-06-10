@@ -232,6 +232,7 @@ fn retriever(store: Arc<Store>) -> HybridRetriever<FakeEmbedder> {
         RetrieverConfig {
             default_fanout: 50,
             support_expansion_depth: 1,
+            ..RetrieverConfig::default()
         },
     )
 }

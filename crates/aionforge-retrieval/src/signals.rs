@@ -18,8 +18,9 @@ use aionforge_store::{NodeId, SearchHit, SearchKind, Store};
 
 use crate::error::RetrievalError;
 
-/// A retrieval signal — the source that produced a ranking (03 §1). Graph, recency,
-/// and trust land with their tasks; this module implements lexical and dense.
+/// A retrieval signal — the source that produced a ranking (03 §1). This module
+/// implements lexical and dense; graph, recency, importance, and trust land with
+/// their tasks' re-rank builders.
 ///
 /// The declared order (lexical, dense, …) is the canonical order fusion sums
 /// contributions in, so a fused result is independent of the order signals are
@@ -37,8 +38,11 @@ pub enum Signal {
     Support,
     /// Associative graph expansion.
     Graph,
-    /// Recency ranking over event/ingestion time.
+    /// Recency ranking over ingestion time.
     Recency,
+    /// Effective-importance ranking over the decayed write-time importance (05 §2,
+    /// M5.T01).
+    Importance,
     /// Writer-trust × reliability ranking.
     Trust,
 }

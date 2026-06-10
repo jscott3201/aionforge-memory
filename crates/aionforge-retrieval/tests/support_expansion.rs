@@ -305,6 +305,7 @@ fn retriever(store: Arc<Store>, depth: usize) -> HybridRetriever<FakeEmbedder> {
         RetrieverConfig {
             default_fanout: 50,
             support_expansion_depth: depth,
+            ..RetrieverConfig::default()
         },
     )
 }
@@ -489,6 +490,7 @@ async fn support_expansion_skips_gracefully_on_an_embedder_outage() {
         RetrieverConfig {
             default_fanout: 50,
             support_expansion_depth: 1,
+            ..RetrieverConfig::default()
         },
     );
     let bundle = recall(&r, QueryClass::MultiHop).await;

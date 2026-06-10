@@ -51,6 +51,8 @@ pub struct SignalWeights {
     pub graph: f64,
     /// Recency weight.
     pub recency: f64,
+    /// Effective-importance weight (05 §2, M5.T01).
+    pub importance: f64,
     /// Trust weight.
     pub trust: f64,
 }
@@ -65,6 +67,7 @@ impl SignalWeights {
             Signal::Support => self.support,
             Signal::Graph => self.graph,
             Signal::Recency => self.recency,
+            Signal::Importance => self.importance,
             Signal::Trust => self.trust,
         }
     }
@@ -111,6 +114,7 @@ pub fn profile_for(class: QueryClass) -> RetrievalProfile {
                 support: OFF,
                 graph: LIGHT,
                 recency: LIGHT,
+                importance: LIGHT,
                 trust: HEAVY,
             },
             graph_expansion: false,
@@ -128,6 +132,7 @@ pub fn profile_for(class: QueryClass) -> RetrievalProfile {
                 support: MODERATE,
                 graph: HEAVY,
                 recency: LIGHT,
+                importance: LIGHT,
                 trust: MODERATE,
             },
             graph_expansion: true,
@@ -145,6 +150,7 @@ pub fn profile_for(class: QueryClass) -> RetrievalProfile {
                 support: OFF,
                 graph: OFF,
                 recency: HEAVY,
+                importance: LIGHT,
                 trust: MODERATE,
             },
             graph_expansion: false,
@@ -162,6 +168,7 @@ pub fn profile_for(class: QueryClass) -> RetrievalProfile {
                 support: MODERATE,
                 graph: HEAVY,
                 recency: OFF,
+                importance: LIGHT,
                 trust: MODERATE,
             },
             graph_expansion: true,
@@ -179,6 +186,7 @@ pub fn profile_for(class: QueryClass) -> RetrievalProfile {
                 support: OFF,
                 graph: OFF,
                 recency: OFF,
+                importance: OFF,
                 trust: OFF,
             },
             graph_expansion: false,

@@ -1,4 +1,4 @@
-//! Hybrid retrieval: lexical/dense/graph/recency/trust signals, RRF fusion, query-class router, and the recall bundle.
+//! Hybrid retrieval: lexical/dense/graph/recency/importance/trust signals, RRF fusion, query-class router, and the recall bundle.
 //!
 //! This implements the lexical and dense signals ([`lexical_ranking`] and
 //! [`dense_ranking`], M1.T03–T04) and the associative graph signal (Personalized
@@ -7,13 +7,15 @@
 //! merges them ([`fuse`], M1.T05), the mandatory query-class router ([`route`], M1.T06)
 //! that picks the mode weights and gates graph expansion, and the [`HybridRetriever`]
 //! (M1.T07) that runs the whole path and returns a deterministic [`RecallBundle`] (03).
-//! The recency and trust signals land with their tasks.
+//! Trust, importance, and recency are re-rank signals over the surfaced set (06 §5,
+//! 05 §2).
 
 mod bundle;
 mod error;
 mod fusion;
 mod precision;
 mod query;
+mod rerank;
 mod retriever;
 mod router;
 mod signals;

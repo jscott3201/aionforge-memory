@@ -35,9 +35,12 @@ but fusion reads only the rank. Candidates ride through the pipeline as the stor
 `NodeId` handle — the currency the engine's candidate-set algebra and the fusion stage
 both work in — and resolve to a stable domain id only at the bundle boundary.
 
-`Support`, `Graph`, `Recency`, and `Trust` are declared. `Support` and `Graph` ship
-(the additive support-expansion and associative-PageRank signals below); `Recency` and
-`Trust` land with their own tasks.
+All seven signals ship. `Support` and `Graph` are the additive search signals below;
+`Trust`, `Importance`, and `Recency` are *re-ranks* — they order only the candidates the
+search signals already surfaced (trust by the reliability-folded stored trust, importance
+by the effective decayed importance, recency by the ingestion instant) and can never widen
+a recall. The importance and recency re-ranks run only when the caller supplies a clock on
+the query's options; there is no ambient clock in the retrieval path.
 
 ## RRF fusion
 
@@ -240,7 +243,8 @@ against the same graph return byte-identical rendered text.
 
 - There is no learned ranker and no learned query classifier yet; classification is the v1
   heuristic, and a wrong class degrades to a usable ordering rather than failing.
-- Recency and trust are declared signals but not yet wired into the run.
+- A recall never touches `last_access` or any access counter — the read path is strictly
+  read-only, and the decayed importance the re-rank computes is never written back.
 - Support expansion is a single `SUPPORTS` hop; transitive multi-hop expansion is future
   work.
 - Sensitivity is an explicit flag, not auto-detected.
