@@ -94,7 +94,7 @@ pub fn decayed_importance(
         return stored;
     }
     // Whole seconds are ample resolution for half-lives measured in days, and the
-    // instant-based difference is robust across time-zone representations.
+    // instant-based difference does not depend on either side's time-zone representation.
     #[allow(clippy::cast_precision_loss)]
     let halvings = elapsed as f64 / half_life_secs;
     stored * 0.5_f64.powf(halvings)
@@ -109,6 +109,81 @@ pub fn decayed_importance(
 #[must_use]
 pub fn is_eligible(is_pinned: bool, decayed: f64, floor: f64) -> bool {
     is_pinned || decayed >= floor
+}
+
+/// The pure, per-candidate measurements of the forget-eligibility axes (05 §3, M5.T02).
+///
+/// Everything here is a scalar the caller has already resolved — the decayed importance
+/// comes out of [`decayed_importance`] with the candidate's own tier half-life, `trust` is
+/// the per-memory [`Stats::trust`](crate::blocks::Stats::trust) scalar, `unreferenced` is
+/// the result of the store's protecting-reference probe, and `age_secs` is the elapsed time
+/// since the candidate's `ingested_at` clamped to non-negative. The graph and label axes
+/// (kind scoping, attestation, promotion lineage) live with the orchestrator that can see
+/// the graph; they never reach this module.
+#[derive(Debug, Clone, Copy)]
+pub struct ForgetAxes {
+    /// The pin scalar, read straight off `Stats` — never a recompute.
+    pub is_pinned: bool,
+    /// Effective importance at sweep time, from [`decayed_importance`].
+    pub decayed: f64,
+    /// The per-memory trust scalar from `Stats`.
+    pub trust: f64,
+    /// True when the store's reference probe found no live incoming edge from the
+    /// protecting allowlist.
+    pub unreferenced: bool,
+    /// Elapsed whole seconds since the candidate was ingested, clamped to non-negative.
+    pub age_secs: i64,
+}
+
+/// The configured floors a candidate is measured against (05 §3, M5.T02).
+///
+/// These arrive from the engine's forgetting policy; validation of their ranges happens at
+/// the configuration boundary, not here.
+#[derive(Debug, Clone, Copy)]
+pub struct ForgetFloors {
+    /// A candidate is low-importance only when its decayed importance sits *below* this.
+    pub importance_floor: f64,
+    /// A candidate is low-trust only when its trust sits *below* this.
+    pub trust_floor: f64,
+    /// A candidate is old enough only at or past this age.
+    pub min_age_secs: i64,
+}
+
+/// Whether a memory is eligible for the soft-forget (05 §3, M5.T02): a strict AND over the
+/// pure axes, where any single axis can only **spare** a candidate, never doom one on its
+/// own.
+///
+/// Eligibility requires *all* of: unpinned, decayed importance below the floor, trust below
+/// the trust floor, unreferenced, and at least the minimum age. The pin is double-enforced —
+/// checked explicitly here *and* absorbed by [`is_eligible`], whose pin override makes a
+/// pinned memory importance-eligible against any floor — so no misconfigured floor can
+/// forget a pin. Two conservative guards extend the spare-only rule to garbage: a non-finite
+/// decayed importance or trust scalar spares the candidate, because the sweep never destroys
+/// on a value the arithmetic cannot vouch for (`NaN < floor` is already false, but a
+/// negative-infinity scalar would otherwise read as "low" and doom).
+///
+/// Soft-forget is the *only* revision channel that writes a bare `expired_at`; the doc table
+/// below pins the state signatures that keep the four channels distinguishable — and
+/// un-forget safe — at read time:
+///
+/// | channel | node `expired_at` | node `status` | edge writes |
+/// |---|---|---|---|
+/// | soft-forget (05 §3, M5.T02) | set | untouched (stays `Active`) | none |
+/// | supersession (04, M2.T05) | untouched | `Superseded` | `ABOUT` window closed |
+/// | contradiction (04, M2.T05) | untouched | `Quarantined` | `CONTRADICTS` linked |
+/// | reliability demotion (06, M4.T04) | set | `Quarantined`, paired | lineage edge |
+///
+/// Point-forget and the sweep both gate on this same predicate, so a host cannot force-forget
+/// a protected memory through either path.
+#[must_use]
+pub fn forget_eligible(axes: &ForgetAxes, floors: &ForgetFloors) -> bool {
+    !axes.is_pinned
+        && axes.decayed.is_finite()
+        && !is_eligible(axes.is_pinned, axes.decayed, floors.importance_floor)
+        && axes.trust.is_finite()
+        && axes.trust < floors.trust_floor
+        && axes.unreferenced
+        && axes.age_secs >= floors.min_age_secs
 }
 
 #[cfg(test)]
@@ -226,5 +301,122 @@ mod tests {
         assert!(is_eligible(true, 0.0, 0.9), "a pin overrides the floor");
         assert!(is_eligible(false, 0.5, 0.5), "at the floor is eligible");
         assert!(!is_eligible(false, 0.49, 0.5), "below the floor is not");
+    }
+
+    const FLOORS: ForgetFloors = ForgetFloors {
+        importance_floor: 0.05,
+        trust_floor: 0.30,
+        min_age_secs: 30 * 24 * 3_600,
+    };
+
+    /// All axes on their forgettable side against [`FLOORS`].
+    const FORGETTABLE: ForgetAxes = ForgetAxes {
+        is_pinned: false,
+        decayed: 0.01,
+        trust: 0.10,
+        unreferenced: true,
+        age_secs: 90 * 24 * 3_600,
+    };
+
+    #[test]
+    fn forgettable_only_when_every_axis_is_low() {
+        assert!(forget_eligible(&FORGETTABLE, &FLOORS));
+    }
+
+    #[test]
+    fn a_pin_spares_at_any_floor() {
+        let pinned = ForgetAxes {
+            is_pinned: true,
+            ..FORGETTABLE
+        };
+        for importance_floor in [0.05, 0.5, 1.0, f64::INFINITY] {
+            let floors = ForgetFloors {
+                importance_floor,
+                ..FLOORS
+            };
+            assert!(
+                !forget_eligible(&pinned, &floors),
+                "a pin spares against floor {importance_floor}"
+            );
+        }
+    }
+
+    #[test]
+    fn boundary_values_sit_on_the_sparing_side() {
+        // At-floor importance is still eligible-to-stay (is_eligible is >=), so it spares.
+        let at_importance_floor = ForgetAxes {
+            decayed: FLOORS.importance_floor,
+            ..FORGETTABLE
+        };
+        assert!(!forget_eligible(&at_importance_floor, &FLOORS));
+        // At-floor trust is not *below* the floor, so it spares.
+        let at_trust_floor = ForgetAxes {
+            trust: FLOORS.trust_floor,
+            ..FORGETTABLE
+        };
+        assert!(!forget_eligible(&at_trust_floor, &FLOORS));
+        // Exactly the minimum age has waited long enough: the age axis passes.
+        let at_min_age = ForgetAxes {
+            age_secs: FLOORS.min_age_secs,
+            ..FORGETTABLE
+        };
+        assert!(forget_eligible(&at_min_age, &FLOORS));
+    }
+
+    #[test]
+    fn every_single_high_axis_spares() {
+        // The conservative-AND property, exhaustively: across all 2^5 axis combinations,
+        // the only forgettable one is all-axes-low.
+        for mask in 0_u32..32 {
+            let axes = ForgetAxes {
+                is_pinned: mask & 1 != 0,
+                decayed: if mask & 2 != 0 { 0.9 } else { 0.01 },
+                trust: if mask & 4 != 0 { 0.9 } else { 0.10 },
+                unreferenced: mask & 8 == 0,
+                age_secs: if mask & 16 != 0 { 0 } else { 90 * 24 * 3_600 },
+            };
+            assert_eq!(
+                forget_eligible(&axes, &FLOORS),
+                mask == 0,
+                "combination {mask:#07b} must spare unless every axis is low"
+            );
+        }
+    }
+
+    #[test]
+    fn garbage_scalars_spare_rather_than_doom() {
+        // A negative-infinity importance reads as "below any floor" arithmetically, but the
+        // sweep never destroys on a value the math cannot vouch for.
+        for decayed in [f64::NAN, f64::NEG_INFINITY] {
+            let axes = ForgetAxes {
+                decayed,
+                ..FORGETTABLE
+            };
+            assert!(
+                !forget_eligible(&axes, &FLOORS),
+                "non-finite importance {decayed} spares"
+            );
+        }
+        for trust in [f64::NAN, f64::NEG_INFINITY, f64::INFINITY] {
+            let axes = ForgetAxes {
+                trust,
+                ..FORGETTABLE
+            };
+            assert!(
+                !forget_eligible(&axes, &FLOORS),
+                "non-finite trust {trust} spares"
+            );
+        }
+    }
+
+    #[test]
+    fn a_future_stamped_candidate_reads_as_young() {
+        // ingested_at ahead of now clamps to a negative-or-zero age at the caller; any
+        // value below min_age spares, so a clock regression can never doom a candidate.
+        let future_stamped = ForgetAxes {
+            age_secs: -3_600,
+            ..FORGETTABLE
+        };
+        assert!(!forget_eligible(&future_stamped, &FLOORS));
     }
 }
