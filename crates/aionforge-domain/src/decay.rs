@@ -1,8 +1,9 @@
 //! Pure importance-decay primitives (05 §2, M5.T01).
 //!
 //! A memory's effective importance is a **derived value**: the stored
-//! [`Stats::importance`](crate::blocks::Stats) anchored at write time, sunk by elapsed time
-//! since [`Stats::last_access`](crate::blocks::Stats) under a per-tier exponential half-life.
+//! [`Stats::importance`](crate::blocks::Stats::importance) anchored at write time, sunk by
+//! elapsed time since [`Stats::last_access`](crate::blocks::Stats::last_access) under a
+//! per-tier exponential half-life.
 //! Per §13.7 the substrate stores no authoritative copy of derived state, so the decayed
 //! value is **never written back** — retrieval computes it at rank time, and the active
 //! forgetting sweep (M5.T02) recomputes it at sweep time, both through these same pure
@@ -64,13 +65,16 @@ pub fn tier_for_label(label: &str) -> Option<Tier> {
 /// decay over the elapsed time since `last_access` (05 §2).
 ///
 /// Pure and side-effect free — the result orders a ranking or feeds an eligibility check
-/// and is never stored. Three deliberate short-circuits return the stored value unchanged:
+/// and is never stored. Four deliberate short-circuits return the stored value unchanged:
 ///
 /// - **Pinned.** A pinned memory never decays out of eligibility, so it keeps its full
 ///   write-time importance in every ranking.
 /// - **Inert half-life.** A non-finite or non-positive `half_life_secs` means "no decay for
 ///   this tier" — the guard also keeps the division well-defined, so no configuration value
 ///   can produce a NaN.
+/// - **Non-finite stored importance.** Garbage in is the same garbage out, never a *minted*
+///   NaN: an infinite `stored` against an underflowed-to-zero factor would otherwise turn
+///   into NaN, and NaN fails every `>=`, which would wrongly read as ineligible downstream.
 /// - **Non-positive elapsed time.** A `last_access` at or ahead of `now` (clock regression,
 ///   or a future-stamped record) clamps to zero elapsed rather than *inflating* importance,
 ///   mirroring the consolidation lag clamp.
@@ -82,7 +86,7 @@ pub fn decayed_importance(
     half_life_secs: f64,
     is_pinned: bool,
 ) -> f64 {
-    if is_pinned || !half_life_secs.is_finite() || half_life_secs <= 0.0 {
+    if is_pinned || !stored.is_finite() || !half_life_secs.is_finite() || half_life_secs <= 0.0 {
         return stored;
     }
     let elapsed = (now.timestamp().as_second() - last_access.timestamp().as_second()).max(0);
@@ -176,6 +180,20 @@ mod tests {
                 "half-life {half_life} must be inert, got {decayed}"
             );
         }
+    }
+
+    #[test]
+    fn a_non_finite_stored_importance_passes_through_unminted() {
+        // Garbage in, same garbage out: an infinite stored value against a tiny decay
+        // factor must come back as itself, never as a NaN the arithmetic minted (an
+        // infinite stored times an underflowed-to-zero factor is NaN, and NaN fails
+        // every `>=`, so a minted NaN would wrongly read as ineligible downstream).
+        for stored in [f64::INFINITY, f64::NEG_INFINITY] {
+            let decayed = decayed_importance(stored, &at(0), &at(12), 1e-6, false);
+            assert_eq!(decayed, stored, "{stored} passes through unchanged");
+        }
+        let nan = decayed_importance(f64::NAN, &at(0), &at(12), HOUR, false);
+        assert!(nan.is_nan(), "a NaN input stays NaN, it is not laundered");
     }
 
     #[test]
