@@ -21,6 +21,23 @@ pub fn to_utc(at: &Timestamp) -> Timestamp {
     at.timestamp().to_zoned(jiff::tz::TimeZone::UTC)
 }
 
+/// The instant `secs` seconds before `at`, in UTC: pure instant arithmetic for
+/// window lower bounds, indifferent to zone representation and calendar rules (a
+/// "seven-day window" is exactly 604 800 seconds, not seven civil days). Saturates
+/// at the representable minimum rather than failing — a window that reaches past
+/// the epoch floor simply starts at the floor.
+#[must_use]
+pub fn instant_before(at: &Timestamp, secs: u64) -> Timestamp {
+    let floor = jiff::Timestamp::MIN;
+    let seconds = at
+        .timestamp()
+        .as_second()
+        .saturating_sub(i64::try_from(secs).unwrap_or(i64::MAX));
+    jiff::Timestamp::new(seconds.max(floor.as_second()), 0)
+        .unwrap_or(floor)
+        .to_zoned(jiff::tz::TimeZone::UTC)
+}
+
 /// The four-timestamp validity block carried by every bi-temporal edge (02 §5).
 ///
 /// Event time (`valid_from`/`valid_to`) records when the underlying fact was true
@@ -89,6 +106,24 @@ mod tests {
         assert_eq!(utc.timestamp(), chicago.timestamp());
         let wire = serde_json::to_string(&utc).expect("serializes");
         assert!(wire.contains("+00:00[UTC]"), "stamped in UTC, got {wire}");
+    }
+
+    #[test]
+    fn instant_before_subtracts_exact_seconds_and_saturates_at_the_floor() {
+        let now: Timestamp = "2026-06-10T12:00:00-05:00[America/Chicago]"
+            .parse()
+            .expect("valid zoned datetime");
+        let week_back = instant_before(&now, 604_800);
+        assert_eq!(
+            now.timestamp().as_second() - week_back.timestamp().as_second(),
+            604_800,
+            "a seven-day window is exactly 604 800 seconds"
+        );
+        assert_eq!(
+            instant_before(&now, u64::MAX).timestamp(),
+            jiff::Timestamp::MIN,
+            "an over-deep window starts at the representable floor"
+        );
     }
 
     #[test]

@@ -159,6 +159,7 @@ dependencies = [
  "aionforge-domain",
  "aionforge-embed",
  "aionforge-store",
+ "serde",
  "serde_json",
 ]
 

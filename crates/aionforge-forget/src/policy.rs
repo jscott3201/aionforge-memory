@@ -128,6 +128,74 @@ mod tests {
     }
 
     #[test]
+    fn drift_policy_defaults_are_off_and_valid_when_enabled() {
+        let policy = DriftPolicy::default();
+        assert!(!policy.enabled);
+        policy.validate().expect("off validates vacuously");
+        let enabled = DriftPolicy {
+            enabled: true,
+            ..DriftPolicy::default()
+        };
+        enabled.validate().expect("enabled defaults validate");
+    }
+
+    #[test]
+    fn drift_policy_rejects_each_bad_knob_only_when_enabled() {
+        let off = DriftPolicy {
+            enabled: false,
+            drift_threshold: f64::NAN,
+            min_sample_size: 0,
+            ..DriftPolicy::default()
+        };
+        off.validate().expect("inert values are never rejected");
+
+        let base = DriftPolicy {
+            enabled: true,
+            ..DriftPolicy::default()
+        };
+        for bad in [
+            DriftPolicy {
+                drift_threshold: 0.0,
+                ..base.clone()
+            },
+            DriftPolicy {
+                cooling_factor: 1.5,
+                ..base.clone()
+            },
+            DriftPolicy {
+                core_proximity_threshold: f64::NAN,
+                ..base.clone()
+            },
+            DriftPolicy {
+                high_trust_threshold: -0.1,
+                ..base.clone()
+            },
+            DriftPolicy {
+                behavior_window_secs: 0,
+                ..base.clone()
+            },
+            DriftPolicy {
+                cooling_window_secs: 0,
+                ..base.clone()
+            },
+            DriftPolicy {
+                behavior_sample_size: 0,
+                ..base.clone()
+            },
+            DriftPolicy {
+                min_sample_size: 0,
+                ..base.clone()
+            },
+            DriftPolicy {
+                min_sample_size: 257,
+                ..base.clone()
+            },
+        ] {
+            assert!(bad.validate().is_err(), "{bad:?} must be rejected");
+        }
+    }
+
+    #[test]
     fn enabled_validation_rejects_each_bad_knob() {
         let base = ForgettingPolicy {
             enabled: true,
@@ -207,6 +275,99 @@ impl ErasurePolicy {
         }
         if self.max_cascade_nodes == 0 {
             return Err("erasure.max_cascade_nodes must be at least 1".to_string());
+        }
+        Ok(())
+    }
+}
+
+/// Drift-detection policy (05 §1, M5.T05): the off-switch, the behavior-window and
+/// sample bounds the detector reads over, the warning threshold, and the cooling
+/// knobs for core-proximate facts.
+///
+/// The host maps `aionforge-config`'s `DriftConfig` into this struct, the same
+/// indirection as the two policies above. Off by default: the engine builds no
+/// [`DriftDetector`](crate::DriftDetector), the sweep reports empty, and no fact is
+/// ever cooled.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DriftPolicy {
+    /// Master off-switch.
+    pub enabled: bool,
+    /// Per-block warning bar: a drift score at or above this crosses. In `(0, 1]`.
+    pub drift_threshold: f64,
+    /// How far back "recent agent behavior" reaches, in seconds from the
+    /// caller-supplied sweep instant.
+    pub behavior_window_secs: u64,
+    /// The cap on episodes sampled per namespace (most-recent kept).
+    pub behavior_sample_size: usize,
+    /// The floor under the sample: fewer comparable episodes than this and the
+    /// block skips, never scores.
+    pub min_sample_size: usize,
+    /// How long a cooled fact's rank-time trust stays reduced, in seconds from its
+    /// stamp.
+    pub cooling_window_secs: u64,
+    /// The multiplier applied to a cooled fact's trust at rank time. In `(0, 1]`.
+    pub cooling_factor: f64,
+    /// The cosine bar for "proximate to a core block". In `(0, 1]`.
+    pub core_proximity_threshold: f64,
+    /// The trust bar a core block must meet before proximity to it cools anything.
+    /// In `(0, 1]`.
+    pub high_trust_threshold: f64,
+}
+
+impl Default for DriftPolicy {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            drift_threshold: 0.15,
+            behavior_window_secs: 604_800,
+            behavior_sample_size: 256,
+            min_sample_size: 8,
+            cooling_window_secs: 604_800,
+            cooling_factor: 0.5,
+            core_proximity_threshold: 0.75,
+            high_trust_threshold: 0.7,
+        }
+    }
+}
+
+impl DriftPolicy {
+    /// Re-validate the engine's own copy of the policy, mirroring `DriftConfig`'s
+    /// rules. Vacuous when disabled.
+    ///
+    /// # Errors
+    /// Returns a message naming the offending knob, the reliability-policy shape.
+    pub fn validate(&self) -> Result<(), String> {
+        if !self.enabled {
+            return Ok(());
+        }
+        for (key, value) in [
+            ("drift drift_threshold", self.drift_threshold),
+            ("drift cooling_factor", self.cooling_factor),
+            (
+                "drift core_proximity_threshold",
+                self.core_proximity_threshold,
+            ),
+            ("drift high_trust_threshold", self.high_trust_threshold),
+        ] {
+            if !value.is_finite() || value <= 0.0 || value > 1.0 {
+                return Err(format!("{key} must be in the range (0, 1]"));
+            }
+        }
+        for (key, value) in [
+            ("drift behavior_window_secs", self.behavior_window_secs),
+            ("drift cooling_window_secs", self.cooling_window_secs),
+        ] {
+            if value == 0 {
+                return Err(format!("{key} must be greater than zero when enabled"));
+            }
+        }
+        if self.behavior_sample_size == 0 {
+            return Err("drift behavior_sample_size must be greater than zero when enabled".into());
+        }
+        if self.min_sample_size == 0 || self.min_sample_size > self.behavior_sample_size {
+            return Err(
+                "drift min_sample_size must be at least 1 and at most behavior_sample_size".into(),
+            );
         }
         Ok(())
     }

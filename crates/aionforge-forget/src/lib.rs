@@ -9,18 +9,27 @@
 //! pin's first consumer is read-time decay (which runs with forgetting off) and a pin
 //! can only ever spare a memory.
 //!
-//! Erasure cascade, attested core memory, and drift detection (M5.T03–T05) will join
-//! this crate as they land.
+//! Drift detection (05 §1, M5.T05) lives here too — identity is what forgetting
+//! protects: the [`DriftDetector`] scores each core block's distance between the
+//! behavior its baseline was attested over and the namespace's behavior now, built
+//! from stored vectors only and skipping (never guessing) whatever it cannot vouch
+//! for. The baseline itself is written solely through the attested core-edit path.
 
 mod audit_addr;
+mod baseline;
+mod detector;
 mod eraser;
 mod forgetter;
 mod pinning;
 mod policy;
 
+pub use baseline::DriftBaseline;
+pub use detector::{
+    BaselineNeed, BlockAssessment, CentroidOutcome, DriftDetector, drift_warning_id,
+};
 pub use eraser::{EraseReport, Eraser, PointErase, ResidualRetention};
 pub use forgetter::{
     ForgetDecision, ForgetSweepPage, Forgetter, PointForget, PointUnforget, SpareReason,
 };
 pub use pinning::{PointPin, PointUnpin, pin, unpin};
-pub use policy::{ErasurePolicy, ForgettingPolicy};
+pub use policy::{DriftPolicy, ErasurePolicy, ForgettingPolicy};
