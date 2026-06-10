@@ -174,7 +174,8 @@ fn forget_is_gated_idempotent_and_audited_once() {
     assert_eq!(
         row.identity.namespace,
         Namespace::Global,
-        "audited in the memory's own namespace, never System"
+        "the funnel preserves the caller-minted namespace (the orchestrator addresses \
+         events to the memory's own namespace; the store never rewrites it)"
     );
 
     // A replay — even with a different audit id — is a no-op with no second row: the
@@ -260,19 +261,10 @@ fn non_active_status_is_refused_in_both_directions() {
     for f in [&demoted_shape, &contradicted, &superseded] {
         store.insert_fact(f).expect("insert");
     }
-    let node_of = |id: &Id| {
-        store
-            .facts_by_subject(&Id::from_content_hash(b"subject"))
-            .expect("lookup");
-        // facts_by_subject returns all three; resolve per id through the candidate page
-        // where possible, else through the subject lookup order.
-        candidate_node(&store, id)
-    };
-
     // The two unexpired fixtures are visible on the candidate page (it filters expiry,
     // not status); the demoted shape is not, so resolve it via the subject index.
-    let contradicted_node = node_of(&contradicted.identity.id).expect("on page");
-    let superseded_node = node_of(&superseded.identity.id).expect("on page");
+    let contradicted_node = candidate_node(&store, &contradicted.identity.id).expect("on page");
+    let superseded_node = candidate_node(&store, &superseded.identity.id).expect("on page");
     let all = store
         .facts_by_subject(&Id::from_content_hash(b"subject"))
         .expect("subject lookup");

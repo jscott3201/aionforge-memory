@@ -14,6 +14,13 @@
 //! transition, and the audit row is emitted only with it — so a replay is a true no-op
 //! with no second audit, and the caller's `cycle_id`-addressed events stay one row per
 //! decision.
+//!
+//! The non-`Active`-status refusal extends the design's unforget-only quarantine guard
+//! to both directions deliberately: a contradiction quarantine leaves `expired_at`
+//! unset, so without the forward guard a soft-forget could land on a quarantined node
+//! and manufacture the demotion signature — collapsing two channels the four-signature
+//! table (on the domain predicate's doc) keeps distinct. The extension can only refuse
+//! writes, never widen them.
 
 use aionforge_domain::edges::Audit;
 use aionforge_domain::nodes::forensic::AuditEvent;
@@ -68,10 +75,11 @@ impl Store {
     /// Reverse a soft-forget: clear `Identity.expired_at`, leave `status` and every edge
     /// untouched, and co-commit the caller's `Unforget` audit (05 §2, M5.T02).
     ///
-    /// A node with no `expired_at` is a [`ForgetWrite::Noop`]. A quarantined or
-    /// superseded node is [`ForgetWrite::RefusedStatus`]: its expiry belongs to the
-    /// demotion channel, and clearing it here would resurrect a fact governance retired —
-    /// re-promotion owns that path.
+    /// A node with no `expired_at` is a [`ForgetWrite::Noop`] — including a quarantined
+    /// or superseded node that was never expired, since it is already in the cleared
+    /// state. A node carrying an expiry *paired with* a non-`Active` status (the demotion
+    /// shape) is [`ForgetWrite::RefusedStatus`]: that expiry belongs to governance, and
+    /// clearing it here would resurrect a fact it retired — re-promotion owns that path.
     ///
     /// # Errors
     /// Returns [`StoreError`] if the node has no properties or a read/write fails.
@@ -229,11 +237,22 @@ mod tests {
             .expect("forget");
         assert_eq!(forgotten, ForgetWrite::Applied);
         let mid = props_of();
-        assert!(mid.get(&db_string(EXPIRED_AT).unwrap()).is_some());
-        // Exactly one key differs: drop it and the rest must equal the original —
+        let expired_key = db_string(EXPIRED_AT).unwrap();
+        assert!(mid.get(&expired_key).is_some());
+        // Exactly one key differs: remove it and the rest must equal the original —
         // status included (it is untouched, the signature that separates soft-forget
         // from demotion).
-        assert_ne!(mid, original);
+        let mid_without_expiry = PropertyMap::from_pairs(
+            mid.iter()
+                .filter(|(name, _)| **name != expired_key)
+                .map(|(name, value)| (name.clone(), value.clone()))
+                .collect::<Vec<_>>(),
+        )
+        .expect("rebuild map");
+        assert_eq!(
+            mid_without_expiry, original,
+            "the flip touches expired_at and nothing else"
+        );
 
         let restored = store
             .unforget(
