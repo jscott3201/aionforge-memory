@@ -62,6 +62,10 @@ This is reference and guides, not planning or changelogs.
   per-agent reliability folded from an append-only event log, the asymmetric loss/gain weights, the
   recomputable fact-trust cache, the reliability-decay demotion that complements lost-support, and
   the competition-ranked trust re-rank that orders recall without widening it.
+- [The audit subgraph](audit-subgraph.md) — the forensic record every governance operation leaves:
+  the single write funnel and its blank-to-signed signature latch, off-by-default substrate audit
+  signing with file or env seed custody, the out-of-band keyring anchor and its genesis/heal protocol,
+  per-row verification verdicts on the read surface, and the operator runbook.
 
 ## Substrate
 
