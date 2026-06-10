@@ -8,6 +8,7 @@ use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 
 use crate::core_block::CoreBlockConfig;
+use crate::drift::DriftConfig;
 use crate::error::ConfigError;
 use crate::forgetting::ForgettingConfig;
 
@@ -71,6 +72,10 @@ pub struct Config {
     /// switch, only strictness; the all-default posture is the spec's floor (one
     /// non-editor attester), not an off state.
     pub core_block: CoreBlockConfig,
+    /// Drift-detection posture (05 §1): the off-cursor sweep's behavior-sample
+    /// bounds and warning threshold, and the cooling window for core-proximate
+    /// facts. Off by default.
+    pub drift: DriftConfig,
 }
 
 /// On-disk state configuration.
@@ -729,6 +734,7 @@ impl Config {
         }
         self.forgetting.validate()?;
         self.core_block.validate()?;
+        self.drift.validate()?;
         Ok(())
     }
 }

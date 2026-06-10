@@ -50,6 +50,7 @@
 
 mod config;
 mod core_block;
+mod drift;
 mod error;
 mod forgetting;
 mod load;
@@ -60,6 +61,7 @@ pub use config::{
     endpoint_transport_is_allowed,
 };
 pub use core_block::{CoreBlockConfig, CoreEditRuleConfig};
+pub use drift::DriftConfig;
 pub use error::ConfigError;
 pub use forgetting::ForgettingConfig;
 pub use load::default_config_path;

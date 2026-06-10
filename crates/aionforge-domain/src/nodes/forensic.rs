@@ -101,6 +101,17 @@ pub enum AuditKind {
     ConsolidationFailed,
     /// The subliminal-learning guard raised a warning.
     SubliminalGuardWarning,
+    /// The drift detector found a core block's drift score at or above the threshold
+    /// (05 §1, M5.T05) — the T6 twin of
+    /// [`SubliminalGuardWarning`](AuditKind::SubliminalGuardWarning). The payload
+    /// records the namespace, block, score, threshold, baseline instant, sample size,
+    /// and embedder identity; the row doubles as the notification outbox a host pages
+    /// with `audit_by_kind`.
+    DriftWarning,
+    /// A fact proximate to a high-trust core block was stamped with a cooling window
+    /// (05 §1, M5.T05): admitted, but rank-time trust is reduced until the stamp
+    /// expires, giving the drift detector time to flag sycophantic drift first.
+    Cooled,
     /// A write was rejected by namespace authorization: the agent is not permitted to write the
     /// target namespace (06 §1). The payload records the agent, the requested namespace, and the
     /// deny reason — the audit of a cross-namespace write attempt (07 §T9).
