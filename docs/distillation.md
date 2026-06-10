@@ -77,8 +77,17 @@ the endpoint, the pinned seed, and the outcome (written, rejected as lossy, or d
 recorded in a `distill` audit event. For a written note the audit is wired straight to the note
 (`AuditEvent -AUDIT-> Note`), so "which model produced this note" is one hop, and unambiguous even
 when a note rolls up facts about several entities. The API key never appears in the payload. This
-is what a later cross-family consolidation guard reads to verify the consolidating model family
+is what the cross-family consolidation guard reads to verify the consolidating model family
 differs from the writer's.
+
+All of it is queryable in one call: `Memory::note_lineage(&note_id)` returns the note's source
+facts and episodes (the `DERIVED_FROM` walk), the model that authored it (decoded from the
+`distill` audit; `None` for a deterministic rule summary), the writer families behind its sources
+(signed provenance record first, the episode's origin copy when no record exists, the agent's
+current declaration last — an unresolvable or empty family reads back as `unverifiable`, never
+silently dropped), and an explicit `non_canonical` marker. It is a point read: the producing model
+lives in audit payload, not an indexed column, so filter-by-model scans should drive the guard
+surface instead.
 
 ## Running it
 
