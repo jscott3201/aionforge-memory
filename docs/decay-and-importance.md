@@ -100,6 +100,16 @@ and un-forgetting a demotion's expiry would resurrect what governance retired â€
 re-promotion owns that path. Reversibility holds until the retention prune physically
 removes the record.
 
+At read time the exclusion is one node-level gate per path. Episodes and skills already
+dropped a node-level `expired_at` from their default reads; facts gain the single new
+check in the per-candidate resolver, after the namespace gate and before the temporal
+predicate â€” deliberately not in the support provider (labels and edges only) and not in
+the temporal predicate (status and the ABOUT window), so soft-forget stays orthogonal to
+supersession and one mechanism owns the exclusion. `include_expired` is the one
+retention flag, honored in every temporal mode: a history read sets it to see forgotten
+records, and as-known-at semantics are untouched because the forget never moves an edge
+window.
+
 The orchestrator ties the layers together, cheapest protection first: pinned, then the
 promotion-lineage and attestation probes (governance territory and the M5.T03 boundary),
 then the pure axes through the domain predicate. A point-forget runs the same full gate
