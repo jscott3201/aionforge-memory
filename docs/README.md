@@ -51,6 +51,13 @@ This is reference and guides, not planning or changelogs.
   edit"), strictest-per-axis sensitivity rules, the certified-human requirement
   re-checked under the write lock, and namespace authority ruled before any vote is
   weighed — attesters vouch for content, never for authority.
+- [Drift detection](drift.md) — how the substrate notices the agent moving away from
+  who it said it is: attested baselines as the protected asset (seed and rebaseline
+  both quorum-co-signed; an un-attested setter is the laundering primitive), the
+  episode trace as the behavior signal, per-block scoring with every skip named and
+  nothing fabricated, content-addressed anti-flap warnings through the audit outbox,
+  and the off-cursor cooling window that rank-sinks core-proximate facts while the
+  detector gets its look.
 
 ## Procedural and generative layers
 

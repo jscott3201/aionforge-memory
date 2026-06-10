@@ -46,6 +46,13 @@ such a caller: its `search` handler stamps the host's wall clock onto every reca
 as `capture` stamps `captured_at` — the clock is always supplied, and each query class
 still decides whether it weights those re-ranks (the quote class keeps them off).
 
+A fact inside its cooling window (see [Drift detection](drift.md)) ranks in the trust
+re-rank by its *effective* trust — the stored scalar times the configured cooling
+factor — under the same double gate: the cooling switch must be on and the caller must
+have stamped a clock. The stamp is a separate column the reliability refold never
+touches, the reduction is computed at rank time and never written back, and it expires
+when the comparison stops applying — no write ever un-cools a fact.
+
 ## RRF fusion
 
 Signals are fused by Reciprocal Rank Fusion. Each candidate's fused score is the weighted
