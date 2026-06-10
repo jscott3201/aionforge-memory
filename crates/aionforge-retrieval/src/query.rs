@@ -51,7 +51,8 @@ impl RecallQuery {
 ///
 /// This mode shapes only **facts**; episodes are raw turns with no validity window, so
 /// they are gated by [`RecallOptions::include_expired`] instead and surface in every
-/// mode. The supplied instant is always caller-provided — there is no ambient clock in
+/// mode. A soft-forgotten memory (a node-level `expired_at`, 05 §2) is out of every
+/// mode's default read and retained behind that same flag. The supplied instant is always caller-provided — there is no ambient clock in
 /// the retrieval path (a deterministic-recall requirement, 03 §6).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum TemporalMode {
@@ -67,6 +68,8 @@ pub enum TemporalMode {
     AsKnownAt(Timestamp),
     /// The whole record: every status and window, including superseded, contradicted,
     /// and quarantined facts. The explicit opt-in for an audit/history view (03 §5).
+    /// A status/window view, not a forget bypass: a soft-forgotten memory stays out
+    /// even here unless [`RecallOptions::include_expired`] also asks for it (05 §2).
     History,
 }
 
@@ -78,7 +81,7 @@ pub struct RecallOptions {
     pub mode_override: Option<QueryClass>,
     /// Which bi-temporal slice to read facts against; defaults to
     /// [`TemporalMode::Current`] (03 §5). Orthogonal to `include_expired`, which gates
-    /// soft-forgotten episodes only.
+    /// soft-forgotten memories at the node level in every mode.
     pub temporal: TemporalMode,
     /// The most memories from a single session allowed to fill the bundle before the
     /// rest spill; spilled memories are appended only if the bundle is under-filled
@@ -88,8 +91,9 @@ pub struct RecallOptions {
     /// [`RetrievalError::DeadlineExceeded`](crate::RetrievalError::DeadlineExceeded)
     /// (03 §8). `None` means no deadline.
     pub deadline: Option<Duration>,
-    /// Include soft-forgotten (expired) memories — a history query. The default
-    /// current retrieval excludes them (03 §5).
+    /// The one retention flag (05 §2): include memories carrying a node-level
+    /// `expired_at` — soft-forgotten facts and expired episodes alike. Honored in
+    /// every temporal mode; the default excludes them everywhere (03 §5).
     pub include_expired: bool,
     /// How many candidates to pull from each signal before fusion. Zero falls back to
     /// the retriever's configured default.

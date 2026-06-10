@@ -650,6 +650,16 @@ impl<E: Embedder> HybridRetriever<E> {
         if !visible.contains(&fact.identity.namespace) {
             return Ok(None);
         }
+        // The soft-forget gate (05 §2, M5.T02): a forgotten fact carries a node-level
+        // `expired_at` with its status untouched, so neither the support provider
+        // (labels and edges only) nor the temporal predicate (status and the ABOUT
+        // window) can see it — this node check is the single exclusion mechanism,
+        // mirroring the episode gate. `include_expired` retains the record for history;
+        // as-known-at is unaffected by design (it reads the ABOUT edge's transaction
+        // window, which a soft-forget never touches).
+        if !query.options.include_expired && fact.identity.expired_at.is_some() {
+            return Ok(None);
+        }
         // The validity window lives on the ABOUT edge, not the node; a fact without one
         // cannot be temporally placed, so it is dropped rather than shown undated.
         let Some(about) = self.store.fact_about(candidate.node)? else {
