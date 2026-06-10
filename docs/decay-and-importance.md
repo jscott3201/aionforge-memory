@@ -61,7 +61,8 @@ every ranking — and the shared eligibility rule holds a pinned memory eligible
 any floor. The pin is a plain branch on the stored `Stats` scalar, never routed through
 a loss-tolerant recompute. The retrieval re-rank only *orders* by importance and never
 drops a candidate, so eligibility is consumed by the M5.T02 soft-expire sweep, not by
-recall.
+recall. The pin is set and lifted through the always-available, audited pin/unpin point
+ops — see [Forgetting](forgetting.md).
 
 ## The forget-eligibility seam
 

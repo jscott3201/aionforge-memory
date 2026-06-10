@@ -14,7 +14,6 @@
 
 use std::sync::Arc;
 
-use aionforge_domain::blocks::Identity;
 use aionforge_domain::decay::{
     ForgetAxes, ForgetFloors, Tier, decayed_importance, forget_eligible, tier_for_label,
 };
@@ -23,7 +22,6 @@ use aionforge_domain::edges::{
     Supports,
 };
 use aionforge_domain::ids::Id;
-use aionforge_domain::namespace::Namespace;
 use aionforge_domain::nodes::associative::Note;
 use aionforge_domain::nodes::core::CoreBlock;
 use aionforge_domain::nodes::episodic::Episode;
@@ -33,6 +31,7 @@ use aionforge_domain::nodes::semantic::{Entity, Fact};
 use aionforge_domain::time::Timestamp;
 use aionforge_store::{ForgetCandidate, ForgetCursor, ForgetWrite, Store, StoreError};
 
+use crate::audit_addr::{cycle_id, namespace_identity, substrate_actor};
 use crate::policy::ForgettingPolicy;
 
 /// The incoming-edge allowlist that marks a memory as still depended upon — the
@@ -61,8 +60,9 @@ const LINEAGE: [&str; 2] = [PromotedTo::LABEL, DemotedFrom::LABEL];
 const POINT_LABELS: [&str; 3] = [Episode::LABEL, Fact::LABEL, Skill::LABEL];
 
 /// Every `Stats`-bearing kind, for resolution: a point op must find a protected memory
-/// to *say* it is protected rather than claiming it does not exist.
-const ALL_MEMORY_LABELS: [&str; 7] = [
+/// to *say* it is protected rather than claiming it does not exist. The pin/unpin
+/// surface resolves over the same set — pin works on everything that has a pin field.
+pub(crate) const ALL_MEMORY_LABELS: [&str; 7] = [
     Episode::LABEL,
     Fact::LABEL,
     Entity::LABEL,
@@ -148,34 +148,6 @@ pub struct ForgetSweepPage {
     pub spared: usize,
     /// Where the next page resumes, or `None` when the scan is complete.
     pub next: Option<ForgetCursor>,
-}
-
-/// The deterministic substrate actor recorded on sweep-driven forget audits.
-fn sweep_actor() -> Id {
-    Id::from_content_hash(b"aionforge/forgetter-v1")
-}
-
-/// A content-addressed id over `(tag, subject)` plus the event's millisecond instant —
-/// the governance-transition discipline (`system_audit::cycle_id` precedent): a subject
-/// legitimately cycles forget → unforget → forget, and each transition is a distinct
-/// row. Sound because emission is gated on a real state flip, and crash-safe because a
-/// replay re-supplies the same host `now`.
-fn cycle_id(tag: &str, subject: &Id, now: &Timestamp) -> Id {
-    let millis = now.timestamp().as_millisecond();
-    Id::from_content_hash(format!("{tag}|{subject}|{millis}").as_bytes())
-}
-
-/// The audit identity for a forget/unforget event: addressed to the **memory's own
-/// namespace** — agent-visible, never `System` — which is the one deliberate divergence
-/// from the `system_audit` helper (the engine's audit read facade filters on the event's
-/// own namespace, and a governance-namespace row would hide an agent's own history).
-fn namespace_identity(id: Id, namespace: Namespace, now: &Timestamp) -> Identity {
-    Identity {
-        id,
-        ingested_at: now.clone(),
-        namespace,
-        expired_at: None,
-    }
 }
 
 /// The active-forgetting orchestrator. Held by the engine as an `Option` — absent means
@@ -362,7 +334,7 @@ impl Forgetter {
             ),
             kind: AuditKind::Unforget,
             subject_id: *id,
-            actor_id: sweep_actor(),
+            actor_id: substrate_actor(),
             payload: serde_json::json!({
                 "reason": "manual_unforget",
                 "kind": candidate.label,
@@ -415,7 +387,7 @@ impl Forgetter {
             ),
             kind: AuditKind::Forget,
             subject_id: candidate.identity.id,
-            actor_id: sweep_actor(),
+            actor_id: substrate_actor(),
             payload: serde_json::json!({
                 "reason": reason,
                 "kind": candidate.label,

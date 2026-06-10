@@ -32,6 +32,7 @@ mod indexes;
 mod materialize;
 mod migrate;
 mod note;
+mod pin_write;
 mod promotion;
 mod provenance;
 mod providers;
@@ -62,6 +63,7 @@ pub use materialize::{
 };
 pub use migrate::{MigrationPlan, MigrationReport, PendingChange};
 pub use note::MaterializedNote;
+pub use pin_write::PinWrite;
 pub use promotion::PromoteWriteIds;
 pub use providers::CandidateStateInfo;
 pub use relates_to::{LinkEdgeWrite, RelatesToLink};

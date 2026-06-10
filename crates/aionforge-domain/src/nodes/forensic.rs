@@ -60,6 +60,10 @@ pub enum AuditKind {
     Quarantine,
     /// A soft-forgotten memory was restored.
     Unforget,
+    /// A memory was pinned: held at full importance and spared from every sweep.
+    Pin,
+    /// A memory's pin was lifted, re-arming decay and forgetting eligibility.
+    Unpin,
     /// A fact or core block was attested.
     Attest,
     /// A candidate was promoted across namespaces.

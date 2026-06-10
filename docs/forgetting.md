@@ -75,6 +75,42 @@ policy disabled the engine builds no forgetter at all: the sweep returns an empt
 without reading the graph, and the point ops answer `Disabled` rather than fabricating a
 "not found".
 
+## Pin and unpin
+
+The pin is the agent's counterweight to everything above: `Stats.is_pinned` holds a
+memory at its full write-time importance in every ranking and spares it from every
+forgetting path. Until this surface every write path stamped `is_pinned: false`, so the
+protections existed but nothing could ever reach them; `pin(id)` / `unpin(id)` close
+that gap.
+
+Both ops are **always available** — deliberately not behind the forgetting off-switch.
+The pin's first consumer is read-time decay, which runs whether or not active forgetting
+is enabled, and a pin can only ever spare a memory, never doom one — so an agent under
+the default configuration can still pin a hard-won lesson, and the same engine that
+answers `Disabled` to a forget call pins without complaint. The scope is every
+`Stats`-bearing kind: pin works on everything that has a pin field. Pinning identity
+memory is redundant (it is hard-exempt from the sweep anyway) but harmless, and one
+uniform rule beats a second admission table.
+
+Two deliberate asymmetries with the forget writes. There is **no status gate**:
+`is_pinned` is shared with no revision channel — only the insert serializers write it,
+only decay and the forgetting gates read it — so unlike `expired_at` (shared with
+demotion) there is no lifecycle signature to corrupt, and a quarantined-but-recoverable
+memory is a legitimate thing to protect. And there is **no expiry gate**: a
+soft-forgotten memory may be pinned without restoring it — the pin protects it while it
+stays out of default recall, and un-forgetting remains its own audited transition.
+
+A pin is a **stay, not a vault**. Lifting it re-arms decay and sweep eligibility
+silently; the memory is forgotten later only if every eligibility axis independently
+still holds low — that is, only if it would have been forgotten anyway absent the pin.
+The unpin audit row is the durable record the stay was lifted.
+
+Every applied pin and unpin co-commits its audit row exactly like the forget writes:
+gated on a real state change, cycle-addressed (`pin → unpin → pin` is three rows), in
+the memory's own namespace, with the terse reason-and-kind payload — there is no
+decision basis to explain, because there is no decision gate. MCP exposure rides with
+the future PR that puts forget/unforget on that surface.
+
 ## The audit trail
 
 Every applied transition co-commits its audit row in the same transaction as the

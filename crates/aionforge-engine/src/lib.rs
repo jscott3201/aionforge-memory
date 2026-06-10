@@ -54,7 +54,8 @@ pub use aionforge_domain::authz::{
     AuthorizationError, Authorizer, DefaultAuthorizer, DenyReason, Principal, VisibleSet,
 };
 pub use aionforge_forget::{
-    ForgetSweepPage, ForgettingPolicy, PointForget, PointUnforget, SpareReason,
+    ForgetSweepPage, ForgettingPolicy, PointForget, PointPin, PointUnforget, PointUnpin,
+    SpareReason,
 };
 pub use aionforge_retrieval::{
     EpisodeEntry, FactEntry, QueryClass, RecallBundle, RecallExplanation, RecallOptions,
@@ -68,6 +69,7 @@ pub use aionforge_trust::{
 
 mod audit;
 mod forget_sweep;
+mod pin;
 mod reliability_sweep;
 pub use aionforge_store::{AuditCursor, MAX_AUDIT_PAGE};
 pub use audit::{AuditPage, AuditRecord, AuditVerification};

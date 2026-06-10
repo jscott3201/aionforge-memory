@@ -36,8 +36,9 @@ This is reference and guides, not planning or changelogs.
 - [Forgetting](forgetting.md) — the conservative, default-off, reversible soft-expiry: one
   bare `expired_at` among four orthogonal lifecycle signatures, the spare-only eligibility
   axes and graph protections, the watermark sweep and fully-gated point ops, the
-  decision-basis audit trail in the memory's own namespace, and the single retrieval gate
-  with `include_expired` as the one retention flag.
+  always-available audited pin/unpin (a stay, not a vault), the decision-basis audit
+  trail in the memory's own namespace, and the single retrieval gate with
+  `include_expired` as the one retention flag.
 
 ## Procedural and generative layers
 
