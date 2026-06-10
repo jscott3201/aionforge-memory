@@ -14,6 +14,17 @@
 //! literally names this cascade as its owner). Erase succeeds on a pinned, attested
 //! memory by design.
 //!
+//! What gates it instead is the **namespace authority** (06 §1): the caller supplies
+//! the acting [`Principal`] and an [`Authorizer`], and the eraser demands write-grade
+//! authority over *every* namespace the computed closure spans. One refused namespace
+//! refuses the whole erasure — never a partial purge of the authorized subset, which
+//! would tear a derivation chain in half and leave derivatives grounded in nothing.
+//! The check runs after the walk (the span is only known once the closure is) and
+//! before the audit and purge, so an unauthorized erase touches nothing and writes
+//! nothing. The purge audit names the principal as its actor: erasure is the one
+//! agent-driven write on the forgetting side, so pinning the row to the substrate
+//! actor would hide exactly the accountability the audit exists to provide.
+//!
 //! What the cascade does not follow, it names: a purged node's `PROMOTED_TO` global
 //! copy lives in another namespace other agents depend on, so the core path stops at
 //! the namespace boundary and reports the survivor in
@@ -26,12 +37,14 @@
 
 use std::sync::Arc;
 
+use aionforge_domain::authz::{Authorizer, Principal};
 use aionforge_domain::ids::Id;
+use aionforge_domain::namespace::Namespace;
 use aionforge_domain::nodes::forensic::{AuditEvent, AuditKind};
 use aionforge_domain::time::Timestamp;
 use aionforge_store::{CascadeCaps, ClosureOutcome, PurgeClosure, PurgeWrite, Store, StoreError};
 
-use crate::audit_addr::{namespace_identity, substrate_actor, transition_id};
+use crate::audit_addr::{namespace_identity, transition_id};
 use crate::forgetter::ALL_MEMORY_LABELS;
 use crate::policy::ErasurePolicy;
 
@@ -92,6 +105,13 @@ pub enum PointErase {
         /// The derivation depth observed when the cap fired.
         depth_observed: usize,
     },
+    /// The principal lacks write authority over a namespace the cascade spans. The
+    /// whole erasure was refused before any write — never a partial purge of the
+    /// authorized subset — and nothing changed.
+    Unauthorized {
+        /// The first spanned namespace the authority refused.
+        namespace: Namespace,
+    },
     /// Erasure is not enabled; nothing was read or written. The honest answer to a
     /// host calling a switched-off surface — never a fabricated "not found".
     Disabled,
@@ -120,12 +140,21 @@ impl Eraser {
     /// Erase one memory and its derivation cascade by id (05 §3): irreversible,
     /// audited, fully reported. No eligibility gate — the forgetter's protections
     /// spare from the *reversible* sweep; this is the explicit escalation they defer
-    /// to, and it succeeds on a pinned or attested memory by design.
+    /// to, and it succeeds on a pinned or attested memory by design. What does gate it
+    /// is `authorizer`: the principal must hold write authority over every namespace
+    /// the closure spans, or the whole erasure is the typed
+    /// [`PointErase::Unauthorized`] refusal and nothing is touched.
     ///
     /// # Errors
     /// Returns [`StoreError`] if a read, walk, or write fails. Every refusal is a
     /// typed [`PointErase`] outcome, decided before the write transaction opens.
-    pub fn erase(&self, id: &Id, now: &Timestamp) -> Result<PointErase, StoreError> {
+    pub fn erase(
+        &self,
+        principal: &Principal,
+        authorizer: &dyn Authorizer,
+        id: &Id,
+        now: &Timestamp,
+    ) -> Result<PointErase, StoreError> {
         let Some(candidate) = self.store.memory_by_id(id, &ALL_MEMORY_LABELS)? else {
             return Ok(PointErase::NotFound);
         };
@@ -148,10 +177,22 @@ impl Eraser {
             // which is the outcome the caller asked for someone else to have caused.
             ClosureOutcome::SeedNotLive => return Ok(PointErase::NotFound),
         };
+        // The authority rules on every namespace the cascade spans, seed's own first
+        // (encounter order). One refusal refuses the whole erasure, before the shadow
+        // scan, the audit, and the purge — an unauthorized erase reads, but never
+        // writes.
+        for namespace in &closure.namespaces {
+            if authorizer.authorize_write(principal, namespace).is_err() {
+                return Ok(PointErase::Unauthorized {
+                    namespace: namespace.clone(),
+                });
+            }
+        }
         let promoted_shadows = self.store.promoted_targets(&closure.nodes)?;
 
         let audit = purge_audit(
             id,
+            &principal.agent_id,
             &candidate.identity.namespace,
             &closure,
             &promoted_shadows,
@@ -185,10 +226,12 @@ impl Eraser {
 }
 
 /// The purge audit event: one fresh row per applied erase, in the seed memory's own
-/// namespace, with an id-and-scalar payload — counts and a reason, never content.
+/// namespace, naming the erasing principal as actor, with an id-and-scalar payload —
+/// counts and a reason, never content.
 fn purge_audit(
     seed: &Id,
-    namespace: &aionforge_domain::namespace::Namespace,
+    actor: &Id,
+    namespace: &Namespace,
     closure: &PurgeClosure,
     promoted_shadows: &[Id],
     now: &Timestamp,
@@ -197,7 +240,7 @@ fn purge_audit(
         identity: namespace_identity(transition_id(), namespace.clone(), now),
         kind: AuditKind::Purge,
         subject_id: *seed,
-        actor_id: substrate_actor(),
+        actor_id: *actor,
         payload: serde_json::json!({
             "reason": "right_to_erasure",
             "cascade_count": closure.nodes.len(),

@@ -31,10 +31,11 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use aionforge_domain::edges::{DerivedFrom, HasProvenance, PromotedTo};
 use aionforge_domain::ids::Id;
+use aionforge_domain::namespace::Namespace;
 use selene_core::db_string;
 
 use crate::NodeId;
-use crate::convert::as_id;
+use crate::convert::{as_id, as_namespace};
 use crate::error::StoreError;
 use crate::store::Store;
 
@@ -60,6 +61,12 @@ pub struct PurgeClosure {
     pub node_ids: Vec<Id>,
     /// The deepest derivation level admitted (the seed is 0).
     pub cascade_depth: usize,
+    /// The distinct namespaces the closure spans, in first-encounter order. An erase
+    /// destroys in every one of them, so the orchestrator demands write-grade
+    /// authority over each before any write follows — a derivation chain crossing a
+    /// namespace boundary must never let a principal destroy ground it could not
+    /// write.
+    pub namespaces: Vec<Namespace>,
     /// Derivatives evaluated and **spared** by the multi-parent survival rule: still
     /// grounded in at least one source outside the closure.
     pub spared_multiparent: Vec<Id>,
@@ -234,7 +241,28 @@ impl Store {
             })?;
             as_id(value)
         };
-        let node_ids = doomed.iter().map(|n| id_of(*n)).collect::<Result<_, _>>()?;
+        // Doomed members also surrender their namespace, deduplicated in encounter
+        // order — every closure member carries the shared identity block (memories and
+        // provenance records alike), so a missing namespace is a decode failure, not a
+        // skippable gap.
+        let namespace_key = db_string("namespace")?;
+        let mut node_ids: Vec<Id> = Vec::with_capacity(doomed.len());
+        let mut namespaces: Vec<Namespace> = Vec::new();
+        for &node in &doomed {
+            node_ids.push(id_of(node)?);
+            let props = snapshot.node_properties(node).ok_or_else(|| {
+                StoreError::invariant("closure member has no properties".to_string())
+            })?;
+            let value = props.get(&namespace_key).ok_or_else(|| {
+                StoreError::decode(
+                    "closure member missing required property `namespace`".to_string(),
+                )
+            })?;
+            let namespace = as_namespace(value)?;
+            if !namespaces.contains(&namespace) {
+                namespaces.push(namespace);
+            }
+        }
         let spared_multiparent = pending
             .iter()
             .map(|n| id_of(*n))
@@ -244,6 +272,7 @@ impl Store {
             nodes: doomed,
             node_ids,
             cascade_depth: deepest,
+            namespaces,
             spared_multiparent,
             provenance_count,
         }))

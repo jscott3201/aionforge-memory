@@ -23,7 +23,7 @@ use aionforge_domain::contracts::{
 };
 use aionforge_domain::namespace::Namespace;
 use aionforge_domain::time::Timestamp;
-use aionforge_forget::Forgetter;
+use aionforge_forget::{Eraser, Forgetter};
 use aionforge_retrieval::HybridRetriever;
 use aionforge_security::{CaptureFilter, SecurityError};
 use aionforge_trust::{
@@ -54,8 +54,8 @@ pub use aionforge_domain::authz::{
     AuthorizationError, Authorizer, DefaultAuthorizer, DenyReason, Principal, VisibleSet,
 };
 pub use aionforge_forget::{
-    ForgetSweepPage, ForgettingPolicy, PointForget, PointPin, PointUnforget, PointUnpin,
-    SpareReason,
+    EraseReport, ErasurePolicy, ForgetSweepPage, ForgettingPolicy, PointErase, PointForget,
+    PointPin, PointUnforget, PointUnpin, ResidualRetention, SpareReason,
 };
 pub use aionforge_retrieval::{
     EpisodeEntry, FactEntry, QueryClass, RecallBundle, RecallExplanation, RecallOptions,
@@ -68,6 +68,7 @@ pub use aionforge_trust::{
 };
 
 mod audit;
+mod erase;
 mod forget_sweep;
 mod pin;
 mod reliability_sweep;
@@ -104,6 +105,11 @@ pub struct MemoryConfig {
     /// decay section's half-lives into this [`ForgettingPolicy`] — the same indirection as the
     /// reliability policy.
     pub forgetting: ForgettingPolicy,
+    /// Right-to-erasure policy (05 §3). Off by default, and **independently of
+    /// `forgetting`**: the reversible sweep and the one irreversible path are separate
+    /// authorities with separate switches, so a host can run either without the other.
+    /// When enabled the engine builds the eraser.
+    pub erasure: ErasurePolicy,
 }
 
 /// The engine's signed-write gating posture (06 §3, M4.T03).
@@ -196,6 +202,8 @@ pub struct Memory<E> {
     reliability_scorer: Option<ReliabilityScorer>,
     /// The forgetting orchestrator, present only when active forgetting is enabled (05 §2).
     forgetter: Option<Forgetter>,
+    /// The right-to-erasure orchestrator, present only when erasure is enabled (05 §3).
+    eraser: Option<Eraser>,
     /// The audit-signature verifier for the read facade (06 §6, M4.T06). `None` until audit
     /// signing is wired: PR-5g builds it from the keyring when `sign_audit_events` is enabled,
     /// alongside the signer. While `None`, every audit read maps to
@@ -247,6 +255,7 @@ impl<E: Embedder> Memory<E> {
         config.promotion.validate().map_err(EngineError::Config)?;
         config.reliability.validate().map_err(EngineError::Config)?;
         config.forgetting.validate().map_err(EngineError::Config)?;
+        config.erasure.validate().map_err(EngineError::Config)?;
         if config.promotion.enabled {
             validate_promotion_skew(config.security.clock_skew_tolerance_ms)?;
         }
@@ -315,6 +324,15 @@ impl<E: Embedder> Memory<E> {
         } else {
             None
         };
+        // Right-to-erasure (05 §3, M5.T03): when on, build the eraser over the store.
+        // Its own off-switch, deliberately separate from `forgetting` — enabling the
+        // reversible sweep never stands up the one destructive path as a side effect,
+        // and vice versa. Off ⇒ every erase surface answers `Disabled`.
+        let eraser = if config.erasure.enabled {
+            Some(Eraser::new(Arc::clone(&store), config.erasure.clone()))
+        } else {
+            None
+        };
         // Substrate audit signing (06 §6, M4.T06): provision custody + the keyring anchor,
         // install the commit-time signer on the store, and keep the keyring-anchored
         // verifier for the read facade — one branch, one off-switch. The genesis event is
@@ -358,6 +376,7 @@ impl<E: Embedder> Memory<E> {
             promoter,
             reliability_scorer,
             forgetter,
+            eraser,
             audit_verifier,
         })
     }

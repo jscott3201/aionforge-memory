@@ -5,6 +5,9 @@
 
 use std::sync::Arc;
 
+use aionforge_domain::authz::{
+    AuthorizationError, Authorizer, DefaultAuthorizer, Principal, VisibleSet,
+};
 use aionforge_domain::blocks::{Identity, Stats};
 use aionforge_domain::edges::AttestedBy;
 use aionforge_domain::ids::{ContentHash, Id};
@@ -45,6 +48,27 @@ fn eraser(store: &Arc<Store>) -> Eraser {
             ..ErasurePolicy::default()
         },
     )
+}
+
+/// Write-permissive test authority. The fixtures place memories across global and
+/// team namespaces the default policy refuses, and most tests here exercise the
+/// cascade, not the gate — authorization has its own test below, on the real
+/// [`DefaultAuthorizer`].
+#[derive(Debug)]
+struct PermitAll;
+
+impl Authorizer for PermitAll {
+    fn authorize_write(&self, _: &Principal, _: &Namespace) -> Result<(), AuthorizationError> {
+        Ok(())
+    }
+
+    fn visible_namespaces(&self, principal: &Principal) -> VisibleSet {
+        DefaultAuthorizer.visible_namespaces(principal)
+    }
+}
+
+fn principal() -> Principal {
+    Principal::agent(Id::from_content_hash(b"erase-principal"))
 }
 
 fn stats() -> Stats {
@@ -167,7 +191,9 @@ fn an_erase_cascades_audits_and_reports_in_full() {
     store.insert_fact(&f).expect("insert");
     derived_fact_edge(&store, &f.identity.id, &e.identity.id);
 
-    let outcome = eraser.erase(&e.identity.id, &now()).expect("erase");
+    let outcome = eraser
+        .erase(&principal(), &PermitAll, &e.identity.id, &now())
+        .expect("erase");
     let PointErase::Erased(report) = outcome else {
         panic!("expected Erased, got {outcome:?}");
     };
@@ -194,12 +220,19 @@ fn an_erase_cascades_audits_and_reports_in_full() {
     assert_eq!(rows[0].identity.id, report.purge_audit_id);
     assert_eq!(rows[0].subject_id, e.identity.id);
     assert_eq!(rows[0].identity.namespace, owner_ns);
+    assert_eq!(
+        rows[0].actor_id,
+        principal().agent_id,
+        "the erasing principal is the audit actor"
+    );
     assert_eq!(rows[0].payload["reason"], "right_to_erasure");
     assert_eq!(rows[0].payload["cascade_count"], 3);
 
     // A repeated erase of the same id finds nothing: gone is gone.
     assert_eq!(
-        eraser.erase(&e.identity.id, &now()).expect("replay"),
+        eraser
+            .erase(&principal(), &PermitAll, &e.identity.id, &now())
+            .expect("replay"),
         PointErase::NotFound
     );
     assert_eq!(
@@ -269,7 +302,9 @@ fn erase_succeeds_where_every_forgetting_protection_would_refuse() {
         )
         .expect("attest");
 
-    let outcome = eraser.erase(&protected.identity.id, &now()).expect("erase");
+    let outcome = eraser
+        .erase(&principal(), &PermitAll, &protected.identity.id, &now())
+        .expect("erase");
     assert!(
         matches!(outcome, PointErase::Erased(_)),
         "no forgetting protection gates the purge: {outcome:?}"
@@ -283,7 +318,9 @@ fn refusals_are_typed_and_decided_before_any_write() {
 
     // Unknown id.
     assert_eq!(
-        eraser(&store).erase(&Id::generate(), &now()).expect("call"),
+        eraser(&store)
+            .erase(&principal(), &PermitAll, &Id::generate(), &now())
+            .expect("call"),
         PointErase::NotFound
     );
 
@@ -305,7 +342,9 @@ fn refusals_are_typed_and_decided_before_any_write() {
     derived_fact_edge(&store, &f1.identity.id, &e.identity.id);
     derived_fact_edge(&store, &f2.identity.id, &e.identity.id);
 
-    let outcome = tight.erase(&e.identity.id, &now()).expect("call");
+    let outcome = tight
+        .erase(&principal(), &PermitAll, &e.identity.id, &now())
+        .expect("call");
     assert!(
         matches!(
             outcome,
@@ -356,7 +395,9 @@ fn survivors_and_promoted_shadows_are_named_in_the_report() {
     derived_fact_edge(&store, &team_fact.identity.id, &erased.identity.id);
     promoted_edge(&store, &team_fact.identity.id, &global_copy.identity.id);
 
-    let outcome = eraser.erase(&erased.identity.id, &now()).expect("erase");
+    let outcome = eraser
+        .erase(&principal(), &PermitAll, &erased.identity.id, &now())
+        .expect("erase");
     let PointErase::Erased(report) = outcome else {
         panic!("expected Erased, got {outcome:?}");
     };
@@ -379,6 +420,64 @@ fn survivors_and_promoted_shadows_are_named_in_the_report() {
 }
 
 #[test]
+fn authorization_refuses_the_whole_cascade_before_any_write() {
+    let store = store();
+    let eraser = eraser(&store);
+    let principal = principal();
+    let own_ns = Namespace::Agent(principal.agent_id.to_string());
+
+    // The seed is the principal's own; its derivative lives in a team the principal
+    // does not belong to. Under the real default policy the seed's namespace passes
+    // and the derivative's refuses — and one refusal covers the whole cascade.
+    let e = episode("authorized seed", own_ns.clone());
+    let f = fact(
+        "derivative in someone else's team",
+        Namespace::Team("atlas".to_string()),
+    );
+    store.insert_episode(&e).expect("insert");
+    store.insert_fact(&f).expect("insert");
+    derived_fact_edge(&store, &f.identity.id, &e.identity.id);
+
+    let outcome = eraser
+        .erase(&principal, &DefaultAuthorizer, &e.identity.id, &now())
+        .expect("call");
+    assert_eq!(
+        outcome,
+        PointErase::Unauthorized {
+            namespace: Namespace::Team("atlas".to_string())
+        },
+        "the refusal names the namespace that denied"
+    );
+    assert!(
+        is_live(&store, &e.identity.id, "Episode"),
+        "nothing was touched"
+    );
+    assert!(is_live(&store, &f.identity.id, "Fact"));
+    assert_eq!(
+        store
+            .audit_by_kind(AuditKind::Purge, None, 10)
+            .expect("audit")
+            .events
+            .len(),
+        0,
+        "an unauthorized erase audits nothing"
+    );
+
+    // With membership in the spanned team, the same erase under the same default
+    // policy applies — authorization is about the principal, not the cascade.
+    let member = Principal::new(principal.agent_id, vec!["atlas".to_string()]);
+    let outcome = eraser
+        .erase(&member, &DefaultAuthorizer, &e.identity.id, &now())
+        .expect("erase");
+    assert!(
+        matches!(outcome, PointErase::Erased(_)),
+        "authorized end to end: {outcome:?}"
+    );
+    assert!(!is_live(&store, &e.identity.id, "Episode"));
+    assert!(!is_live(&store, &f.identity.id, "Fact"));
+}
+
+#[test]
 fn a_soft_forgotten_memory_erases() {
     let store = store();
     let eraser = eraser(&store);
@@ -397,7 +496,9 @@ fn a_soft_forgotten_memory_erases() {
         .soft_forget(f_node, &now(), &forget_audit)
         .expect("soft forget");
 
-    let outcome = eraser.erase(&f.identity.id, &now()).expect("erase");
+    let outcome = eraser
+        .erase(&principal(), &PermitAll, &f.identity.id, &now())
+        .expect("erase");
     assert!(
         matches!(outcome, PointErase::Erased(_)),
         "erasure escalates past a soft-forget: {outcome:?}"

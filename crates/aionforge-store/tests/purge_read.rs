@@ -619,3 +619,47 @@ fn a_pending_chain_unlocks_transitively() {
         "B sits one past A past C past the seed"
     );
 }
+
+#[test]
+fn the_closure_reports_its_namespace_span_deduplicated_in_encounter_order() {
+    let store = store();
+    // Seed in an agent namespace; one derivative beside it, one across a team
+    // boundary. The span is what the erase orchestrator authorizes against, so it
+    // must cover every member exactly once, the seed's namespace first.
+    let agent_ns = Namespace::Agent("span-owner".to_string());
+    let team_ns = Namespace::Team("atlas".to_string());
+    let mut e = episode("the spanning source");
+    e.identity.namespace = agent_ns.clone();
+    let mut sibling = fact("derivative beside the seed");
+    sibling.identity.namespace = agent_ns.clone();
+    let mut crossed = fact("derivative across the boundary");
+    crossed.identity.namespace = team_ns.clone();
+    let seed = store.insert_episode(&e).expect("insert");
+    store.insert_fact(&sibling).expect("insert");
+    store.insert_fact(&crossed).expect("insert");
+    derived_edge(
+        &store,
+        FACT_FROM_EPISODE,
+        &sibling.identity.id,
+        &e.identity.id,
+    );
+    derived_edge(
+        &store,
+        FACT_FROM_EPISODE,
+        &crossed.identity.id,
+        &e.identity.id,
+    );
+
+    let closure = computed(store.derived_from_closure(seed, &caps()).expect("walk"));
+    assert_eq!(closure.nodes.len(), 3);
+    assert_eq!(
+        closure.namespaces.len(),
+        2,
+        "two members share a namespace: the span deduplicates"
+    );
+    assert_eq!(
+        closure.namespaces[0], agent_ns,
+        "the seed's own namespace leads the span"
+    );
+    assert!(closure.namespaces.contains(&team_ns));
+}
