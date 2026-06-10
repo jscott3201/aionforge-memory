@@ -106,6 +106,35 @@ engine exposes the moves as host-driven calls: record a decay or an agreement, r
 agents, sweep a set of promoted candidates for reliability demotion. With trust scoring off, every
 one of these is inert.
 
+### The automatic decay sweep
+
+The contradiction decay no longer needs the host to notice each quarantine: the engine can
+re-derive it from the record. Every quarantine decision is already a durable, content-addressed
+audit row, so the audit log doubles as the work queue — `sweep_reliability_decays` reads the
+committed quarantine rows one page at a time, keeps the contradiction quarantines (a governance
+demotion-quarantine is the attester channel's business and is skipped), resolves each victim, and
+records its producers' decays. Because a decay event's id is content-addressed on the victim and
+producer, the sweep mints exactly the id the hand-driven call would: the two paths converge on one
+event, never two, and re-sweeping any range is a no-op.
+
+The sweep runs on whatever cadence the host chooses — a timer, session end, a maintenance tool —
+and hands back a watermark cursor naming the last row it scanned. Persist it and pass it back to
+resume exactly there; lose it and a full rescan is safe, just not free. One caveat on the resume:
+rows order by the host-supplied clock, so if that clock ever regresses, a new quarantine can land
+*behind* an already-persisted watermark, where no incremental resume will see it. A host that
+resumes from the watermark should still run an occasional full rescan — that rescan is the heal
+for the clock-regression window, not just the recovery for a lost cursor. The sweep reads the audit
+log across all namespaces by design: a quarantine lives in its victim's namespace, and reliability
+is a global property of the agent, so a namespace-scoped read would quietly skip decays an agent
+has earned. Counts in the sweep's report are true new-event counts — a re-scan over
+already-recorded triggers reads back as zero.
+
+One semantic worth naming: the *fact* is the evidence unit, not the quarantine row. A victim
+contradicted by three different survivors, or re-quarantined across consolidation cycles, decays
+each of its producers exactly once — an agent pays once per wrong fact, not once per time the
+system notices the same wrong fact. The attester-side dual (an automatic sweep over demotion
+rows) is deliberately not built yet; it needs its own cardinality ruling first.
+
 Two limits are worth stating plainly. First, reliability only moves when an invalidation actually
 arrives — a fact that is simply wrong but never contradicted leaves its producer's score
 untouched, so trust scoring lowers the cost of bad memory without claiming to find all of it.

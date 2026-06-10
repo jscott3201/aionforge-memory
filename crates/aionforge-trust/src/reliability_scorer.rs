@@ -215,8 +215,25 @@ impl ReliabilityScorer {
     /// # Errors
     /// [`ReliabilityError::Store`] on a write failure.
     pub fn apply(&self, events: &[AuditEvent]) -> Result<(), ReliabilityError> {
+        self.apply_counting(events).map(|_| ())
+    }
+
+    /// [`ReliabilityScorer::apply`], reporting how many events were **newly recorded** (replay
+    /// no-ops excluded), so an auto-sweep can return a true new-event count and an idempotency
+    /// test can assert `0` on a re-scan.
+    ///
+    /// Recording and refolding are identical to `apply` — in particular the refold still runs
+    /// over every touched subject even when nothing was created, so a crash between a prior
+    /// record and its refold heals on the re-scan instead of leaving a stale cache behind.
+    ///
+    /// # Errors
+    /// [`ReliabilityError::Store`] on a write failure.
+    pub fn apply_counting(&self, events: &[AuditEvent]) -> Result<usize, ReliabilityError> {
+        let mut created = 0usize;
         for event in events {
-            self.store.record_reliability_update(event)?;
+            if self.store.record_reliability_update_created(event)? {
+                created += 1;
+            }
         }
         let mut agents: Vec<Id> = events.iter().map(|event| event.subject_id).collect();
         agents.sort_unstable();
@@ -224,7 +241,7 @@ impl ReliabilityScorer {
         for agent in agents {
             self.refold_agent(&agent)?;
         }
-        Ok(())
+        Ok(created)
     }
 
     /// Refold one agent: replay its reliability events into its `trust_scores`, then re-derive the

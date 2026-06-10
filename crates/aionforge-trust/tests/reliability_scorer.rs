@@ -254,6 +254,65 @@ fn applying_the_same_decay_twice_is_idempotent() {
 }
 
 #[test]
+fn apply_counting_reports_zero_on_replay() {
+    // The auto-sweep's true new-row count: the first application reports each event created;
+    // a replay of the same content-addressed set reports zero. (That the replay still refolds
+    // is pinned separately by `a_crash_between_record_and_refold_heals_on_the_re_scan`, where
+    // the cache starts stale — here it was already correct, so it cannot tell.)
+    let store = store();
+    let agent = enroll(&store);
+    let ep = episode(&store, agent, 0.8, 1);
+    let (node, f) = fact(&store, "counted claim");
+    derive(&store, &f.identity.id, &ep);
+
+    let scorer = scorer(Arc::clone(&store));
+    let events = scorer.quarantine_decay(node, &ts()).expect("events");
+    assert_eq!(
+        scorer.apply_counting(&events).expect("first apply"),
+        1,
+        "the first application records the new event"
+    );
+    assert_eq!(
+        scorer.apply_counting(&events).expect("replay"),
+        0,
+        "a replay dedups every event and reports nothing new"
+    );
+    assert!((agent_score(&store, &agent).expect("scored") - 1.0 / 3.0).abs() < EPS);
+}
+
+#[test]
+fn a_crash_between_record_and_refold_heals_on_the_re_scan() {
+    // The heal `apply_counting` claims: the refold runs over every touched subject even when
+    // nothing was created. Simulate the crash window by recording the event directly at the
+    // store — log row committed, cache never refolded — then re-scan through the scorer. A
+    // refold made conditional on `created > 0` leaves the cache stale and fails here.
+    let store = store();
+    let agent = enroll(&store);
+    let ep = episode(&store, agent, 0.8, 1);
+    let (node, f) = fact(&store, "healed claim");
+    derive(&store, &f.identity.id, &ep);
+
+    let scorer = scorer(Arc::clone(&store));
+    let events = scorer.quarantine_decay(node, &ts()).expect("events");
+    assert_eq!(events.len(), 1, "one producer ⇒ one decay event");
+    assert!(
+        store
+            .record_reliability_update_created(&events[0])
+            .expect("record without refold"),
+        "the direct record is the first write"
+    );
+    assert_eq!(
+        agent_score(&store, &agent),
+        None,
+        "the crash window: the event is recorded but the cache was never refolded"
+    );
+
+    // The re-scan dedups the row — zero created — yet still refolds the stale cache.
+    assert_eq!(scorer.apply_counting(&events).expect("re-scan"), 0);
+    assert!((agent_score(&store, &agent).expect("healed") - 1.0 / 3.0).abs() < EPS);
+}
+
+#[test]
 fn an_agreement_credits_a_distinct_author_but_holds_the_fact_at_baseline() {
     let store = store();
     let producer = enroll(&store);

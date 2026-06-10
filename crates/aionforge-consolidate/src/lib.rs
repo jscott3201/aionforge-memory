@@ -41,6 +41,7 @@ mod scheduler;
 mod skill_induction;
 mod summarize;
 
+pub use audit::CONTRADICTION_QUARANTINE_REASON;
 pub use clock::{Clock, SystemClock};
 pub use config::{
     ConsolidationConfig, DetectionConfig, InductionConfig, PassConfig, PredicateRule,

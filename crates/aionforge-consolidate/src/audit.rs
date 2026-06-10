@@ -455,6 +455,17 @@ pub(crate) fn summarize_audit(
     }
 }
 
+/// The `reason` carried by every contradiction-quarantine audit this pass emits (04 §3).
+///
+/// This string doubles as the D1 reliability-decay trigger discriminator (06 §5): the engine's
+/// auto-sweep matches this symbol to tell a contradiction quarantine (decay the victim's
+/// producers) from a governance demotion quarantine (`lost_support`/`reliability_decay`, the D2
+/// channel). It is a `pub const` rather than an inline literal so an edit to the human-readable
+/// text moves the emitter and the classifier together — a drift would otherwise turn the sweep
+/// into a silent no-op.
+pub const CONTRADICTION_QUARANTINE_REASON: &str =
+    "the lower-trust side of a contradiction is quarantined for review";
+
 /// The `quarantine` reconcile-signal audit event (the spec's surfaced signal), naming the
 /// quarantined victim and the survivor it contradicts. The victim may be the new fact or the
 /// incumbent, whichever the symmetric victim rule selects.
@@ -497,7 +508,7 @@ pub(crate) fn quarantine_audit(
             "victim_trust": victim_trust,
             "survivor_object": survivor_object,
             "survivor_trust": survivor_trust,
-            "reason": "the lower-trust side of a contradiction is quarantined for review",
+            "reason": CONTRADICTION_QUARANTINE_REASON,
         }),
         signature: String::new(),
         occurred_at: now.clone(),

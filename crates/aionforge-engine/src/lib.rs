@@ -63,8 +63,10 @@ pub use aionforge_trust::{
 };
 
 mod audit;
+mod reliability_sweep;
 pub use aionforge_store::{AuditCursor, MAX_AUDIT_PAGE};
 pub use audit::{AuditPage, AuditRecord, AuditVerification};
+pub use reliability_sweep::D1SweepReport;
 
 /// How the facade configures the capture and retrieval paths.
 #[derive(Debug, Clone, Default)]

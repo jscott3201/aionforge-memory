@@ -210,9 +210,33 @@ impl Store {
     /// # Errors
     /// Returns [`StoreError`] if translating or committing the event fails.
     pub fn record_reliability_update(&self, event: &AuditEvent) -> Result<NodeId, StoreError> {
+        self.record_reliability_update_inner(event)
+            .map(|(node, _)| node)
+    }
+
+    /// [`Store::record_reliability_update`], reporting whether the event row was **newly
+    /// created** (`false` = a replay deduped to the existing row and wrote nothing).
+    ///
+    /// The flag lets a sweep report a true new-event count — a re-scan over already-recorded
+    /// triggers reads back as zero rather than re-counting its candidates (M4.T05 PR-E2).
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if translating or committing the event fails.
+    pub fn record_reliability_update_created(
+        &self,
+        event: &AuditEvent,
+    ) -> Result<bool, StoreError> {
+        self.record_reliability_update_inner(event)
+            .map(|(_, created)| created)
+    }
+
+    fn record_reliability_update_inner(
+        &self,
+        event: &AuditEvent,
+    ) -> Result<(NodeId, bool), StoreError> {
         let audit_edge = db_string(Audit::LABEL)?;
         let mut txn = self.graph().begin_write();
-        let id = {
+        let outcome = {
             let mut mutator = txn.mutator();
             let ensured = audit::ensure_event(&mut mutator, event, self.audit_signer())?;
             if ensured.created {
@@ -228,10 +252,10 @@ impl Store {
                     )?;
                 }
             }
-            ensured.node
+            (ensured.node, ensured.created)
         };
         txn.commit()?;
-        Ok(id)
+        Ok(outcome)
     }
 
     /// Refresh an agent's cached `trust_scores`, write-when-changed (06 §5, M4.T05).
