@@ -22,8 +22,13 @@ pub const SIGNING_ENCODING_VERSION: u8 = 2;
 
 const PROVENANCE_TAG: &str = "aionforge.provenance.v2";
 const ATTESTATION_TAG: &str = "aionforge.attestation.v2";
-const CORE_EDIT_ATTESTATION_TAG: &str = "aionforge.core-edit-attestation.v2";
+const CORE_EDIT_ATTESTATION_TAG: &str = "aionforge.core-edit-attestation.v3";
 const AUDIT_TAG: &str = "aionforge.audit.v2";
+
+/// The tagged bytes hashed for a carry-forward core edit (no baseline replacement),
+/// domain-separated so "kept the existing baseline" can never collide with any real
+/// baseline document.
+const CORE_EDIT_BASELINE_CARRY: &[u8] = b"aionforge.core-edit-baseline.carry";
 
 /// The canonical provenance signing payload over `(subject_id, writer_agent_id,
 /// ingested_at)` (02 §10).
@@ -62,21 +67,28 @@ pub fn attestation_payload(fact_id: &Id, attester_id: &Id, attested_at: &Timesta
 }
 
 /// The canonical core-block edit attestation payload over `(block_id, attester_id,
-/// prior_content_hash, new_content_hash, attested_at)` (05 §4, M5.T04).
+/// prior_content_hash, new_content_hash, baseline_hash, attested_at)` (05 §4,
+/// M5.T04; baseline binding M5.T05).
 ///
 /// A core block's id is deliberately **stable for the block's life** — unlike a fact,
 /// whose content-addressed id binds an attestation to its content all by itself — so a
 /// vote signed over the bare id (the fact-shaped [`attestation_payload`]) would
 /// authorize *any* content swap of that block inside the clock-skew window. This
 /// payload binds the exact transition instead: the attester vouches that the block
-/// move from these prior bytes to these new bytes, and nothing else. The hashes go in
-/// as their canonical hex strings, length-prefixed like every field.
+/// move from these prior bytes to these new bytes carrying exactly this drift
+/// baseline ([`core_edit_baseline_hash`]) — and nothing else. The baseline is in the
+/// signed bytes because it is the asset drift detection measures from: a vote that
+/// covered only the content would let the request assembler attach an arbitrary
+/// anchor to a legitimately approved edit, which is precisely the laundering the
+/// attested write path exists to foreclose. The hashes go in as their canonical hex
+/// strings, length-prefixed like every field.
 #[must_use]
 pub fn core_edit_attestation_payload(
     block_id: &Id,
     attester_id: &Id,
     prior_content_hash: &ContentHash,
     new_content_hash: &ContentHash,
+    baseline_hash: &ContentHash,
     attested_at: &Timestamp,
 ) -> Vec<u8> {
     let block = block_id.as_uuid();
@@ -88,9 +100,26 @@ pub fn core_edit_attestation_payload(
             attester.as_bytes(),
             prior_content_hash.as_str().as_bytes(),
             new_content_hash.as_str().as_bytes(),
+            baseline_hash.as_str().as_bytes(),
         ],
         attested_at,
     )
+}
+
+/// The hash an attester vouches over for a core edit's `drift_baseline` slot: the
+/// canonicalized baseline document (object keys sorted at every depth, the audit
+/// payload's convention, so the bytes are stable regardless of map construction
+/// order), or the tagged carry-forward sentinel when the edit keeps the existing
+/// baseline (`None`). Both the vote payload and the applied-edit audit fold use
+/// this, so the attesters, the editor, and the forensic record all name the same
+/// baseline bytes — a request cannot swap `None` for a document, or one document
+/// for another, behind votes collected for something else.
+#[must_use]
+pub fn core_edit_baseline_hash(baseline: Option<&serde_json::Value>) -> ContentHash {
+    match baseline {
+        None => ContentHash::of(CORE_EDIT_BASELINE_CARRY),
+        Some(value) => ContentHash::of(&canonical_json(value)),
+    }
 }
 
 /// The canonical audit signing payload over an [`AuditEvent`]'s authoritative
@@ -267,13 +296,14 @@ mod tests {
     fn a_core_edit_vote_signs_the_exact_transition() {
         let prior = ContentHash::of(b"the prior content");
         let new = ContentHash::of(b"the new content");
-        let base = core_edit_attestation_payload(&id(1), &id(2), &prior, &new, &ts(5));
+        let carry = core_edit_baseline_hash(None);
+        let base = core_edit_attestation_payload(&id(1), &id(2), &prior, &new, &carry, &ts(5));
 
         // Deterministic, versioned, and domain-separated from the fact-shaped payload
         // built over the same ids and instant.
         assert_eq!(
             base,
-            core_edit_attestation_payload(&id(1), &id(2), &prior, &new, &ts(5))
+            core_edit_attestation_payload(&id(1), &id(2), &prior, &new, &carry, &ts(5))
         );
         assert_eq!(base[0], SIGNING_ENCODING_VERSION);
         assert_ne!(base, attestation_payload(&id(1), &id(2), &ts(5)));
@@ -283,30 +313,58 @@ mod tests {
         let other = ContentHash::of(b"something else");
         assert_ne!(
             base,
-            core_edit_attestation_payload(&id(9), &id(2), &prior, &new, &ts(5))
+            core_edit_attestation_payload(&id(9), &id(2), &prior, &new, &carry, &ts(5))
         );
         assert_ne!(
             base,
-            core_edit_attestation_payload(&id(1), &id(9), &prior, &new, &ts(5))
+            core_edit_attestation_payload(&id(1), &id(9), &prior, &new, &carry, &ts(5))
         );
         assert_ne!(
             base,
-            core_edit_attestation_payload(&id(1), &id(2), &other, &new, &ts(5))
+            core_edit_attestation_payload(&id(1), &id(2), &other, &new, &carry, &ts(5))
         );
         assert_ne!(
             base,
-            core_edit_attestation_payload(&id(1), &id(2), &prior, &other, &ts(5))
+            core_edit_attestation_payload(&id(1), &id(2), &prior, &other, &carry, &ts(5))
         );
         assert_ne!(
             base,
-            core_edit_attestation_payload(&id(1), &id(2), &prior, &new, &ts(6))
+            core_edit_attestation_payload(&id(1), &id(2), &prior, &new, &carry, &ts(6))
         );
 
         // Swapping prior and new is a *different* transition, not the same bytes.
         assert_ne!(
             base,
-            core_edit_attestation_payload(&id(1), &id(2), &new, &prior, &ts(5))
+            core_edit_attestation_payload(&id(1), &id(2), &new, &prior, &carry, &ts(5))
         );
+
+        // The baseline slot is signed too: a vote for a carry-forward edit can never
+        // validate a request that smuggles in a baseline document, and vice versa.
+        let doc = serde_json::json!({"v": 1, "window_secs": 7});
+        let rebaseline = core_edit_baseline_hash(Some(&doc));
+        assert_ne!(
+            base,
+            core_edit_attestation_payload(&id(1), &id(2), &prior, &new, &rebaseline, &ts(5))
+        );
+    }
+
+    #[test]
+    fn the_baseline_hash_separates_carry_from_every_document() {
+        let carry = core_edit_baseline_hash(None);
+        let doc = serde_json::json!({"b": 2, "a": 1});
+        let hashed = core_edit_baseline_hash(Some(&doc));
+        assert_ne!(
+            carry, hashed,
+            "carry-forward never collides with a document"
+        );
+        // Canonicalized: key construction order does not change the vouched bytes.
+        let reordered = serde_json::json!({"a": 1, "b": 2});
+        assert_eq!(hashed, core_edit_baseline_hash(Some(&reordered)));
+        // And the sentinel is domain-separated from a string that spells it.
+        let spelled = serde_json::Value::String(
+            String::from_utf8(CORE_EDIT_BASELINE_CARRY.to_vec()).expect("utf8"),
+        );
+        assert_ne!(carry, core_edit_baseline_hash(Some(&spelled)));
     }
 
     #[test]

@@ -578,3 +578,85 @@ fn a_visible_but_unwritable_block_is_honestly_unauthorized() {
         .events;
     assert_eq!(rows.len(), 1, "the refusal is audited");
 }
+
+#[test]
+fn a_vote_never_authorizes_a_baseline_the_quorum_did_not_see() {
+    let store = store();
+    let (editor_id, _) = enroll(&store, 1, AgentStatus::Active);
+    let (attester_id, attester_key) = enroll(&store, 2, AgentStatus::Active);
+    let principal = Principal::agent(editor_id);
+    let b = block("never deploy on friday", BlockKind::Commitment, None);
+    genesis(&store, &b);
+    let core = editor(&store, CoreEditPolicy::default(), false);
+    let new_content = "never deploy on friday or saturday";
+
+    // The attester vouched for a carry-forward edit (content only); the editor
+    // attaches a baseline anchored wherever they please. The baseline slot is in the
+    // signed bytes, so the smuggle is a forged voucher — this is the
+    // drift-laundering primitive the attested write path forecloses.
+    let carry_vote = vote_for(&b, new_content, &attester_id, &attester_key);
+    let smuggled = serde_json::json!({"v": 1, "behavior_centroid": [0.0, 1.0, 0.0, 0.0]});
+    let outcome = core
+        .edit(
+            &principal,
+            &AllowAll,
+            &request_with_baseline(&b, new_content, Some(smuggled.clone()), vec![carry_vote]),
+        )
+        .expect("call");
+    assert_eq!(
+        outcome,
+        CoreEditOutcome::Rejected(CoreEditRejection::AttestationFailed)
+    );
+
+    // A vote over baseline X never validates a request shipping baseline Y.
+    let other = serde_json::json!({"v": 1, "behavior_centroid": [1.0, 0.0, 0.0, 0.0]});
+    let x_vote = vote_for_baseline(&b, new_content, Some(&other), &attester_id, &attester_key);
+    let outcome = core
+        .edit(
+            &principal,
+            &AllowAll,
+            &request_with_baseline(&b, new_content, Some(smuggled.clone()), vec![x_vote]),
+        )
+        .expect("call");
+    assert_eq!(
+        outcome,
+        CoreEditOutcome::Rejected(CoreEditRejection::AttestationFailed)
+    );
+
+    // The honest path: votes signed over the exact document apply, the document
+    // lands, and the audit fold names the vouched baseline hash.
+    let honest = vote_for_baseline(
+        &b,
+        new_content,
+        Some(&smuggled),
+        &attester_id,
+        &attester_key,
+    );
+    let outcome = core
+        .edit(
+            &principal,
+            &AllowAll,
+            &request_with_baseline(&b, new_content, Some(smuggled.clone()), vec![honest]),
+        )
+        .expect("call");
+    assert!(
+        matches!(outcome, CoreEditOutcome::Applied(_)),
+        "the quorum-vouched baseline applies: {outcome:?}"
+    );
+    let stored = store
+        .core_block_by_id(&b.identity.id)
+        .expect("read")
+        .expect("present");
+    assert_eq!(stored.drift_baseline, Some(smuggled.clone()));
+    let applied = core_edit_rows(&store)
+        .into_iter()
+        .find(|row| row.payload["outcome"] == serde_json::json!("applied"))
+        .expect("applied audit row");
+    assert_eq!(applied.payload["rebaselined"], serde_json::json!(true));
+    assert_eq!(
+        applied.payload["baseline_hash"],
+        serde_json::json!(
+            aionforge_domain::signing::core_edit_baseline_hash(Some(&smuggled)).as_str()
+        )
+    );
+}

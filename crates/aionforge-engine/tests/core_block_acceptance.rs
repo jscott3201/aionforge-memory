@@ -24,7 +24,7 @@ use aionforge_domain::namespace::Namespace;
 use aionforge_domain::nodes::agent::{Agent, AgentStatus, TrustScores};
 use aionforge_domain::nodes::core::BlockKind;
 use aionforge_domain::nodes::forensic::AuditKind;
-use aionforge_domain::signing::core_edit_attestation_payload;
+use aionforge_domain::signing::{core_edit_attestation_payload, core_edit_baseline_hash};
 use aionforge_domain::time::Timestamp;
 use aionforge_engine::{
     CoreAttesterVote, CoreBlockCreate, CoreBlockDraft, CoreEditOutcome, CoreEditPolicy,
@@ -94,6 +94,7 @@ fn vote(
         attester_id,
         &ContentHash::of(prior.as_bytes()),
         &ContentHash::of(new.as_bytes()),
+        &core_edit_baseline_hash(None),
         &at,
     );
     (

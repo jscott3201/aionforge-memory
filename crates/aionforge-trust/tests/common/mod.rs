@@ -14,7 +14,7 @@ use aionforge_domain::namespace::Namespace;
 use aionforge_domain::nodes::agent::{Agent, AgentStatus, TrustScores};
 use aionforge_domain::nodes::core::{BlockKind, CoreBlock};
 use aionforge_domain::nodes::forensic::{AuditEvent, AuditKind};
-use aionforge_domain::signing::core_edit_attestation_payload;
+use aionforge_domain::signing::{core_edit_attestation_payload, core_edit_baseline_hash};
 use aionforge_domain::time::Timestamp;
 use aionforge_store::{Store, StoreConfig};
 use aionforge_trust::{
@@ -135,11 +135,24 @@ pub fn editor(store: &Arc<Store>, policy: CoreEditPolicy, signed_writes: bool) -
 }
 
 /// A vote vouches for one exact transition of one block: the signed payload carries
-/// the prior-content hash (from the block as the attester read it) and the hash of the
-/// replacement the attester reviewed.
+/// the prior-content hash (from the block as the attester read it), the hash of the
+/// replacement the attester reviewed, and the baseline slot — carry-forward here;
+/// [`vote_for_baseline`] signs a rebaselining edit.
 pub fn vote_for(
     b: &CoreBlock,
     new_content: &str,
+    attester_id: &Id,
+    key: &SigningKey,
+) -> CoreAttesterVote {
+    vote_for_baseline(b, new_content, None, attester_id, key)
+}
+
+/// A vote over a transition that also replaces the drift baseline: the attester
+/// vouches for the exact document (or `None` = keep the existing one).
+pub fn vote_for_baseline(
+    b: &CoreBlock,
+    new_content: &str,
+    baseline: Option<&serde_json::Value>,
     attester_id: &Id,
     key: &SigningKey,
 ) -> CoreAttesterVote {
@@ -148,6 +161,7 @@ pub fn vote_for(
         attester_id,
         &ContentHash::of(b.content.as_bytes()),
         &ContentHash::of(new_content.as_bytes()),
+        &core_edit_baseline_hash(baseline),
         &now(),
     );
     CoreAttesterVote {
@@ -159,11 +173,20 @@ pub fn vote_for(
 }
 
 pub fn request(b: &CoreBlock, new_content: &str, votes: Vec<CoreAttesterVote>) -> CoreEditRequest {
+    request_with_baseline(b, new_content, None, votes)
+}
+
+pub fn request_with_baseline(
+    b: &CoreBlock,
+    new_content: &str,
+    drift_baseline: Option<serde_json::Value>,
+    votes: Vec<CoreAttesterVote>,
+) -> CoreEditRequest {
     CoreEditRequest {
         block_id: b.identity.id,
         expected_prior: ContentHash::of(b.content.as_bytes()),
         content: new_content.to_string(),
-        drift_baseline: None,
+        drift_baseline,
         embedding: None,
         editor_signature: None,
         votes,

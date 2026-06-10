@@ -122,19 +122,23 @@ impl AttestationGate {
     ///
     /// A core block's **stable** id cannot bind a vote to content the way a fact's
     /// content-addressed id does, so the core-edit vote signs the exact prior-to-new
-    /// content transition — a voucher collected for one proposed edit can never
-    /// validate a different replacement of the same block, even inside the skew
-    /// window.
+    /// content transition *and* the drift-baseline slot it carries
+    /// (`baseline_hash`, M5.T05) — a voucher collected for one proposed edit can
+    /// never validate a different replacement of the same block, and a voucher for
+    /// one baseline (or for carry-forward) can never validate a request shipping
+    /// another, even inside the skew window.
     ///
     /// # Errors
     /// [`AttestError::Rejected`] for a skew/unknown-attester/bad-signature failure;
     /// [`AttestError::Backend`] if the key resolution read itself failed.
+    #[allow(clippy::too_many_arguments)]
     pub fn admit_core_edit(
         &self,
         block_id: &Id,
         attester_id: &Id,
         prior_content_hash: &ContentHash,
         new_content_hash: &ContentHash,
+        baseline_hash: &ContentHash,
         attested_at: &Timestamp,
         signature_b64: &str,
     ) -> Result<(), AttestError> {
@@ -144,6 +148,7 @@ impl AttestationGate {
             attester_id,
             prior_content_hash,
             new_content_hash,
+            baseline_hash,
             attested_at,
         );
         self.verifier
@@ -179,6 +184,7 @@ impl AttestationGate {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aionforge_domain::signing::core_edit_baseline_hash;
     use aionforge_domain::verify::ResolveError;
     use base64::Engine;
     use base64::engine::general_purpose::STANDARD as BASE64;
@@ -341,9 +347,10 @@ mod tests {
         let (block, attester, at) = (id(1), id(2), ts(1_000));
         let prior = ContentHash::of(b"who I was");
         let new = ContentHash::of(b"who I am becoming");
+        let carry = core_edit_baseline_hash(None);
         let signature = sign_b64(
             &key,
-            &core_edit_attestation_payload(&block, &attester, &prior, &new, &at),
+            &core_edit_attestation_payload(&block, &attester, &prior, &new, &carry, &at),
         );
         let resolver = Arc::new(OneKeyResolver {
             agent: attester,
@@ -353,20 +360,27 @@ mod tests {
 
         // The vouched transition verifies.
         assert!(
-            gate.admit_core_edit(&block, &attester, &prior, &new, &at, &signature)
+            gate.admit_core_edit(&block, &attester, &prior, &new, &carry, &at, &signature)
                 .is_ok()
         );
         // The same vote presented for a *different* replacement is a forged voucher —
         // this is the content-swap surface the transition binding closes.
         let swapped = ContentHash::of(b"something the attester never saw");
         assert!(matches!(
-            gate.admit_core_edit(&block, &attester, &prior, &swapped, &at, &signature),
+            gate.admit_core_edit(&block, &attester, &prior, &swapped, &carry, &at, &signature),
+            Err(AttestError::Rejected(AttestRejection::BadSignature))
+        ));
+        // A carry-forward vote presented for a request that smuggles in a baseline
+        // document is likewise forged — the baseline slot is in the signed bytes.
+        let smuggled = core_edit_baseline_hash(Some(&serde_json::json!({"v": 1})));
+        assert!(matches!(
+            gate.admit_core_edit(&block, &attester, &prior, &new, &smuggled, &at, &signature),
             Err(AttestError::Rejected(AttestRejection::BadSignature))
         ));
         // And a fact-shaped signature over the bare ids does not pass the core-edit gate.
         let bare = sign_b64(&key, &attestation_payload(&block, &attester, &at));
         assert!(matches!(
-            gate.admit_core_edit(&block, &attester, &prior, &new, &at, &bare),
+            gate.admit_core_edit(&block, &attester, &prior, &new, &carry, &at, &bare),
             Err(AttestError::Rejected(AttestRejection::BadSignature))
         ));
     }

@@ -301,6 +301,16 @@ async fn the_sweep_scores_warns_once_and_tallies_every_skip() {
     );
     assert_eq!(warning.payload["score"], serde_json::json!(1.0));
     assert_eq!(warning.payload["sample_size"], serde_json::json!(2));
+    assert_eq!(
+        warning.payload["namespace"],
+        serde_json::json!(agent_ns().to_string()),
+        "the payload restates the namespace for payload-only readers"
+    );
+    assert_eq!(
+        warning.payload["embedder_model"]["family"],
+        serde_json::json!("fake"),
+        "the embedder identity rides in the payload for cross-space triage"
+    );
 
     // Anti-flap: the same drift against the same baseline epoch warns exactly once.
     let again = memory.sweep_drift(None, 100, &ts(40)).expect("sweep");

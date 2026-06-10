@@ -103,10 +103,12 @@ pub enum AuditKind {
     SubliminalGuardWarning,
     /// The drift detector found a core block's drift score at or above the threshold
     /// (05 §1, M5.T05) — the T6 twin of
-    /// [`SubliminalGuardWarning`](AuditKind::SubliminalGuardWarning). The payload
-    /// records the namespace, block, score, threshold, baseline instant, sample size,
-    /// and embedder identity; the row doubles as the notification outbox a host pages
-    /// with `audit_by_kind`.
+    /// [`SubliminalGuardWarning`](AuditKind::SubliminalGuardWarning). The block is
+    /// the row's `subject_id` and the row lives in the block's own namespace; the
+    /// payload records the namespace (again, for hosts that read payloads alone),
+    /// the block kind, the score and threshold, the baseline instant, the sample
+    /// size, and the embedder identity the comparison ran under. The row doubles as
+    /// the notification outbox a host pages with `audit_by_kind`.
     DriftWarning,
     /// A fact proximate to a high-trust core block was stamped with a cooling window
     /// (05 §1, M5.T05): admitted, but rank-time trust is reduced until the stamp

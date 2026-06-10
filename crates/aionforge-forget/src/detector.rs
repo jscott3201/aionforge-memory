@@ -288,6 +288,7 @@ impl DriftDetector {
                             self.policy.drift_threshold,
                             &baselined_at,
                             sample_size,
+                            live_model,
                             now,
                         );
                         let (_, created) = self.store.commit_audit_created(&warning)?;
@@ -357,6 +358,7 @@ fn warning_event(
     threshold: f64,
     baselined_at: &Timestamp,
     sample_size: usize,
+    live_model: &EmbedderModel,
     now: &Timestamp,
 ) -> AuditEvent {
     AuditEvent {
@@ -370,11 +372,13 @@ fn warning_event(
         subject_id: block.identity.id,
         actor_id: drift_actor(),
         payload: serde_json::json!({
+            "namespace": block.identity.namespace.to_string(),
             "block_kind": block.block_kind,
             "score": score,
             "threshold": threshold,
             "baselined_at": to_utc(baselined_at),
             "sample_size": sample_size,
+            "embedder_model": live_model,
         }),
         signature: String::new(),
         occurred_at: now.clone(),

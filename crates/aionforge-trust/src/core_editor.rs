@@ -45,6 +45,7 @@ use aionforge_domain::namespace::Namespace;
 use aionforge_domain::nodes::agent::AgentStatus;
 use aionforge_domain::nodes::core::{BlockKind, CoreBlock};
 use aionforge_domain::nodes::forensic::{AuditEvent, AuditKind};
+use aionforge_domain::signing::core_edit_baseline_hash;
 use aionforge_domain::time::Timestamp;
 use aionforge_store::{CoreAttestation, CoreBlockReplacement, CoreEditWrite, Store, StoreError};
 
@@ -407,18 +408,23 @@ impl CoreEditor {
             distinct.push(vote);
         }
 
-        // Verify every counted vote over the exact transition this request ships
-        // (prior hash -> new-content hash); one forged or skewed voucher refuses the
-        // whole edit rather than being silently dropped. A vote collected for a
-        // different proposed replacement fails here — the transition is in the signed
-        // bytes, not merely implied by the block id.
+        // Verify every counted vote over the exact transition this request ships:
+        // prior hash -> new-content hash, plus the drift-baseline slot (the hash of
+        // the document, or the carry-forward sentinel). One forged or skewed voucher
+        // refuses the whole edit rather than being silently dropped. A vote collected
+        // for a different proposed replacement — or for a different baseline than the
+        // request carries — fails here: the transition is in the signed bytes, not
+        // merely implied by the block id, and the baseline is in those bytes because
+        // an anchor the quorum never saw is the drift-laundering primitive.
         let new_hash = ContentHash::of(request.content.as_bytes());
+        let baseline_hash = core_edit_baseline_hash(request.drift_baseline.as_ref());
         for vote in &distinct {
             match self.attester_gate.admit_core_edit(
                 &request.block_id,
                 &vote.attester_id,
                 &prior_hash,
                 &new_hash,
+                &baseline_hash,
                 &vote.attested_at,
                 &vote.signature_b64,
             ) {
@@ -523,10 +529,11 @@ impl CoreEditor {
         // (prior == new), the one case the compare-and-swap cannot distinguish a
         // replay from a first apply.
         let fold = format!(
-            "core_edit|{}|{}|{}|{}|{}|{}",
+            "core_edit|{}|{}|{}|{}|{}|{}|{}",
             block.identity.id,
             prior_hash.as_str(),
             new_hash.as_str(),
+            baseline_hash.as_str(),
             principal.agent_id,
             attester_ids.join(","),
             request.at.timestamp().as_millisecond()
@@ -551,6 +558,8 @@ impl CoreEditor {
                 "k_required": requirement.k,
                 "prior_content_hash": prior_hash.as_str(),
                 "new_content_hash": new_hash.as_str(),
+                "baseline_hash": baseline_hash.as_str(),
+                "rebaselined": request.drift_baseline.is_some(),
             }),
             signature: String::new(),
             occurred_at: request.at.clone(),
