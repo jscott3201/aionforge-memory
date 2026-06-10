@@ -145,7 +145,9 @@ pub struct ForgetFloors {
     pub importance_floor: f64,
     /// A candidate is low-trust only when its trust sits *below* this.
     pub trust_floor: f64,
-    /// A candidate is old enough only at or past this age.
+    /// A candidate is old enough only at or past this age. Non-negative by configuration
+    /// (the config field is unsigned); the predicate clamps a negative value to zero anyway,
+    /// so no representable floor can doom a future-stamped candidate.
     pub min_age_secs: i64,
 }
 
@@ -159,12 +161,14 @@ pub struct ForgetFloors {
 /// pinned memory importance-eligible against any floor — so no misconfigured floor can
 /// forget a pin. Two conservative guards extend the spare-only rule to garbage: a non-finite
 /// decayed importance or trust scalar spares the candidate, because the sweep never destroys
-/// on a value the arithmetic cannot vouch for (`NaN < floor` is already false, but a
-/// negative-infinity scalar would otherwise read as "low" and doom).
+/// on a value the arithmetic cannot vouch for. Both guards are load-bearing: a NaN or
+/// negative-infinity importance reads as "below the floor" through the negated
+/// [`is_eligible`] (`!(NaN >= floor)` is true), and a negative-infinity trust reads as below
+/// the trust floor — either would doom without its finite check.
 ///
-/// Soft-forget is the *only* revision channel that writes a bare `expired_at`; the doc table
-/// below pins the state signatures that keep the four channels distinguishable — and
-/// un-forget safe — at read time:
+/// Soft-forget is the only revision channel that writes `expired_at` while leaving `status`
+/// untouched; the doc table below pins the state signatures that keep the four channels
+/// distinguishable — and un-forget safe — at read time:
 ///
 /// | channel | node `expired_at` | node `status` | edge writes |
 /// |---|---|---|---|
@@ -183,7 +187,7 @@ pub fn forget_eligible(axes: &ForgetAxes, floors: &ForgetFloors) -> bool {
         && axes.trust.is_finite()
         && axes.trust < floors.trust_floor
         && axes.unreferenced
-        && axes.age_secs >= floors.min_age_secs
+        && axes.age_secs >= floors.min_age_secs.max(0)
 }
 
 #[cfg(test)]
@@ -418,5 +422,15 @@ mod tests {
             ..FORGETTABLE
         };
         assert!(!forget_eligible(&future_stamped, &FLOORS));
+        // The clamp holds even against a garbage negative floor: the config field is
+        // unsigned so a negative min_age is unrepresentable upstream, but no representable
+        // i64 floor may doom a future-stamped candidate either.
+        let negative_floor = ForgetFloors {
+            min_age_secs: -86_400,
+            ..FLOORS
+        };
+        assert!(!forget_eligible(&future_stamped, &negative_floor));
+        // A zero-or-clamped floor still forgets a genuinely old candidate.
+        assert!(forget_eligible(&FORGETTABLE, &negative_floor));
     }
 }
