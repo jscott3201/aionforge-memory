@@ -49,7 +49,7 @@ mod error;
 mod load;
 
 pub use config::{
-    CategoryPromotionRule, CompleterConfig, Config, EmbedderConfig, PersistenceConfig,
+    CategoryPromotionRule, CompleterConfig, Config, DecayConfig, EmbedderConfig, PersistenceConfig,
     PromotionConfig, ReliabilityConfig, RetrievalConfig, SecurityConfig,
     endpoint_transport_is_allowed,
 };

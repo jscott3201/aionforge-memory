@@ -393,6 +393,41 @@ fn reliability_weights_are_validated_only_when_enabled() {
 }
 
 #[test]
+fn decay_half_lives_are_validated_only_when_enabled() {
+    // Off by default: a zero half-life is inert and never validated.
+    let mut config = Config::default();
+    config.decay.episodic_half_life_secs = 0;
+    config
+        .validate()
+        .expect("an off decay policy ignores its half-lives");
+
+    // On with the defaults validates: 7 days episodic, 365 days semantic.
+    let mut config = Config::default();
+    config.decay.enabled = true;
+    config
+        .validate()
+        .expect("the default half-lives are valid when enabled");
+
+    // On: a zero half-life would silently never decay (the pure function treats it as
+    // inert), so it is rejected as a visible misconfiguration — per tier.
+    for tier_key in [
+        "decay.episodic_half_life_secs",
+        "decay.semantic_half_life_secs",
+    ] {
+        let mut config = Config::default();
+        config.decay.enabled = true;
+        match tier_key {
+            "decay.episodic_half_life_secs" => config.decay.episodic_half_life_secs = 0,
+            _ => config.decay.semantic_half_life_secs = 0,
+        }
+        assert!(
+            matches!(config.validate(), Err(ConfigError::Invalid { key, .. }) if key == tier_key),
+            "a zero {tier_key} is rejected"
+        );
+    }
+}
+
+#[test]
 fn plain_http_is_rejected_unless_loopback() {
     let allowed = [
         "http://localhost:1234/v1",

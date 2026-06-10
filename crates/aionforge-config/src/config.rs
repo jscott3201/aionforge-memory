@@ -58,6 +58,9 @@ pub struct Config {
     /// move an agent's reliability as its facts are corroborated or invalidated (06 §5). Off
     /// by default.
     pub reliability: ReliabilityConfig,
+    /// Importance-decay posture: the per-tier half-lives that sink a memory's effective
+    /// importance with elapsed time since last access (05 §2). Off by default.
+    pub decay: DecayConfig,
 }
 
 /// On-disk state configuration.
@@ -348,6 +351,37 @@ impl Default for ReliabilityConfig {
             w_contradict: 1.0,
             w_attest_invalid: 1.0,
             w_agree: 0.25,
+        }
+    }
+}
+
+/// Importance-decay configuration (05 §2, M5.T01).
+///
+/// Decay is a pure read-time computation — the substrate never writes a decayed value back
+/// (§13.7) — so this configures only *whether* elapsed time sinks effective importance and
+/// how fast per tier. The defaults are deliberately conservative (a half-life of days for
+/// episodic memory, a year for semantic), because aggressive forgetting risks losing
+/// rarely-but-critically-needed facts; pinned memories ignore decay entirely.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DecayConfig {
+    /// Whether elapsed time decays effective importance at all. Off by default; when off,
+    /// rankings read the stored write-time importance unchanged.
+    pub enabled: bool,
+    /// Half-life for session-scoped episodic memory, in seconds. Default seven days.
+    /// Validated non-zero when enabled.
+    pub episodic_half_life_secs: u64,
+    /// Half-life for semantic and identity memory, in seconds. Default 365 days.
+    /// Validated non-zero when enabled.
+    pub semantic_half_life_secs: u64,
+}
+
+impl Default for DecayConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            episodic_half_life_secs: 604_800,
+            semantic_half_life_secs: 31_536_000,
         }
     }
 }
@@ -652,6 +686,28 @@ impl Config {
                     "must be strictly less than reliability.w_contradict (agreement gain must \
                      not outpace contradiction decay)",
                 ));
+            }
+        }
+        if self.decay.enabled {
+            // A zero half-life would divide the elapsed time by zero downstream; the pure
+            // function treats it as inert, so reject it here where the misconfiguration is
+            // visible rather than shipping a decay that silently never decays.
+            for (key, half_life) in [
+                (
+                    "decay.episodic_half_life_secs",
+                    self.decay.episodic_half_life_secs,
+                ),
+                (
+                    "decay.semantic_half_life_secs",
+                    self.decay.semantic_half_life_secs,
+                ),
+            ] {
+                if half_life == 0 {
+                    return Err(ConfigError::invalid(
+                        key,
+                        "must be greater than zero when decay is enabled",
+                    ));
+                }
             }
         }
         Ok(())

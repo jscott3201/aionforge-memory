@@ -27,6 +27,7 @@ pub mod authz;
 pub mod blocks;
 pub mod completion;
 pub mod contracts;
+pub mod decay;
 pub mod edges;
 pub mod embedding;
 pub mod error;
@@ -50,6 +51,7 @@ pub use contracts::{
     ExtractorIdentity, FactExtractor, FilterOutcome, Forgetting, Merge, PrivacyFilter,
     ProceduralMemory, Retriever,
 };
+pub use decay::{Tier, decayed_importance, is_eligible, tier_for_label};
 pub use embedding::{EmbedderModel, Embedding};
 pub use error::DomainError;
 pub use gate::{GateError, GateRejection, ProvenanceGate, WallClock};
