@@ -130,7 +130,7 @@ fn mentions_edge(store: &Store, episode_id: &Id, entity_id: &Id) {
 fn computed(outcome: ClosureOutcome) -> PurgeClosure {
     match outcome {
         ClosureOutcome::Computed(closure) => closure,
-        ClosureOutcome::TooLarge { .. } => panic!("expected a computed closure"),
+        other => panic!("expected a computed closure, got {other:?}"),
     }
 }
 
@@ -369,4 +369,253 @@ fn a_fact_seed_with_no_derivatives_is_a_singleton_closure() {
     let closure = computed(store.derived_from_closure(f_node, &caps()).expect("walk"));
     assert_eq!(closure.nodes, vec![f_node]);
     assert_eq!(closure.cascade_depth, 0);
+}
+
+#[test]
+fn a_cascaded_node_brings_its_own_provenance_and_trails_the_order() {
+    let store = store();
+    // Two captured episodes, each with its own provenance record; the second derived
+    // from the first. Purging the first cascades the second AND both records.
+    let e1 = episode("captured root");
+    let e2 = episode("captured derivative");
+    let capture = |ep: &Episode, tag: &[u8]| {
+        let provenance = ProvenanceRecord {
+            identity: identity(),
+            subject_id: ep.identity.id,
+            writer_agent_id: Id::from_content_hash(b"purge-agent"),
+            signature: "sig".to_string(),
+            source_episode_ids: Vec::new(),
+            model_family: "test".to_string(),
+            model_version: None,
+            trust_at_write: 0.5,
+        };
+        let audit = AuditEvent {
+            identity: Identity {
+                id: Id::from_content_hash(tag),
+                ingested_at: now(),
+                namespace: Namespace::Global,
+                expired_at: None,
+            },
+            kind: AuditKind::Capture,
+            subject_id: ep.identity.id,
+            actor_id: Id::from_content_hash(b"purge-agent"),
+            payload: serde_json::json!({"reason": "test"}),
+            signature: String::new(),
+            occurred_at: now(),
+        };
+        let ids = store
+            .commit_capture(ep, &provenance, &audit)
+            .expect("capture");
+        (ids, provenance.identity.id)
+    };
+    let (e1_ids, p1_id) = capture(&e1, b"cap-1");
+    let (e2_ids, p2_id) = capture(&e2, b"cap-2");
+    derived_edge(
+        &store,
+        EPISODE_FROM_EPISODE,
+        &e2.identity.id,
+        &e1.identity.id,
+    );
+
+    let closure = computed(
+        store
+            .derived_from_closure(e1_ids.episode, &caps())
+            .expect("walk"),
+    );
+    assert_eq!(
+        closure.nodes.len(),
+        4,
+        "two episodes, two provenance records"
+    );
+    assert_eq!(closure.provenance_count, 2);
+    for member in [e1_ids.provenance, e2_ids.provenance] {
+        assert!(closure.nodes.contains(&member));
+    }
+    // The provenance block trails the admission order.
+    assert_eq!(closure.node_ids[..2], [e1.identity.id, e2.identity.id]);
+    assert!(closure.node_ids[2..].contains(&p1_id));
+    assert!(closure.node_ids[2..].contains(&p2_id));
+
+    // The same shape against a node cap the provenance pass overruns: the walk admits
+    // both episodes, then refuses when the records would push past the cap.
+    let refused = store
+        .derived_from_closure(
+            e1_ids.episode,
+            &CascadeCaps {
+                max_depth: 16,
+                max_nodes: 3,
+            },
+        )
+        .expect("walk");
+    assert!(
+        matches!(
+            refused,
+            ClosureOutcome::TooLarge {
+                nodes_observed: 4,
+                ..
+            }
+        ),
+        "the node cap holds through the provenance pass: {refused:?}"
+    );
+}
+
+#[test]
+fn a_soft_forgotten_seed_still_closes() {
+    let store = store();
+    let f = fact("forgotten then erased");
+    let f_node = store.insert_fact(&f).expect("insert");
+    let forget_audit = AuditEvent {
+        identity: Identity {
+            id: Id::from_content_hash(b"forget-before-erase"),
+            ingested_at: now(),
+            namespace: Namespace::Global,
+            expired_at: None,
+        },
+        kind: AuditKind::Forget,
+        subject_id: f.identity.id,
+        actor_id: Id::from_content_hash(b"purge-agent"),
+        payload: serde_json::json!({"reason": "test"}),
+        signature: String::new(),
+        occurred_at: now(),
+    };
+    store
+        .soft_forget(f_node, &now(), &forget_audit)
+        .expect("soft forget");
+
+    let closure = computed(store.derived_from_closure(f_node, &caps()).expect("walk"));
+    assert_eq!(
+        closure.nodes,
+        vec![f_node],
+        "the walk reads no expiry: erasure escalates past a soft-forget"
+    );
+}
+
+#[test]
+fn a_closure_exactly_at_the_depth_cap_is_allowed() {
+    let store = store();
+    let e = episode("depth-bounded source");
+    let f1 = fact("level one");
+    let f2 = fact("level two");
+    let e_node = store.insert_episode(&e).expect("insert");
+    store.insert_fact(&f1).expect("insert");
+    store.insert_fact(&f2).expect("insert");
+    derived_edge(&store, FACT_FROM_EPISODE, &f1.identity.id, &e.identity.id);
+    derived_edge(&store, FACT_FROM_FACT, &f2.identity.id, &f1.identity.id);
+
+    let closure = computed(
+        store
+            .derived_from_closure(
+                e_node,
+                &CascadeCaps {
+                    max_depth: 2,
+                    max_nodes: 200,
+                },
+            )
+            .expect("walk"),
+    );
+    assert_eq!(closure.cascade_depth, 2, "exactly at the cap is within it");
+    assert_eq!(closure.nodes.len(), 3);
+}
+
+#[test]
+fn multiple_spared_survivors_are_all_reported() {
+    let store = store();
+    let erased = episode("erased source");
+    let surviving = episode("surviving source");
+    let shared_a = fact("first shared derivative");
+    let shared_b = fact("second shared derivative");
+    let erased_node = store.insert_episode(&erased).expect("insert");
+    store.insert_episode(&surviving).expect("insert");
+    store.insert_fact(&shared_a).expect("insert");
+    store.insert_fact(&shared_b).expect("insert");
+    for shared in [&shared_a, &shared_b] {
+        derived_edge(
+            &store,
+            FACT_FROM_EPISODE,
+            &shared.identity.id,
+            &erased.identity.id,
+        );
+        derived_edge(
+            &store,
+            FACT_FROM_EPISODE,
+            &shared.identity.id,
+            &surviving.identity.id,
+        );
+    }
+
+    let closure = computed(
+        store
+            .derived_from_closure(erased_node, &caps())
+            .expect("walk"),
+    );
+    assert_eq!(closure.nodes, vec![erased_node]);
+    assert_eq!(
+        closure.spared_multiparent.len(),
+        2,
+        "both survivors reported"
+    );
+    for shared in [&shared_a, &shared_b] {
+        assert!(closure.spared_multiparent.contains(&shared.identity.id));
+    }
+}
+
+#[test]
+fn a_dead_seed_is_the_typed_not_live_outcome() {
+    let store = store();
+    let f = fact("purged before the walk");
+    let f_node = store.insert_fact(&f).expect("insert");
+    let purge_audit = AuditEvent {
+        identity: Identity {
+            id: Id::from_content_hash(b"pre-walk-purge"),
+            ingested_at: now(),
+            namespace: Namespace::Global,
+            expired_at: None,
+        },
+        kind: AuditKind::Purge,
+        subject_id: f.identity.id,
+        actor_id: Id::from_content_hash(b"purge-agent"),
+        payload: serde_json::json!({"reason": "test"}),
+        signature: String::new(),
+        occurred_at: now(),
+    };
+    store.hard_purge(&[f_node], &purge_audit).expect("purge");
+
+    let outcome = store.derived_from_closure(f_node, &caps()).expect("walk");
+    assert_eq!(
+        outcome,
+        ClosureOutcome::SeedNotLive,
+        "a dead seed is a typed outcome, not an error"
+    );
+}
+
+#[test]
+fn a_pending_chain_unlocks_transitively() {
+    let store = store();
+    // C derives only from the seed; A derives from the seed AND C; B derives from the
+    // seed AND A. Whatever order discovery meets them, A can only doom after C, and B
+    // only after A — the sweep must keep re-running while it makes progress.
+    let s = episode("the seed");
+    let c = fact("unlocks first");
+    let a = fact("unlocks second");
+    let b = fact("unlocks third");
+    let s_node = store.insert_episode(&s).expect("insert");
+    let c_node = store.insert_fact(&c).expect("insert");
+    let a_node = store.insert_fact(&a).expect("insert");
+    let b_node = store.insert_fact(&b).expect("insert");
+    derived_edge(&store, FACT_FROM_EPISODE, &c.identity.id, &s.identity.id);
+    derived_edge(&store, FACT_FROM_EPISODE, &a.identity.id, &s.identity.id);
+    derived_edge(&store, FACT_FROM_FACT, &a.identity.id, &c.identity.id);
+    derived_edge(&store, FACT_FROM_EPISODE, &b.identity.id, &s.identity.id);
+    derived_edge(&store, FACT_FROM_FACT, &b.identity.id, &a.identity.id);
+
+    let closure = computed(store.derived_from_closure(s_node, &caps()).expect("walk"));
+    assert_eq!(closure.nodes.len(), 4, "the whole chain unlocks");
+    for member in [s_node, c_node, a_node, b_node] {
+        assert!(closure.nodes.contains(&member));
+    }
+    assert!(closure.spared_multiparent.is_empty());
+    assert_eq!(
+        closure.cascade_depth, 3,
+        "B sits one past A past C past the seed"
+    );
 }

@@ -63,7 +63,9 @@ pub struct PurgeClosure {
     /// Derivatives evaluated and **spared** by the multi-parent survival rule: still
     /// grounded in at least one source outside the closure.
     pub spared_multiparent: Vec<Id>,
-    /// How many of `nodes` are exclusively-owned `ProvenanceRecord` additions.
+    /// How many of `nodes` are `ProvenanceRecord` additions. Exclusivity holds by the
+    /// data model (one record per write, keyed to a single subject), not by a check
+    /// here — the walk follows the one outgoing `HAS_PROVENANCE` hop and trusts it.
     pub provenance_count: usize,
 }
 
@@ -80,6 +82,11 @@ pub enum ClosureOutcome {
         /// The derivation depth observed when the cap fired.
         depth_observed: usize,
     },
+    /// The seed is not a live node — already purged, or never resolved. A typed
+    /// outcome, not an error: the orchestrator pre-resolves the seed, so reaching this
+    /// is a benign race with a concurrent deletion, and the caller answers it the same
+    /// way it answers an unresolvable id.
+    SeedNotLive,
 }
 
 impl Store {
@@ -87,10 +94,12 @@ impl Store {
     /// transitive closure over incoming `DERIVED_FROM` under the multi-parent survival
     /// rule, plus each doomed node's `ProvenanceRecord`, bounded by `caps`.
     ///
-    /// Read-only: one snapshot, no locks held against writers, nothing mutated.
+    /// Read-only: one snapshot, no locks held against writers, nothing mutated. A seed
+    /// that is not a live node is the typed [`ClosureOutcome::SeedNotLive`], not an
+    /// error.
     ///
     /// # Errors
-    /// Returns [`StoreError`] if the seed is not a live node or a read/decode fails.
+    /// Returns [`StoreError`] if a read or decode fails.
     pub fn derived_from_closure(
         &self,
         seed: NodeId,
@@ -102,9 +111,7 @@ impl Store {
         let id_key = db_string("id")?;
 
         if snapshot.node_properties(seed).is_none() {
-            return Err(StoreError::invariant(
-                "purge closure seed is not a live node".to_string(),
-            ));
+            return Ok(ClosureOutcome::SeedNotLive);
         }
 
         let mut doomed: Vec<NodeId> = vec![seed];
