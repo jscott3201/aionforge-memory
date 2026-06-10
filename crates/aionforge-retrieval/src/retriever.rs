@@ -7,9 +7,10 @@
 //! signal drops out and retrieval degrades to the rest, flagged in the explanation
 //! (03 §6, §8.1).
 //!
-//! The lexical, dense, support-expansion, and associative-graph signals run; the support
-//! and graph signals are gated to the classes the router enables expansion for (03 §3). The
-//! recency and trust signals land with their tasks.
+//! All seven signals run: lexical, dense, support-expansion, and associative-graph search
+//! the graph (the support and graph signals gated to the classes the router enables
+//! expansion for, 03 §3); trust, importance, and recency re-rank the surfaced set, the
+//! latter two only when the caller supplies a clock (05 §2).
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::future::Future;
@@ -320,6 +321,7 @@ impl<E: Embedder> HybridRetriever<E> {
                     signals_run.push(Signal::Importance);
                 }
             }
+            bail_if_past(deadline)?;
             if profile.weights.recency > 0.0 {
                 let facts = rerank::recency_ranking(&self.store, &fact_set, true)?;
                 let episodes = rerank::recency_ranking(&self.store, &episode_set, false)?;

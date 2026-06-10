@@ -191,12 +191,23 @@ fn fact_with_stats(
         .expect("assert fact");
 }
 
-/// Insert a NEAR-embedded episode ingested at `ingested_at`, everything else uniform — only
+/// Insert a near-query episode ingested at `ingested_at`, everything else uniform — only
 /// the recency signal can separate two of these.
 fn episode_ingested_at(store: &Store, content: &str, ingested_at: Timestamp, seed: u128) {
+    episode_with_stats(store, content, stats(0.5, at(0), false), ingested_at, seed);
+}
+
+/// Insert a near-query episode whose `stats` carry the axis under test.
+fn episode_with_stats(
+    store: &Store,
+    content: &str,
+    stats: Stats,
+    ingested_at: Timestamp,
+    seed: u128,
+) {
     let episode = Episode {
         identity: identity_at(ingested_at),
-        stats: stats(0.5, at(0), false),
+        stats,
         content: content.to_string(),
         role: Role::User,
         captured_at: at(0),
@@ -223,6 +234,18 @@ fn decay_on() -> RetrieverConfig {
         decay_enabled: true,
         episodic_half_life_secs: HOUR_SECS,
         semantic_half_life_secs: HOUR_SECS,
+        ..RetrieverConfig::default()
+    }
+}
+
+/// Split half-lives — episodic one hour, semantic a thousand — so the two tier-pinning
+/// tests can tell WHICH half-life each kind reads: a six-hour-stale memory decays to
+/// nothing on the episodic clock and to ~0.997 of stored on the semantic one.
+fn decay_on_split() -> RetrieverConfig {
+    RetrieverConfig {
+        decay_enabled: true,
+        episodic_half_life_secs: HOUR_SECS,
+        semantic_half_life_secs: 1_000.0 * HOUR_SECS,
         ..RetrieverConfig::default()
     }
 }
@@ -465,6 +488,94 @@ async fn a_pinned_stale_memory_never_sinks() {
         pinned < fresh,
         "the pinned stale fact keeps its full importance and outranks the fresher, \
          lower-importance peer (pinned #{pinned}, fresh #{fresh})"
+    );
+}
+
+#[tokio::test]
+async fn facts_decay_on_the_semantic_half_life_not_the_episodic_one() {
+    // The tier pin, fact side: same corpus and geometry as the sink test above, but under
+    // SPLIT half-lives (episodic 1h, semantic 1000h). Facts must read the semantic clock,
+    // so the six-hour-stale fact keeps ~0.997 of its importance and its better base rank —
+    // it does NOT sink. A tier mapping inverted to the episodic clock decays it to ~0.0125
+    // and the fresh fact climbs, failing this assertion.
+    let store = store();
+    let subj = subject(&store);
+    fact_with_stats(
+        &store,
+        &subj,
+        "stale claim",
+        stats(0.8, at(0), false),
+        near(0),
+    );
+    fact_with_stats(
+        &store,
+        &subj,
+        "fresh claim",
+        stats(0.8, at(6), false),
+        near(1),
+    );
+    for i in 0..4u32 {
+        fact_with_stats(
+            &store,
+            &subj,
+            &format!("spreader claim {i}"),
+            stats(0.7 - 0.1 * f64::from(i), at(6), false),
+            near(i + 2),
+        );
+    }
+
+    let bundle = recall(
+        &retriever(store, decay_on_split()),
+        QueryClass::SingleHopFactual,
+        Some(at(6)),
+    )
+    .await;
+
+    let stale = fact_rank(&bundle, "stale claim").expect("stale fact surfaced");
+    let fresh = fact_rank(&bundle, "fresh claim").expect("fresh fact surfaced");
+    assert!(
+        stale < fresh,
+        "on the semantic clock six hours is nothing: the stale fact keeps its base rank          (stale #{stale}, fresh #{fresh})"
+    );
+}
+
+#[tokio::test]
+async fn episodes_decay_on_the_episodic_half_life() {
+    // The tier pin, episode side: the same split half-lives, an episode corpus, and the
+    // recall (temporal) class. Episodes must read the EPISODIC clock, so the six-hour-stale
+    // episode decays to ~0.0125 and the equally-important fresh one (worst base rank, with
+    // four spreaders widening the importance gap) climbs over it. Inverted to the semantic
+    // clock the stale episode keeps ~0.997 of stored and the climb never happens. All
+    // episodes ingest at T0, so recency is uniform and cannot cause the lift.
+    let store = store();
+    episode_with_stats(&store, "stale remark", stats(0.8, at(0), false), at(0), 0);
+    episode_with_stats(&store, "fresh remark", stats(0.8, at(6), false), at(0), 1);
+    for i in 0..4u32 {
+        episode_with_stats(
+            &store,
+            &format!("spreader remark {i}"),
+            stats(0.7 - 0.1 * f64::from(i), at(6), false),
+            at(0),
+            u128::from(i) + 2,
+        );
+    }
+
+    let bundle = recall(
+        &retriever(store, decay_on_split()),
+        QueryClass::Temporal,
+        Some(at(6)),
+    )
+    .await;
+
+    let fresh = episode_rank(&bundle, "fresh remark").expect("fresh episode surfaced");
+    let stale = episode_rank(&bundle, "stale remark").expect("stale episode surfaced");
+    assert!(
+        fresh < stale,
+        "on the episodic clock six hours is six half-lives: the fresh episode climbs          (fresh #{fresh}, stale #{stale})"
+    );
+    assert!(
+        episode_signals(&bundle, "stale remark").is_some_and(|s| s.contains(&Signal::Importance)),
+        "the stale episode sank under an Importance contribution, it was not dropped"
     );
 }
 
