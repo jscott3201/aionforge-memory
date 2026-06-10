@@ -68,58 +68,11 @@ recall.
 The sweep side of that seam is the pure `forget_eligible` predicate (05 §2, M5.T02): a
 strict AND across the pure axes — unpinned, decayed importance below the sweep's floor,
 trust below the trust floor, unreferenced, and at least a minimum age — where any single
-axis can only *spare* a candidate, never doom one on its own. The pin is double-enforced:
-the predicate checks it explicitly, and the shared eligibility rule absorbs it through
-the pin override, so no misconfigured floor can forget a pin. Non-finite importance or
-trust scalars spare rather than doom — the sweep never destroys on a value the
-arithmetic cannot vouch for. The graph-side axes (kind scoping, attestation, promotion
-lineage, and the reference probe itself) belong to the forgetting orchestrator, not to
-these pure functions; soft-forget is also the only revision channel that writes a bare
-`expired_at` with the status untouched, which is what keeps it distinguishable from
-supersession, contradiction, and reliability demotion at read time.
-
-On the store side, the sweep reads through two surfaces. A candidate page enumerates the
-sweep-scoped kinds (`Episode` and `Fact` only — identity memory is hard-exempt, skills
-belong to deprecate-never-delete, bad patterns are protected negative knowledge) with
-already-expired nodes filtered at the source, keyset-paginated over `(label, id)` so a
-resumed sweep visits exactly what one full scan would. The "unreferenced" axis is
-answered by a live-edge probe over a node's incoming references — the authoritative
-signal is the edges themselves, never the loss-tolerant `referenced_count` cache, and a
-closed `RELATES_TO` version no longer protects.
-
-The writes are a single flip. Soft-forget sets `expired_at` and touches nothing else —
-status stays `Active`, no edge is written or closed — and un-forget removes the key,
-restoring the byte-identical record. Each co-commits its audit row in the same
-transaction, gated on a real state transition, so a replay converges with no second
-event. The orchestrator that builds those events addresses them to the memory's own
-namespace, where its agent can see them — the store funnel commits whatever identity
-the caller minted.
-Both directions refuse a node whose status another channel owns: soft-forgetting a
-quarantined or superseded record would manufacture an ambiguous lifecycle signature,
-and un-forgetting a demotion's expiry would resurrect what governance retired —
-re-promotion owns that path. Reversibility holds until the retention prune physically
-removes the record.
-
-At read time the exclusion is one node-level gate per path. Episodes and skills already
-dropped a node-level `expired_at` from their default reads; facts gain the single new
-check in the per-candidate resolver, after the namespace gate and before the temporal
-predicate — deliberately not in the support provider (labels and edges only) and not in
-the temporal predicate (status and the ABOUT window), so soft-forget stays orthogonal to
-supersession and one mechanism owns the exclusion. `include_expired` is the one
-retention flag, honored in every temporal mode: a history read sets it to see forgotten
-records, and as-known-at semantics are untouched because the forget never moves an edge
-window.
-
-The orchestrator ties the layers together, cheapest protection first: pinned, then the
-promotion-lineage and attestation probes (governance territory and the M5.T03 boundary),
-then the pure axes through the domain predicate. A point-forget runs the same full gate
-as the sweep — a host cannot force-forget a protected memory, and instead of a silent
-no-op it learns which protection held (pinned, attested, lineage, referenced, too young,
-the kind itself, or an axis still above its floor). Un-forget takes no eligibility gate
-on the way back: restoring a memory is always safe, only the demotion shape stays
-refused. Every applied forget writes its decision basis into the audit payload — kind,
-tier, the decayed importance and trust against their floors — so the reversible window
-is explainable after the fact.
+axis can only *spare* a candidate, never doom one on its own. The decayed importance it
+reads comes from these same functions with the same tier half-lives, so rank-time and
+sweep-time aging can never disagree. Everything else about active forgetting — the
+protections, the sweep and point ops, the audit trail, and the retrieval exclusion —
+lives in [Forgetting](forgetting.md).
 
 ## The caller's clock
 
@@ -160,23 +113,5 @@ the engine nor the retrieval crate takes a config dependency. The conservative d
 forgetting risks losing rarely-but-critically-needed memories; deployments tune from
 there.
 
-On the engine, forgetting is three facade methods behind one off-switch: `forget` and
-`unforget` by id (point ops, host-cadence, caller-supplied clock) and `sweep_forgetting`
-(one candidate page per call; the report's `next` is the watermark to persist and pass
-back, and a resumed walk visits exactly what one uninterrupted scan would). With the
-policy disabled the engine builds no forgetter at all — the sweep returns an empty
-report without reading the graph, and the point ops answer `Disabled` rather than
-fabricating a "not found". The sweep enumerates the all-namespaces spine like the
-reliability sweep (forgetting is substrate maintenance, not a principal-scoped read),
-while each audit row stays agent-visible in the forgotten memory's own namespace.
-
-The forgetting sweep (M5.T02) has its own `forgetting` section — also off by default —
-carrying the floors the sweep measures candidates against: `importance_floor`,
-`trust_floor`, `min_age_secs`, the per-page `batch_cap`, and a `forget_bad_patterns`
-toggle that keeps negative knowledge protected unless a deployment opts it in. The
-section deliberately re-declares no half-lives: the sweep's decayed-importance axis
-reads the `decay` section's, so rank-time and sweep-time aging can never disagree.
-Validation when enabled keeps each floor finite in `[0.0, 1.0]` and rejects both floors
-at the ceiling together — a configuration that would make nearly every unpinned memory
-a sweep candidate. The section ships ahead of the sweep that consumes it, the same way
-the decay section landed before its retrieval wiring.
+The forgetting sweep's own configuration — floors, batch cap, and the rule that it
+re-declares no half-lives — is covered in [Forgetting](forgetting.md).
