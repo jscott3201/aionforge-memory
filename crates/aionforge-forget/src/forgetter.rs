@@ -24,6 +24,7 @@ use aionforge_domain::edges::{
 };
 use aionforge_domain::ids::Id;
 use aionforge_domain::namespace::Namespace;
+use aionforge_domain::nodes::associative::Note;
 use aionforge_domain::nodes::core::CoreBlock;
 use aionforge_domain::nodes::episodic::Episode;
 use aionforge_domain::nodes::forensic::{AuditEvent, AuditKind};
@@ -65,7 +66,7 @@ const ALL_MEMORY_LABELS: [&str; 7] = [
     Episode::LABEL,
     Fact::LABEL,
     Entity::LABEL,
-    "Note",
+    Note::LABEL,
     Skill::LABEL,
     BadPattern::LABEL,
     CoreBlock::LABEL,

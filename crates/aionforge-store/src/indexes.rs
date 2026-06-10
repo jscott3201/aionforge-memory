@@ -59,8 +59,9 @@ const SCALAR_INDEXES: &[(&str, &str, TypedIndexKind)] = &[
     ("Fact", "status", TypedIndexKind::String),
     ("Fact", "object_entity_id", TypedIndexKind::Uuid),
     ("Fact", "id", TypedIndexKind::Uuid),
-    // `id` is indexed on `Episode`, `Entity`, `Fact`, `Note`, `AuditEvent`, `Skill`, and `Agent`
-    // (not on every kind). Consolidation resolves an already-canonical subject entity's `NodeId` by its
+    // `id` is indexed on every Stats-bearing kind (`Episode`, `Fact`, `Entity`, `Note`, `Skill`,
+    // `BadPattern`, `CoreBlock`) plus `AuditEvent` and `Agent` — not on every kind.
+    // Consolidation resolves an already-canonical subject entity's `NodeId` by its
     // domain id inside the flip txn when it wires the `ABOUT`/`MENTIONS` edges (M2.T04); it dedups
     // a content-addressed summary `Note` by id so replaying an episode never writes a second copy
     // (M2.T06); and it dedups a content-addressed `AuditEvent` by id for the same replay reason
@@ -81,8 +82,11 @@ const SCALAR_INDEXES: &[(&str, &str, TypedIndexKind)] = &[
     // (`fact_node_by_id`) to stay idempotent — on a replay it finds the existing global node and
     // writes no second one. As with `Episode`, the `Fact.id UNIQUE` DDL is the commit-time
     // backstop and `nodes_with_property_eq` returns `None` (read as "absent") without an index, so
-    // the probe needs the index to mean anything. Other kinds are reached by node id directly, so
-    // they need no id index.
+    // the probe needs the index to mean anything. `BadPattern` and `CoreBlock` are addressed by
+    // domain id by the forgetting point-op resolver (`memory_by_id`, M5.T02), which must *find* a
+    // protected memory to refuse it by name — without the index the probe reads "absent" and a
+    // point op on identity memory would misreport "not found". Kinds outside this set (`Session`,
+    // `ProvenanceRecord`, `Promotion`) are reached by node id directly, so they need no id index.
     ("Entity", "id", TypedIndexKind::Uuid),
     ("Entity", "canonical_name", TypedIndexKind::String),
     ("Entity", "type", TypedIndexKind::String),
@@ -91,6 +95,8 @@ const SCALAR_INDEXES: &[(&str, &str, TypedIndexKind)] = &[
     ("Skill", "name", TypedIndexKind::String),
     ("Skill", "source_hash", TypedIndexKind::String),
     ("Note", "derived_from_episode", TypedIndexKind::Uuid),
+    ("BadPattern", "id", TypedIndexKind::Uuid),
+    ("CoreBlock", "id", TypedIndexKind::Uuid),
     ("CoreBlock", "block_kind", TypedIndexKind::String),
     ("Agent", "id", TypedIndexKind::Uuid),
     ("Agent", "status", TypedIndexKind::String),
