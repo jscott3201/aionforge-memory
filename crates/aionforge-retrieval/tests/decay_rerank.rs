@@ -308,7 +308,7 @@ fn statement_order(bundle: &RecallBundle) -> Vec<String> {
         .iter()
         .filter_map(|e| match e {
             StructuredEntry::Fact(f) => Some(f.statement.clone()),
-            StructuredEntry::Episode(_) => None,
+            _ => None,
         })
         .collect()
 }

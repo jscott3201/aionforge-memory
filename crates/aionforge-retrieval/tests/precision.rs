@@ -279,7 +279,7 @@ async fn recall(
 fn has_fact(bundle: &RecallBundle, statement: &str) -> bool {
     bundle.structured.iter().any(|e| match e {
         StructuredEntry::Fact(f) => f.statement == statement,
-        StructuredEntry::Episode(_) => false,
+        _ => false,
     })
 }
 

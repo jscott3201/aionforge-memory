@@ -16,6 +16,7 @@
 
 use aionforge_domain::ids::{Id, SerializationId};
 use aionforge_domain::namespace::Namespace;
+use aionforge_domain::nodes::core::BlockKind;
 use aionforge_domain::nodes::episodic::Role;
 use aionforge_domain::nodes::semantic::FactStatus;
 use aionforge_domain::time::Timestamp;
@@ -39,6 +40,9 @@ pub enum StructuredEntry {
     Episode(EpisodeEntry),
     /// A derived semantic fact, with its bi-temporal validity window.
     Fact(FactEntry),
+    /// An identity-tier core block (05 §4): always included by the recall pre-pass,
+    /// never ranked — identity is context, not a search hit.
+    CoreBlock(CoreBlockEntry),
 }
 
 /// A captured episode in the structured view.
@@ -101,6 +105,31 @@ pub struct FactEntry {
     pub valid_to: Option<Timestamp>,
 }
 
+/// An identity-tier core block in the structured view (05 §4).
+///
+/// Core blocks reach the bundle through the always-include pre-pass, not the ranked
+/// signals: they bypass fusion and the session-diversity cap, carry no score and no
+/// contributions, and are gated only by the reader's visible set. Identity is the
+/// standing context every recall is read against, not a hit that competes on
+/// relevance.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CoreBlockEntry {
+    /// The block's one stable domain id.
+    pub id: Id,
+    /// The content-derived serialization id that orders the rendered view.
+    pub serialization_id: SerializationId,
+    /// The block's namespace.
+    pub namespace: Namespace,
+    /// The block's category (persona / commitment / redline).
+    pub block_kind: BlockKind,
+    /// Sensitivity classification, if any.
+    pub sensitivity: Option<String>,
+    /// Writer trust.
+    pub trust: f64,
+    /// The block body.
+    pub content: String,
+}
+
 impl StructuredEntry {
     /// The content-derived serialization id that orders the rendered view.
     #[must_use]
@@ -108,6 +137,7 @@ impl StructuredEntry {
         match self {
             StructuredEntry::Episode(e) => &e.serialization_id,
             StructuredEntry::Fact(f) => &f.serialization_id,
+            StructuredEntry::CoreBlock(c) => &c.serialization_id,
         }
     }
 
@@ -117,6 +147,7 @@ impl StructuredEntry {
         match self {
             StructuredEntry::Episode(e) => &e.id,
             StructuredEntry::Fact(f) => &f.id,
+            StructuredEntry::CoreBlock(c) => &c.id,
         }
     }
 
@@ -126,6 +157,7 @@ impl StructuredEntry {
         match self {
             StructuredEntry::Episode(e) => &e.namespace,
             StructuredEntry::Fact(f) => &f.namespace,
+            StructuredEntry::CoreBlock(c) => &c.namespace,
         }
     }
 
@@ -135,35 +167,42 @@ impl StructuredEntry {
         match self {
             StructuredEntry::Episode(e) => e.trust,
             StructuredEntry::Fact(f) => f.trust,
+            StructuredEntry::CoreBlock(c) => c.trust,
         }
     }
 
-    /// The fused RRF score.
+    /// The fused RRF score. A core block reaches the bundle through the
+    /// always-include pre-pass, never the ranked signals, so it has no score — `0.0`,
+    /// the additive identity, keeps the accessor total without inventing a rank.
     #[must_use]
     pub fn score(&self) -> f64 {
         match self {
             StructuredEntry::Episode(e) => e.score,
             StructuredEntry::Fact(f) => f.score,
+            StructuredEntry::CoreBlock(_) => 0.0,
         }
     }
 
-    /// The per-signal contributions that ranked the entry.
+    /// The per-signal contributions that ranked the entry. Empty for a core block —
+    /// nothing ranked it.
     #[must_use]
     pub fn contributions(&self) -> &[Contribution] {
         match self {
             StructuredEntry::Episode(e) => &e.contributions,
             StructuredEntry::Fact(f) => &f.contributions,
+            StructuredEntry::CoreBlock(_) => &[],
         }
     }
 
-    /// The entry's rendered/searchable text — an episode's content or a fact's
-    /// statement. The body of the rendered `memory` tag and the rendered-order
-    /// tie-break (03 §6).
+    /// The entry's rendered/searchable text — an episode's content, a fact's
+    /// statement, or a core block's body. The body of the rendered `memory` tag and
+    /// the rendered-order tie-break (03 §6).
     #[must_use]
     pub fn content(&self) -> &str {
         match self {
             StructuredEntry::Episode(e) => &e.content,
             StructuredEntry::Fact(f) => &f.statement,
+            StructuredEntry::CoreBlock(c) => &c.content,
         }
     }
 }
@@ -267,8 +306,17 @@ impl RecallBundle {
                     predicate = attr_escape(&f.predicate),
                     status = status_tag(f.status),
                 )),
+                StructuredEntry::CoreBlock(c) => out.push_str(&format!(
+                    "<memory id=\"{sid}\" kind=\"core\" block_kind=\"{kind}\"",
+                    kind = block_kind_tag(c.block_kind),
+                )),
             }
-            out.push_str(&format!(" score=\"{:.4}\"", entry.score()));
+            // A core block was never ranked: it carries the always-include marker
+            // instead of a score, so a 0.0000 cannot read as "barely relevant".
+            match entry {
+                StructuredEntry::CoreBlock(_) => out.push_str(" always=\"true\""),
+                _ => out.push_str(&format!(" score=\"{:.4}\"", entry.score())),
+            }
             if verbose {
                 let via = entry
                     .contributions()
@@ -352,6 +400,15 @@ fn status_tag(status: FactStatus) -> &'static str {
     }
 }
 
+/// The spec string for a core block's category in the rendered view.
+fn block_kind_tag(kind: BlockKind) -> &'static str {
+    match kind {
+        BlockKind::Persona => "persona",
+        BlockKind::Commitment => "commitment",
+        BlockKind::Redline => "redline",
+    }
+}
+
 /// Render entries (already serialization-id ordered) into the prompt-injection view.
 ///
 /// The output is a pure function of the entries' serialization ids, roles, and
@@ -380,6 +437,18 @@ pub fn render(entries: &[StructuredEntry]) -> String {
                 attr_escape(&f.predicate),
                 status_tag(f.status),
             )),
+            // The sensitivity is a free string from the block's author, so it is
+            // `attr_escape`d like a fact predicate; the kind tag is a closed enum.
+            StructuredEntry::CoreBlock(c) => {
+                out.push_str(&format!(
+                    "<memory id=\"{sid}\" kind=\"core\" block_kind=\"{}\"",
+                    block_kind_tag(c.block_kind),
+                ));
+                if let Some(sensitivity) = &c.sensitivity {
+                    out.push_str(&format!(" sensitivity=\"{}\"", attr_escape(sensitivity)));
+                }
+                out.push_str(">\n");
+            }
         }
         out.push_str(&tag_escape(entry.content()));
         out.push('\n');

@@ -58,8 +58,9 @@ pub use aionforge_forget::{
     PointPin, PointUnforget, PointUnpin, ResidualRetention, SpareReason,
 };
 pub use aionforge_retrieval::{
-    EpisodeEntry, FactEntry, QueryClass, RecallBundle, RecallExplanation, RecallOptions,
-    RecallQuery, RetrieverConfig, Signal, SignalWeights, StructuredEntry, TemporalMode,
+    CoreBlockEntry, EpisodeEntry, FactEntry, QueryClass, RecallBundle, RecallExplanation,
+    RecallOptions, RecallQuery, RetrieverConfig, Signal, SignalWeights, StructuredEntry,
+    TemporalMode,
 };
 pub use aionforge_store::{ForgetCursor, Store, StoreConfig};
 pub use aionforge_trust::{

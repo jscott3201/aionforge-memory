@@ -97,6 +97,23 @@ Reads are scoped by the principal's visible set, like every read surface. A bloc
 outside the principal's view reads as absent, indistinguishable from one that does
 not exist.
 
+## Recall: identity is always in context
+
+Every recall prepends the live core blocks the reader can see, ahead of the ranked
+results. They do not compete on relevance — identity is the standing context a
+recall is read against, not a search hit — so they bypass fusion and the
+session-diversity cap, carry an `always="true"` marker instead of a score, and are
+ordered by their content-derived serialization id so the rendered view stays
+byte-identical across calls.
+
+The prefix counts toward the requested limit (the ranked fill shrinks to make room)
+but is never itself capped: a deployment with more identity than limit still gets
+all of it rather than a silent truncation of a redline. The same visible-set rule
+gates the prefix as every other read, and a retired or soft-forgotten block is
+simply not live, so it does not surface. Rendered core blocks sit inside the same
+escaped `recalled-memory-context` wrapper as every recalled memory — identity
+content is still third-party data to the model reading it.
+
 ## Configuration
 
 ```toml

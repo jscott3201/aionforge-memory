@@ -21,7 +21,8 @@ use aionforge_domain::authz::{Authorizer, DefaultAuthorizer, VisibleSet};
 use aionforge_domain::contracts::{Embedder, Retriever};
 use aionforge_domain::edges::About;
 use aionforge_domain::embedding::Embedding;
-use aionforge_domain::ids::SerializationId;
+use aionforge_domain::ids::{ContentHash, SerializationId};
+use aionforge_domain::nodes::core::CoreBlock;
 use aionforge_domain::nodes::episodic::{Episode, Role};
 use aionforge_domain::nodes::semantic::Fact;
 use aionforge_store::{
@@ -29,7 +30,8 @@ use aionforge_store::{
 };
 
 use crate::bundle::{
-    EpisodeEntry, FactEntry, RecallBundle, RecallExplanation, StageTimings, StructuredEntry, render,
+    CoreBlockEntry, EpisodeEntry, FactEntry, RecallBundle, RecallExplanation, StageTimings,
+    StructuredEntry, render,
 };
 use crate::error::RetrievalError;
 use crate::fusion::{DEFAULT_RRF_K, FusedCandidate, WeightedRanking, fuse};
@@ -45,6 +47,9 @@ use crate::temporal::{fact_passes_temporal, fact_serialization_id};
 
 /// The serialization-id kind tag for an episode (02 §10).
 const EPISODE_KIND_TAG: &str = "episode";
+
+/// The serialization-id kind tag for a core block (02 §10, 05 §4).
+const CORE_KIND_TAG: &str = "core";
 
 /// The hard ceiling on [`RetrieverConfig::support_expansion_depth`] — the "bounded" half
 /// of the M3.T02 depth/fan-out knob. v1 expands a single `SUPPORTS` hop; deeper transitive
@@ -347,11 +352,23 @@ impl<E: Embedder> HybridRetriever<E> {
         let assemble_started = Instant::now();
         let fused = fuse(&rankings, DEFAULT_RRF_K);
         let visible = self.authorizer.visible_namespaces(&query.principal);
-        let selection = self.select(&query, &visible, fused, &fact_nodes)?;
+        // The identity pre-pass (05 §4): every live core block in the reader's
+        // visible set is prepended ahead of the ranked results — identity is the
+        // standing context a recall is read against, not a hit that competes on
+        // relevance, so it bypasses fusion and the diversity cap. The blocks count
+        // toward the requested limit (the ranked fill shrinks to make room) but are
+        // never themselves capped: a deployment with more identity than limit still
+        // gets all of it, honestly, rather than a silent truncation of a redline.
+        let core = self.core_block_entries(&visible)?;
+        let ranked_budget = query.limit.saturating_sub(core.len());
+        let selection = self.select(&query, &visible, fused, &fact_nodes, ranked_budget)?;
 
-        // 4. Structured view stays in score order; the rendered view re-sorts by
-        //    serialization id so the same set renders byte-identically (03 §6).
-        let structured = selection.entries;
+        // 4. Structured view stays in score order behind the identity prefix; the
+        //    rendered view re-sorts by serialization id so the same set renders
+        //    byte-identically (03 §6).
+        let considered = selection.considered + core.len();
+        let mut structured = core;
+        structured.extend(selection.entries);
         let mut rendered_order = structured.clone();
         // Explicit tie-break by content (itself content-derived, so stable) for the
         // rare case of two entries sharing a serialization id; never by the mint-time
@@ -369,7 +386,7 @@ impl<E: Embedder> HybridRetriever<E> {
             weights: profile.weights,
             signals_run,
             embedder_available,
-            candidates_considered: selection.considered,
+            candidates_considered: considered,
             returned: structured.len(),
             timings_ms: StageTimings {
                 classify: classify_ms,
@@ -398,6 +415,7 @@ impl<E: Embedder> HybridRetriever<E> {
         visible: &VisibleSet,
         fused: Vec<FusedCandidate>,
         fact_nodes: &HashSet<NodeId>,
+        limit: usize,
     ) -> Result<Selection, RetrievalError> {
         let cap = query.options.session_diversity_cap;
         let mut primary: Vec<StructuredEntry> = Vec::new();
@@ -406,7 +424,7 @@ impl<E: Embedder> HybridRetriever<E> {
         let mut considered = 0usize;
 
         for candidate in fused {
-            if primary.len() >= query.limit {
+            if primary.len() >= limit {
                 break;
             }
             if fact_nodes.contains(&candidate.node) {
@@ -436,9 +454,9 @@ impl<E: Embedder> HybridRetriever<E> {
         }
 
         // Under-filled: top up from the spilled overflow, in score order.
-        if primary.len() < query.limit {
+        if primary.len() < limit {
             for entry in spill {
-                if primary.len() >= query.limit {
+                if primary.len() >= limit {
                     break;
                 }
                 primary.push(entry);
@@ -449,6 +467,34 @@ impl<E: Embedder> HybridRetriever<E> {
             entries: primary,
             considered,
         })
+    }
+
+    /// The always-include identity pre-pass (05 §4): every live core block in the
+    /// reader's visible set, serialization-id ordered so the prefix is deterministic.
+    /// Liveness is the only lifecycle gate — a retired or soft-forgotten block is
+    /// already absent from the live scan, and identity is current by definition, so
+    /// `include_expired` (a history flag for the ranked tiers) does not resurrect one
+    /// here.
+    fn core_block_entries(
+        &self,
+        visible: &VisibleSet,
+    ) -> Result<Vec<StructuredEntry>, RetrievalError> {
+        let mut entries: Vec<StructuredEntry> = self
+            .store
+            .live_core_blocks()?
+            .into_iter()
+            .filter(|block| visible.contains(&block.identity.namespace))
+            .map(|block| StructuredEntry::CoreBlock(core_block_entry(&block)))
+            .collect();
+        // The same content-derived order (with the same content tie-break) as the
+        // rendered view, never the mint-time id, so the prefix is stable across a
+        // rebuild (03 §6).
+        entries.sort_by(|a, b| {
+            a.serialization_id()
+                .cmp(b.serialization_id())
+                .then_with(|| a.content().cmp(b.content()))
+        });
+        Ok(entries)
     }
 
     /// The lexical fact ranking, scoped by `current` (03 §1, §5).
@@ -742,6 +788,26 @@ fn episode_entry(episode: &Episode, candidate: &FusedCandidate) -> EpisodeEntry 
         score: candidate.score,
         contributions: candidate.contributions.clone(),
         content: episode.content.clone(),
+    }
+}
+
+/// Build a core-block entry for the identity pre-pass (05 §4). The serialization id
+/// derives from the block's current content — like an episode's — so an edit moves the
+/// block's place in the rendered order exactly when its words change.
+fn core_block_entry(block: &CoreBlock) -> CoreBlockEntry {
+    CoreBlockEntry {
+        id: block.identity.id,
+        serialization_id: SerializationId::derive(
+            CORE_KIND_TAG,
+            ContentHash::of(block.content.as_bytes())
+                .as_str()
+                .as_bytes(),
+        ),
+        namespace: block.identity.namespace.clone(),
+        block_kind: block.block_kind,
+        sensitivity: block.sensitivity.clone(),
+        trust: block.stats.trust,
+        content: block.content.clone(),
     }
 }
 

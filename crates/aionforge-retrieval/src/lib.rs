@@ -23,7 +23,8 @@ mod temporal;
 
 pub use aionforge_domain::authz::Principal;
 pub use bundle::{
-    EpisodeEntry, FactEntry, RecallBundle, RecallExplanation, StageTimings, StructuredEntry, render,
+    CoreBlockEntry, EpisodeEntry, FactEntry, RecallBundle, RecallExplanation, StageTimings,
+    StructuredEntry, render,
 };
 pub use error::RetrievalError;
 pub use fusion::{Contribution, DEFAULT_RRF_K, FusedCandidate, WeightedRanking, fuse};
