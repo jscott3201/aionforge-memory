@@ -15,6 +15,7 @@ mod audit_read;
 mod bad_pattern;
 mod capture_write;
 mod catalog;
+mod compact;
 mod config;
 mod consolidation;
 mod convert;
@@ -50,6 +51,7 @@ pub use attestation::{AttestWriteIds, AttesterRecord};
 pub use audit_read::{AuditCursor, AuditHistory, MAX_AUDIT_PAGE};
 pub use capture_write::CaptureWriteIds;
 pub use catalog::SCHEMA_VERSION;
+pub use compact::{CompactReport, CompactionPressure};
 pub use config::{
     DEFAULT_EMBEDDING_DIMENSION, StoreConfig, default_data_dir, default_data_dir_checked,
 };
