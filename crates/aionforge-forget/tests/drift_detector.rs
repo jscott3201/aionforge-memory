@@ -306,9 +306,18 @@ fn scores_movement_away_from_the_anchor_and_only_that() {
         sample_size: 4,
     };
     match detector.assess_block(&block, &live, &away) {
-        BlockAssessment::Scored { score, crossed } => {
+        BlockAssessment::Scored {
+            score,
+            crossed,
+            baselined_at,
+        } => {
             assert!((score - 1.0).abs() < 1e-9, "full drift scores 1.0: {score}");
             assert!(crossed, "1.0 crosses the 0.15 default threshold");
+            assert_eq!(
+                baselined_at,
+                at(6),
+                "the score names the baseline epoch it measured against"
+            );
         }
         other => panic!("expected a score, got {other:?}"),
     }
@@ -322,7 +331,8 @@ fn scores_movement_away_from_the_anchor_and_only_that() {
         detector.assess_block(&block, &live, &steady),
         BlockAssessment::Scored {
             score: 0.0,
-            crossed: false
+            crossed: false,
+            baselined_at: at(6),
         }
     );
 }

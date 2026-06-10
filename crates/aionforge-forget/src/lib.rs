@@ -25,7 +25,8 @@ mod policy;
 
 pub use baseline::DriftBaseline;
 pub use detector::{
-    BaselineNeed, BlockAssessment, CentroidOutcome, DriftDetector, drift_warning_id,
+    BaselineNeed, BlockAssessment, CentroidOutcome, DriftDetector, DriftSweepReport,
+    drift_warning_id,
 };
 pub use eraser::{EraseReport, Eraser, PointErase, ResidualRetention};
 pub use forgetter::{

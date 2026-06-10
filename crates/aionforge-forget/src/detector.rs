@@ -15,13 +15,17 @@
 //! every transient gap into an alarm storm, and an operator trained to ignore drift
 //! warnings is the real security regression.
 
+use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::sync::Arc;
 
+use aionforge_domain::blocks::Identity;
 use aionforge_domain::drift::{behavior_centroid, crosses_threshold, drift_score};
 use aionforge_domain::embedding::{EmbedderModel, Embedding};
 use aionforge_domain::ids::Id;
 use aionforge_domain::namespace::Namespace;
 use aionforge_domain::nodes::core::CoreBlock;
+use aionforge_domain::nodes::forensic::{AuditEvent, AuditKind};
 use aionforge_domain::time::{Timestamp, instant_before, to_utc};
 use aionforge_store::{Store, StoreError};
 
@@ -69,6 +73,9 @@ pub enum BlockAssessment {
         score: f64,
         /// Whether the score crosses the policy threshold (a warning is due).
         crossed: bool,
+        /// The baseline epoch the score was measured against — the anti-flap
+        /// component of [`drift_warning_id`].
+        baselined_at: Timestamp,
     },
     /// Baseline attested before the namespace had observed behavior
     /// (`behavior_centroid` is null): nothing to drift from, scores `0.0`, and the
@@ -206,7 +213,165 @@ impl DriftDetector {
         BlockAssessment::Scored {
             score,
             crossed: crosses_threshold(score, self.policy.drift_threshold),
+            baselined_at: baseline.baselined_at,
         }
+    }
+
+    /// Sweep one page of live core blocks against the namespace behavior they anchor
+    /// (05 §1): assess each, commit a [`AuditKind::DriftWarning`] row for every
+    /// crossing, and tally. The audit log is the outbox — a warning row is
+    /// content-addressed by [`drift_warning_id`], so re-sweeping the same drifting
+    /// block against the same baseline epoch dedups to a no-op and
+    /// [`DriftSweepReport::warnings_emitted`] reads back as zero.
+    ///
+    /// The page walks the **all-namespaces L0 spine** in ascending block-id order
+    /// (drift is substrate maintenance, the forgetting sweep's convention); each
+    /// warning is committed in the block's *own* namespace, agent-visible through the
+    /// scoped audit reads. Each namespace's centroid is computed once per page.
+    /// Detection never blocks a write and never mutates a block (05 §1) — the only
+    /// writes here are audit rows.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the block enumeration, an episode read, or a warning
+    /// commit fails.
+    pub fn sweep(
+        &self,
+        live_model: &EmbedderModel,
+        after: Option<&Id>,
+        limit: usize,
+        now: &Timestamp,
+    ) -> Result<DriftSweepReport, StoreError> {
+        if limit == 0 {
+            return Ok(DriftSweepReport::default());
+        }
+        let mut blocks = self.store.live_core_blocks()?;
+        blocks.sort_by_key(|block| block.identity.id);
+        let page: Vec<&CoreBlock> = blocks
+            .iter()
+            .filter(|block| after.is_none_or(|cursor| block.identity.id > *cursor))
+            .take(limit)
+            .collect();
+        let mut report = DriftSweepReport {
+            next: page.last().map(|block| block.identity.id),
+            ..DriftSweepReport::default()
+        };
+        let mut centroids: HashMap<Namespace, CentroidOutcome> = HashMap::new();
+        for block in page {
+            let namespace = &block.identity.namespace;
+            let current = match centroids.entry(namespace.clone()) {
+                Entry::Occupied(entry) => entry.into_mut(),
+                Entry::Vacant(entry) => {
+                    entry.insert(self.behavior_centroid_now(namespace, live_model, now)?)
+                }
+            };
+            report.blocks_scanned += 1;
+            match self.assess_block(block, live_model, current) {
+                BlockAssessment::Scored {
+                    score,
+                    crossed,
+                    baselined_at,
+                } => {
+                    report.max_score = Some(report.max_score.unwrap_or(0.0).max(score));
+                    if crossed {
+                        let sample_size = match current {
+                            CentroidOutcome::Centroid { sample_size, .. } => *sample_size,
+                            CentroidOutcome::InsufficientSample { .. } => 0,
+                        };
+                        let warning = warning_event(
+                            block,
+                            score,
+                            self.policy.drift_threshold,
+                            &baselined_at,
+                            sample_size,
+                            now,
+                        );
+                        let (_, created) = self.store.commit_audit_created(&warning)?;
+                        if created {
+                            report.warnings_emitted += 1;
+                        }
+                    }
+                }
+                BlockAssessment::AwaitingFirstBehavior => report.awaiting_first_behavior += 1,
+                BlockAssessment::NeedsBaseline(_) => {
+                    report.baselines_needed.push(block.identity.id);
+                }
+                BlockAssessment::StaleModel => report.blocks_stale_model += 1,
+                BlockAssessment::InsufficientSample { .. }
+                | BlockAssessment::InvalidBaseline { .. } => report.blocks_skipped += 1,
+            }
+        }
+        Ok(report)
+    }
+}
+
+/// One [`DriftDetector::sweep`] page's tally.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct DriftSweepReport {
+    /// Live blocks visited on this page; every block lands in exactly one of the
+    /// buckets below or contributed to `max_score`.
+    pub blocks_scanned: usize,
+    /// Blocks whose baseline predates any observed behavior (genesis seed): scored
+    /// `0.0`, armed only by an attested rebaseline once behavior exists.
+    pub awaiting_first_behavior: usize,
+    /// Blocks skipped for a too-small or degenerate behavior sample, or a stored
+    /// baseline that does not parse.
+    pub blocks_skipped: usize,
+    /// Blocks whose baseline lives in a different embedding space than the live
+    /// embedder — never compared, awaiting an attested rebaseline under the new
+    /// model.
+    pub blocks_stale_model: usize,
+    /// Blocks with no usable baseline (never seeded, or content moved since
+    /// attestation) — the actionable list for attesters to co-sign baselines over.
+    pub baselines_needed: Vec<Id>,
+    /// Warning rows **newly committed** on this page; replays of an already-warned
+    /// `(block, baseline epoch, decile)` are excluded.
+    pub warnings_emitted: usize,
+    /// The highest score observed across scored blocks, for the operator's gauge.
+    /// The crossing decision is always per-block, never on this aggregate.
+    pub max_score: Option<f64>,
+    /// The watermark to pass as `after` on the next call: the last block id this
+    /// page visited, or `None` when the page was empty (the scan completed).
+    /// Block ids are not time-ordered, so a recurring host must still start fresh
+    /// (`after = None`) each full pass to see newly created blocks.
+    pub next: Option<Id>,
+}
+
+/// The substrate actor recorded on drift warnings: detection runs at substrate
+/// authority on the host's cadence and takes no principal, like the forgetter.
+fn drift_actor() -> Id {
+    Id::from_content_hash(b"aionforge/drift-detector-v1")
+}
+
+/// Build the warning row for one crossing: identified by [`drift_warning_id`]
+/// (block × baseline epoch × score decile), committed in the block's own namespace
+/// with the score's full context in the payload.
+fn warning_event(
+    block: &CoreBlock,
+    score: f64,
+    threshold: f64,
+    baselined_at: &Timestamp,
+    sample_size: usize,
+    now: &Timestamp,
+) -> AuditEvent {
+    AuditEvent {
+        identity: Identity {
+            id: drift_warning_id(&block.identity.id, baselined_at, score),
+            ingested_at: now.clone(),
+            namespace: block.identity.namespace.clone(),
+            expired_at: None,
+        },
+        kind: AuditKind::DriftWarning,
+        subject_id: block.identity.id,
+        actor_id: drift_actor(),
+        payload: serde_json::json!({
+            "block_kind": block.block_kind,
+            "score": score,
+            "threshold": threshold,
+            "baselined_at": to_utc(baselined_at),
+            "sample_size": sample_size,
+        }),
+        signature: String::new(),
+        occurred_at: now.clone(),
     }
 }
 

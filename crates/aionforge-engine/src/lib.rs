@@ -23,7 +23,7 @@ use aionforge_domain::contracts::{
 };
 use aionforge_domain::namespace::Namespace;
 use aionforge_domain::time::Timestamp;
-use aionforge_forget::{Eraser, Forgetter};
+use aionforge_forget::{DriftDetector, Eraser, Forgetter};
 use aionforge_retrieval::HybridRetriever;
 use aionforge_security::{CaptureFilter, SecurityError};
 use aionforge_trust::{
@@ -54,8 +54,9 @@ pub use aionforge_domain::authz::{
     AuthorizationError, Authorizer, DefaultAuthorizer, DenyReason, Principal, VisibleSet,
 };
 pub use aionforge_forget::{
-    EraseReport, ErasurePolicy, ForgetSweepPage, ForgettingPolicy, PointErase, PointForget,
-    PointPin, PointUnforget, PointUnpin, ResidualRetention, SpareReason,
+    DriftBaseline, DriftPolicy, DriftSweepReport, EraseReport, ErasurePolicy, ForgetSweepPage,
+    ForgettingPolicy, PointErase, PointForget, PointPin, PointUnforget, PointUnpin,
+    ResidualRetention, SpareReason,
 };
 pub use aionforge_retrieval::{
     CoreBlockEntry, EpisodeEntry, FactEntry, QueryClass, RecallBundle, RecallExplanation,
@@ -72,6 +73,7 @@ pub use aionforge_trust::{
 
 mod audit;
 mod core_block;
+mod drift_sweep;
 mod erase;
 mod forget_sweep;
 mod pin;
@@ -79,6 +81,7 @@ mod reliability_sweep;
 pub use aionforge_store::{AuditCursor, MAX_AUDIT_PAGE};
 pub use audit::{AuditPage, AuditRecord, AuditVerification};
 pub use core_block::{CoreBlockCreate, CoreBlockDraft};
+pub use drift_sweep::BaselineComputation;
 pub use reliability_sweep::D1SweepReport;
 
 /// How the facade configures the capture and retrieval paths.
@@ -110,6 +113,13 @@ pub struct MemoryConfig {
     /// decay section's half-lives into this [`ForgettingPolicy`] — the same indirection as the
     /// reliability policy.
     pub forgetting: ForgettingPolicy,
+    /// Drift-detection policy (05 §1, M5.T05). Off by default; when enabled the engine
+    /// builds the drift detector behind [`Memory::sweep_drift`] and
+    /// [`Memory::compute_drift_baseline`]. The host maps `aionforge-config`'s
+    /// `DriftConfig` into this [`DriftPolicy`] field-for-field — the same indirection
+    /// as the forgetting policy. Detection never blocks a write: its only outputs are
+    /// `drift_warning` audit rows and the sweep report.
+    pub drift: DriftPolicy,
     /// Right-to-erasure policy (05 §3). Off by default, and **independently of
     /// `forgetting`**: the reversible sweep and the one irreversible path are separate
     /// authorities with separate switches, so a host can run either without the other.
@@ -218,6 +228,8 @@ pub struct Memory<E> {
     forgetter: Option<Forgetter>,
     /// The right-to-erasure orchestrator, present only when erasure is enabled (05 §3).
     eraser: Option<Eraser>,
+    /// The drift detector, present only when drift detection is enabled (05 §1, M5.T05).
+    drift_detector: Option<DriftDetector>,
     /// The core-block edit gate (05 §4, M5.T04). **Always constructed** — identity
     /// integrity has no off-switch, so unlike every `Option<_>` sibling there is no
     /// disabled state to represent; the all-default policy is the spec's floor.
@@ -274,6 +286,7 @@ impl<E: Embedder> Memory<E> {
         config.promotion.validate().map_err(EngineError::Config)?;
         config.reliability.validate().map_err(EngineError::Config)?;
         config.forgetting.validate().map_err(EngineError::Config)?;
+        config.drift.validate().map_err(EngineError::Config)?;
         config.erasure.validate().map_err(EngineError::Config)?;
         config.core_block.validate().map_err(EngineError::Config)?;
         validate_attestation_skew(config.security.clock_skew_tolerance_ms)?;
@@ -375,6 +388,15 @@ impl<E: Embedder> Memory<E> {
         } else {
             None
         };
+        // Drift detection (05 §1, M5.T05): when on, build the detector over the store.
+        // The `Option` is the single off-switch, mirroring its siblings — off ⇒ the
+        // sweep reports empty, no warning row is committed, and the baseline helper
+        // answers `Disabled`.
+        let drift_detector = if config.drift.enabled {
+            Some(DriftDetector::new(Arc::clone(&store), config.drift.clone()))
+        } else {
+            None
+        };
         // Substrate audit signing (06 §6, M4.T06): provision custody + the keyring anchor,
         // install the commit-time signer on the store, and keep the keyring-anchored
         // verifier for the read facade — one branch, one off-switch. The genesis event is
@@ -419,6 +441,7 @@ impl<E: Embedder> Memory<E> {
             reliability_scorer,
             forgetter,
             eraser,
+            drift_detector,
             core_editor,
             audit_verifier,
         })
@@ -874,6 +897,13 @@ pub enum EngineError {
     /// The optional trust-scoring path failed (a store read or an off-cursor cache write, 06 §5).
     #[error("reliability scoring failed")]
     Reliability(#[from] ReliabilityError),
+
+    /// The optional drift path failed outside the store seam — today only embedding
+    /// the block content for [`Memory::compute_drift_baseline`]. Store faults flow
+    /// through [`EngineError::Store`], and every can't-score condition is a named
+    /// skip in the report or a [`BaselineComputation`] variant, never an error.
+    #[error("drift detection failed: {0}")]
+    Drift(String),
 
     /// The default capture privacy filter could not be built.
     #[error("could not initialize the capture filter: {0}")]

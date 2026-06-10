@@ -91,18 +91,30 @@ impl Store {
     /// # Errors
     /// Returns [`StoreError`] if translating the event or the commit fails.
     pub fn commit_audit(&self, audit: &AuditEvent) -> Result<NodeId, StoreError> {
+        Ok(self.commit_audit_created(audit)?.0)
+    }
+
+    /// [`Store::commit_audit`], also answering whether this call **created** the row —
+    /// `false` means a content-identical event (same content-addressed `AuditEvent.id`)
+    /// was already committed and this call deduplicated to it. The drift sweep counts
+    /// `warnings_emitted` over newly created rows only, so a re-scan over already-warned
+    /// ground reads back as zero (the D1 sweep's replays-excluded convention).
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if translating the event or the commit fails.
+    pub fn commit_audit_created(&self, audit: &AuditEvent) -> Result<(NodeId, bool), StoreError> {
         let mut txn = self.graph().begin_write();
-        let id = {
+        let ensured = {
             let mut mutator = txn.mutator();
             // Content-addressed dedup against the in-txn working graph, under the write lock: a
             // replayed event (same `AuditEvent.id`) reuses the existing node, so a deterministic
             // retry — e.g. a refused attestation re-sent verbatim — never trips the `id` UNIQUE
             // constraint and surfaces a spurious store error. `ensure_event` also reconciles the
             // stored signature with the incoming copy's (the funnel for every audit author).
-            audit::ensure_event(&mut mutator, audit, self.audit_signer())?.node
+            audit::ensure_event(&mut mutator, audit, self.audit_signer())?
         };
         txn.commit()?;
-        Ok(id)
+        Ok((ensured.node, ensured.created))
     }
 
     /// Read a provenance record back by its node id (for tests and inspection).
