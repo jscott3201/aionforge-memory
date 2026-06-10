@@ -116,6 +116,9 @@ pub enum PointForget {
     NotFound,
     /// Protected; the reason names the axis or exemption that held.
     Protected(SpareReason),
+    /// Forgetting is not enabled; nothing was read or written. The honest answer to a
+    /// host calling a switched-off surface — never a fabricated "not found".
+    Disabled,
 }
 
 /// The outcome of a point-unforget.
@@ -129,6 +132,8 @@ pub enum PointUnforget {
     NotFound,
     /// The expiry belongs to another channel (the demotion shape); refused.
     Protected(SpareReason),
+    /// Forgetting is not enabled; nothing was read or written.
+    Disabled,
 }
 
 /// One swept page's tally.
