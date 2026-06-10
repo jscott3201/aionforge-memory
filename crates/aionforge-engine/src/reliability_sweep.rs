@@ -69,8 +69,13 @@ impl<E: Embedder> Memory<E> {
     /// **Host-driven cadence.** Call it on a timer, at session end, or page-to-empty in a
     /// loop, like [`Memory::distill`]; `limit` is clamped to [`crate::MAX_AUDIT_PAGE`].
     /// Persist [`D1SweepReport::next`] whenever it is `Some` and pass it back as `after`; a
-    /// host that always passes `None` is still correct, just pays the rescan. Returns
-    /// [`D1SweepReport::default`] without reading the log when trust scoring is off.
+    /// host that always passes `None` is still correct, just pays the rescan. The watermark
+    /// resume is exact but not complete under clock regression: rows order by the
+    /// host-supplied `occurred_at`, so a row backdated behind the persisted watermark is
+    /// invisible to every incremental resume — a watermark-only host must still schedule an
+    /// occasional full rescan, which is the heal for that window, not merely a fallback for a
+    /// lost cursor. Returns [`D1SweepReport::default`] without reading the log when trust
+    /// scoring is off.
     ///
     /// # Errors
     /// [`EngineError::Store`] if the audit page or a victim-fact read fails;
@@ -227,11 +232,12 @@ mod tests {
         row.actor_id = victim;
         assert!(!is_contradiction_quarantine(&row));
         row.actor_id = actor;
-        // Missing object keys.
-        row.payload["victim_object"] = serde_json::Value::Null;
+        // The presence check is not a scalar validator: the emitter's real wire shape for an
+        // object is the adjacently-tagged ObjectValue form, and it classifies the same.
+        row.payload["victim_object"] = serde_json::json!({"kind": "string", "value": "down"});
         assert!(
             is_contradiction_quarantine(&row),
-            "explicit null still present"
+            "the emitter's tagged object shape classifies"
         );
         let mut gone = row.payload.as_object().expect("object").clone();
         gone.remove("survivor_object");

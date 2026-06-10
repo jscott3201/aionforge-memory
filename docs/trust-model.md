@@ -119,7 +119,11 @@ event, never two, and re-sweeping any range is a no-op.
 
 The sweep runs on whatever cadence the host chooses — a timer, session end, a maintenance tool —
 and hands back a watermark cursor naming the last row it scanned. Persist it and pass it back to
-resume exactly there; lose it and a full rescan is safe, just not free. The sweep reads the audit
+resume exactly there; lose it and a full rescan is safe, just not free. One caveat on the resume:
+rows order by the host-supplied clock, so if that clock ever regresses, a new quarantine can land
+*behind* an already-persisted watermark, where no incremental resume will see it. A host that
+resumes from the watermark should still run an occasional full rescan — that rescan is the heal
+for the clock-regression window, not just the recovery for a lost cursor. The sweep reads the audit
 log across all namespaces by design: a quarantine lives in its victim's namespace, and reliability
 is a global property of the agent, so a namespace-scoped read would quietly skip decays an agent
 has earned. Counts in the sweep's report are true new-event counts — a re-scan over
