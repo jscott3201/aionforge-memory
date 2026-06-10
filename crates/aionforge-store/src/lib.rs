@@ -19,6 +19,7 @@ mod compact;
 mod config;
 mod consolidation;
 mod convert;
+mod core_block;
 mod dedup;
 mod distill;
 mod entity;
