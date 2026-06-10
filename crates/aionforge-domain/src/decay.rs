@@ -111,7 +111,7 @@ pub fn is_eligible(is_pinned: bool, decayed: f64, floor: f64) -> bool {
     is_pinned || decayed >= floor
 }
 
-/// The pure, per-candidate measurements of the forget-eligibility axes (05 §3, M5.T02).
+/// The pure, per-candidate measurements of the forget-eligibility axes (05 §2, M5.T02).
 ///
 /// Everything here is a scalar the caller has already resolved — the decayed importance
 /// comes out of [`decayed_importance`] with the candidate's own tier half-life, `trust` is
@@ -135,7 +135,7 @@ pub struct ForgetAxes {
     pub age_secs: i64,
 }
 
-/// The configured floors a candidate is measured against (05 §3, M5.T02).
+/// The configured floors a candidate is measured against (05 §2, M5.T02).
 ///
 /// These arrive from the engine's forgetting policy; validation of their ranges happens at
 /// the configuration boundary, not here.
@@ -151,7 +151,7 @@ pub struct ForgetFloors {
     pub min_age_secs: i64,
 }
 
-/// Whether a memory is eligible for the soft-forget (05 §3, M5.T02): a strict AND over the
+/// Whether a memory is eligible for the soft-forget (05 §2, M5.T02): a strict AND over the
 /// pure axes, where any single axis can only **spare** a candidate, never doom one on its
 /// own.
 ///
@@ -172,7 +172,7 @@ pub struct ForgetFloors {
 ///
 /// | channel | node `expired_at` | node `status` | edge writes |
 /// |---|---|---|---|
-/// | soft-forget (05 §3, M5.T02) | set | untouched (stays `Active`) | none |
+/// | soft-forget (05 §2, M5.T02) | set | untouched (stays `Active`) | none |
 /// | supersession (04, M2.T05) | untouched | `Superseded` | `ABOUT` window closed |
 /// | contradiction (04, M2.T05) | untouched | `Quarantined` | `CONTRADICTS` linked |
 /// | reliability demotion (06, M4.T04) | set | `Quarantined`, paired | lineage edge |
