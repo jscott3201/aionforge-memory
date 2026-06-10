@@ -87,6 +87,17 @@ answered by a live-edge probe over a node's incoming references — the authorit
 signal is the edges themselves, never the loss-tolerant `referenced_count` cache, and a
 closed `RELATES_TO` version no longer protects.
 
+The writes are a single flip. Soft-forget sets `expired_at` and touches nothing else —
+status stays `Active`, no edge is written or closed — and un-forget removes the key,
+restoring the byte-identical record. Each co-commits its audit row in the same
+transaction, gated on a real state transition, so a replay converges with no second
+event, and the row lands in the memory's own namespace where its agent can see it.
+Both directions refuse a node whose status another channel owns: soft-forgetting a
+quarantined or superseded record would manufacture an ambiguous lifecycle signature,
+and un-forgetting a demotion's expiry would resurrect what governance retired —
+re-promotion owns that path. Reversibility holds until the retention prune physically
+removes the record.
+
 ## The caller's clock
 
 There is no ambient clock in the retrieval path (03 §6). The importance and recency
