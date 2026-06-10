@@ -150,6 +150,16 @@ the engine nor the retrieval crate takes a config dependency. The conservative d
 forgetting risks losing rarely-but-critically-needed memories; deployments tune from
 there.
 
+On the engine, forgetting is three facade methods behind one off-switch: `forget` and
+`unforget` by id (point ops, host-cadence, caller-supplied clock) and `sweep_forgetting`
+(one candidate page per call; the report's `next` is the watermark to persist and pass
+back, and a resumed walk visits exactly what one uninterrupted scan would). With the
+policy disabled the engine builds no forgetter at all — the sweep returns an empty
+report without reading the graph, and the point ops answer `Disabled` rather than
+fabricating a "not found". The sweep enumerates the all-namespaces spine like the
+reliability sweep (forgetting is substrate maintenance, not a principal-scoped read),
+while each audit row stays agent-visible in the forgotten memory's own namespace.
+
 The forgetting sweep (M5.T02) has its own `forgetting` section — also off by default —
 carrying the floors the sweep measures candidates against: `importance_floor`,
 `trust_floor`, `min_age_secs`, the per-page `batch_cap`, and a `forget_bad_patterns`

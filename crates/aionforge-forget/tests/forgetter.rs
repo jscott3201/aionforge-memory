@@ -13,6 +13,7 @@ use aionforge_domain::namespace::Namespace;
 use aionforge_domain::nodes::agent::{Agent, AgentStatus, TrustScores};
 use aionforge_domain::nodes::episodic::{ConsolidationState, Episode, Role};
 use aionforge_domain::nodes::forensic::{AuditEvent, AuditKind};
+use aionforge_domain::nodes::procedural::{BadPattern, Skill};
 use aionforge_domain::nodes::semantic::{Entity, Fact, FactStatus};
 use aionforge_domain::time::Timestamp;
 use aionforge_domain::value::ObjectValue;
@@ -264,6 +265,10 @@ fn the_sweep_forgets_only_all_axes_low_and_spares_every_protection() {
         report.forgotten, 3,
         "exactly the all-axes-low, unprotected candidates"
     );
+    assert_eq!(
+        report.spared, 9,
+        "every protection tallied — the quarantined fact through the store's status refusal"
+    );
     assert!(report.next.is_none());
 
     for (name, id, expect_forgotten) in [
@@ -317,6 +322,25 @@ fn the_sweep_forgets_only_all_axes_low_and_spares_every_protection() {
             .events
             .len(),
         3
+    );
+
+    // The status refusal is a named outcome, not a silent skip: a point op on the
+    // quarantined fact reports StatusOwned — another revision channel owns that node —
+    // and leaves no audit row, because nothing flipped.
+    assert_eq!(
+        forgetter
+            .forget(&contradicted.identity.id, &now())
+            .expect("call"),
+        PointForget::Protected(SpareReason::StatusOwned)
+    );
+    assert_eq!(
+        store
+            .audit_by_kind(AuditKind::Forget, None, 50)
+            .expect("audit")
+            .events
+            .len(),
+        3,
+        "a refused forget audits nothing"
     );
 }
 
@@ -424,4 +448,70 @@ fn point_ops_gate_report_and_round_trip() {
         .expect("audit")
         .events[0];
     assert_eq!(row.payload["reason"], "manual");
+}
+
+#[test]
+fn the_bad_pattern_toggle_admits_the_kind_but_bypasses_no_axis() {
+    let store = store();
+
+    let body = "retry the deploy".to_string();
+    let skill = Skill {
+        identity: identity_in(Namespace::Global),
+        stats: low_stats(),
+        name: "deploy".to_string(),
+        version: 1,
+        description: "deploys the service".to_string(),
+        problem_embedding: None,
+        embedder_model: None,
+        language: "python".to_string(),
+        body: body.clone(),
+        params: serde_json::json!({}),
+        preconditions: None,
+        postconditions: None,
+        capabilities: Vec::new(),
+        success_count: 0,
+        failure_count: 0,
+        mean_latency_ms: None,
+        source_hash: ContentHash::of(body.as_bytes()),
+        last_success_at: None,
+        last_failure_at: None,
+        deprecated_at: None,
+        induced: false,
+    };
+    let skill_node = store.save_skill(&skill, None, &[]).expect("save skill");
+    let pattern = BadPattern {
+        identity: identity_in(Namespace::Global),
+        stats: low_stats(),
+        description: "rolled back on a bad config".to_string(),
+        embedding: None,
+        embedder_model: None,
+        observed_at: long_ago(),
+    };
+    store
+        .save_bad_pattern(&pattern, skill_node)
+        .expect("save bad pattern");
+
+    // Default policy: the kind is protected outright — the toggle is off.
+    let off = forgetter(&store);
+    assert_eq!(
+        off.forget(&pattern.identity.id, &now()).expect("call"),
+        PointForget::Protected(SpareReason::ProtectedKind)
+    );
+
+    // Toggle on: the kind gate opens and the normal axes take over. A normally-saved
+    // pattern always carries its skill's `HAS_FAILURE` link, which is itself a
+    // protecting reference — so the toggle admits the kind, it never bypasses an axis.
+    let on = Forgetter::new(
+        Arc::clone(&store),
+        ForgettingPolicy {
+            enabled: true,
+            forget_bad_patterns: true,
+            ..ForgettingPolicy::default()
+        },
+    );
+    assert_eq!(
+        on.forget(&pattern.identity.id, &now()).expect("call"),
+        PointForget::Protected(SpareReason::Referenced)
+    );
+    assert!(!is_expired(&store, &pattern.identity.id));
 }

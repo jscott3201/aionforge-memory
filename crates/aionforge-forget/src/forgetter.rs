@@ -24,6 +24,7 @@ use aionforge_domain::edges::{
 };
 use aionforge_domain::ids::Id;
 use aionforge_domain::namespace::Namespace;
+use aionforge_domain::nodes::associative::Note;
 use aionforge_domain::nodes::core::CoreBlock;
 use aionforge_domain::nodes::episodic::Episode;
 use aionforge_domain::nodes::forensic::{AuditEvent, AuditKind};
@@ -65,7 +66,7 @@ const ALL_MEMORY_LABELS: [&str; 7] = [
     Episode::LABEL,
     Fact::LABEL,
     Entity::LABEL,
-    "Note",
+    Note::LABEL,
     Skill::LABEL,
     BadPattern::LABEL,
     CoreBlock::LABEL,
@@ -116,6 +117,9 @@ pub enum PointForget {
     NotFound,
     /// Protected; the reason names the axis or exemption that held.
     Protected(SpareReason),
+    /// Forgetting is not enabled; nothing was read or written. The honest answer to a
+    /// host calling a switched-off surface — never a fabricated "not found".
+    Disabled,
 }
 
 /// The outcome of a point-unforget.
@@ -129,6 +133,8 @@ pub enum PointUnforget {
     NotFound,
     /// The expiry belongs to another channel (the demotion shape); refused.
     Protected(SpareReason),
+    /// Forgetting is not enabled; nothing was read or written.
+    Disabled,
 }
 
 /// One swept page's tally.

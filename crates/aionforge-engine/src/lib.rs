@@ -23,6 +23,7 @@ use aionforge_domain::contracts::{
 };
 use aionforge_domain::namespace::Namespace;
 use aionforge_domain::time::Timestamp;
+use aionforge_forget::Forgetter;
 use aionforge_retrieval::HybridRetriever;
 use aionforge_security::{CaptureFilter, SecurityError};
 use aionforge_trust::{
@@ -52,17 +53,21 @@ pub use aionforge_consolidate::{
 pub use aionforge_domain::authz::{
     AuthorizationError, Authorizer, DefaultAuthorizer, DenyReason, Principal, VisibleSet,
 };
+pub use aionforge_forget::{
+    ForgetSweepPage, ForgettingPolicy, PointForget, PointUnforget, SpareReason,
+};
 pub use aionforge_retrieval::{
     EpisodeEntry, FactEntry, QueryClass, RecallBundle, RecallExplanation, RecallOptions,
     RecallQuery, RetrieverConfig, Signal, SignalWeights, StructuredEntry, TemporalMode,
 };
-pub use aionforge_store::{Store, StoreConfig};
+pub use aionforge_store::{ForgetCursor, Store, StoreConfig};
 pub use aionforge_trust::{
     AttestReceipt, AttestRequest, AuditStatus, CategoryRule, DemotionOutcome, PromotionError,
     PromotionOutcome, PromotionPolicy, ReliabilityError, ReliabilityPolicy, ReliabilityScorer,
 };
 
 mod audit;
+mod forget_sweep;
 mod reliability_sweep;
 pub use aionforge_store::{AuditCursor, MAX_AUDIT_PAGE};
 pub use audit::{AuditPage, AuditRecord, AuditVerification};
@@ -92,6 +97,11 @@ pub struct MemoryConfig {
     /// host maps `aionforge-config`'s `ReliabilityConfig` into this [`ReliabilityPolicy`], so the
     /// engine takes no config dependency — the same indirection as the promotion policy.
     pub reliability: ReliabilityPolicy,
+    /// Active-forgetting policy (05 §2). Off by default; when enabled the engine builds the
+    /// forgetting orchestrator. The host maps `aionforge-config`'s `ForgettingConfig` plus the
+    /// decay section's half-lives into this [`ForgettingPolicy`] — the same indirection as the
+    /// reliability policy.
+    pub forgetting: ForgettingPolicy,
 }
 
 /// The engine's signed-write gating posture (06 §3, M4.T03).
@@ -182,6 +192,8 @@ pub struct Memory<E> {
     /// reliability event log into agent and fact trust caches, and backs the refold-first
     /// reliability-demotion sweep.
     reliability_scorer: Option<ReliabilityScorer>,
+    /// The forgetting orchestrator, present only when active forgetting is enabled (05 §2).
+    forgetter: Option<Forgetter>,
     /// The audit-signature verifier for the read facade (06 §6, M4.T06). `None` until audit
     /// signing is wired: PR-5g builds it from the keyring when `sign_audit_events` is enabled,
     /// alongside the signer. While `None`, every audit read maps to
@@ -232,6 +244,7 @@ impl<E: Embedder> Memory<E> {
         config.security.validate().map_err(EngineError::Config)?;
         config.promotion.validate().map_err(EngineError::Config)?;
         config.reliability.validate().map_err(EngineError::Config)?;
+        config.forgetting.validate().map_err(EngineError::Config)?;
         if config.promotion.enabled {
             validate_promotion_skew(config.security.clock_skew_tolerance_ms)?;
         }
@@ -289,6 +302,17 @@ impl<E: Embedder> Memory<E> {
         } else {
             None
         };
+        // Active forgetting (05 §2, M5.T02): when on, build the forgetter over the store. The
+        // `Option` is the single off-switch, mirroring its siblings — off ⇒ every forget
+        // surface is inert and the sweep reads nothing.
+        let forgetter = if config.forgetting.enabled {
+            Some(Forgetter::new(
+                Arc::clone(&store),
+                config.forgetting.clone(),
+            ))
+        } else {
+            None
+        };
         // Substrate audit signing (06 §6, M4.T06): provision custody + the keyring anchor,
         // install the commit-time signer on the store, and keep the keyring-anchored
         // verifier for the read facade — one branch, one off-switch. The genesis event is
@@ -331,6 +355,7 @@ impl<E: Embedder> Memory<E> {
             authorizer,
             promoter,
             reliability_scorer,
+            forgetter,
             audit_verifier,
         })
     }
