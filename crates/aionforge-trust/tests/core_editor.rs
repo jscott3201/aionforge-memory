@@ -1,169 +1,29 @@
 //! Acceptance for the core-block edit gate (05 §4, M5.T04): a single-writer self-edit
 //! is rejected (and audited); an attested edit succeeds and is audited with the
 //! principal as actor; sensitive blocks can require an active human attester; a forged
-//! vote refuses the whole edit; a stale precondition answers typed; and the editor
-//! provenance leg binds the edit to the editor's key when signed writes are on.
+//! vote refuses the whole edit; a stale precondition answers typed; the editor
+//! provenance leg binds the edit to the editor's key when signed writes are on; and an
+//! invalid policy never stands a gate. The review-hardening additions live in
+//! `core_editor_hardening.rs`; the fixtures are shared through `common`.
+
+mod common;
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use aionforge_domain::authz::Principal;
-use aionforge_domain::blocks::{Identity, Stats};
-use aionforge_domain::gate::WallClock;
 use aionforge_domain::ids::{ContentHash, Id};
-use aionforge_domain::namespace::Namespace;
-use aionforge_domain::nodes::agent::{Agent, AgentStatus, TrustScores};
-use aionforge_domain::nodes::core::{BlockKind, CoreBlock};
-use aionforge_domain::nodes::forensic::{AuditEvent, AuditKind};
-use aionforge_domain::signing::{attestation_payload, provenance_payload};
-use aionforge_domain::time::Timestamp;
-use aionforge_store::{Store, StoreConfig};
+use aionforge_domain::nodes::agent::AgentStatus;
+use aionforge_domain::nodes::core::BlockKind;
+use aionforge_domain::signing::provenance_payload;
 use aionforge_trust::{
-    AttestationGate, CoreAttesterVote, CoreEditOutcome, CoreEditPolicy, CoreEditRejection,
-    CoreEditRequest, CoreEditRule, CoreEditor, Ed25519Verifier, SignedWriteGate, StoreKeyResolver,
+    AttestationGate, CoreEditOutcome, CoreEditPolicy, CoreEditRejection, CoreEditRule, CoreEditor,
+    Ed25519Verifier, StoreKeyResolver,
 };
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
-use ed25519_dalek::{Signer, SigningKey};
-
-fn ts(text: &str) -> Timestamp {
-    text.parse().expect("valid zoned datetime literal")
-}
-
-fn now() -> Timestamp {
-    ts("2026-06-06T12:00:00-05:00[America/Chicago]")
-}
-
-struct FixedClock(Timestamp);
-impl WallClock for FixedClock {
-    fn now(&self) -> Timestamp {
-        self.0.clone()
-    }
-}
-
-fn store() -> Arc<Store> {
-    let store = Store::open_with_config(StoreConfig {
-        embedding_dimension: 4,
-    })
-    .expect("open store");
-    store
-        .migrate(&ts("2026-01-01T00:00:00-06:00[America/Chicago]"))
-        .expect("migrate store");
-    Arc::new(store)
-}
-
-fn signing_key(seed: u8) -> SigningKey {
-    SigningKey::from_bytes(&[seed; 32])
-}
-
-fn enroll(store: &Store, seed: u8, status: AgentStatus) -> (Id, SigningKey) {
-    let key = signing_key(seed);
-    let agent_id = Id::from_content_hash(&[seed]);
-    let agent = Agent {
-        identity: Identity {
-            id: agent_id,
-            ingested_at: now(),
-            namespace: Namespace::Agent("attester".to_string()),
-            expired_at: None,
-        },
-        public_key: BASE64.encode(key.verifying_key().to_bytes()),
-        model_family: "test".to_string(),
-        model_version: None,
-        trust_scores: TrustScores::default(),
-        status,
-    };
-    store.create_agent(&agent).expect("enroll agent");
-    (agent_id, key)
-}
-
-fn block(content: &str, kind: BlockKind, sensitivity: Option<&str>) -> CoreBlock {
-    CoreBlock {
-        identity: Identity {
-            id: Id::generate(),
-            ingested_at: now(),
-            namespace: Namespace::Agent("identity-owner".to_string()),
-            expired_at: None,
-        },
-        stats: Stats {
-            importance: 0.95,
-            trust: 0.9,
-            last_access: now(),
-            access_count_recent: 1,
-            referenced_count: 0,
-            surprise: 0.0,
-            is_pinned: false,
-        },
-        content: content.to_string(),
-        block_kind: kind,
-        sensitivity: sensitivity.map(str::to_string),
-        drift_baseline: None,
-        embedding: None,
-        embedder_model: None,
-    }
-}
-
-fn genesis(store: &Store, b: &CoreBlock) {
-    let audit = AuditEvent {
-        identity: Identity {
-            id: Id::from_content_hash(b.identity.id.to_string().as_bytes()),
-            ingested_at: now(),
-            namespace: b.identity.namespace.clone(),
-            expired_at: None,
-        },
-        kind: AuditKind::CoreEdit,
-        subject_id: b.identity.id,
-        actor_id: Id::from_content_hash(b"creator"),
-        payload: serde_json::json!({"outcome": "created"}),
-        signature: String::new(),
-        occurred_at: now(),
-    };
-    store.create_core_block(b, &audit).expect("create");
-}
-
-fn editor(store: &Arc<Store>, policy: CoreEditPolicy, signed_writes: bool) -> CoreEditor {
-    let resolver = Arc::new(StoreKeyResolver::new(Arc::clone(store)));
-    let clock = Arc::new(FixedClock(now()));
-    let gate = AttestationGate::new(Ed25519Verifier, resolver.clone(), clock.clone(), 60_000);
-    let editor_gate = signed_writes.then(|| {
-        Arc::new(SignedWriteGate::new(
-            Ed25519Verifier,
-            resolver,
-            clock,
-            60_000,
-        )) as Arc<dyn aionforge_domain::gate::ProvenanceGate>
-    });
-    CoreEditor::new(Arc::clone(store), gate, editor_gate, policy)
-}
-
-fn vote_for(block_id: &Id, attester_id: &Id, key: &SigningKey) -> CoreAttesterVote {
-    let payload = attestation_payload(block_id, attester_id, &now());
-    CoreAttesterVote {
-        attester_id: *attester_id,
-        attested_at: now(),
-        signature_b64: BASE64.encode(key.sign(&payload).to_bytes()),
-        category: None,
-    }
-}
-
-fn request(b: &CoreBlock, new_content: &str, votes: Vec<CoreAttesterVote>) -> CoreEditRequest {
-    CoreEditRequest {
-        block_id: b.identity.id,
-        expected_prior: ContentHash::of(b.content.as_bytes()),
-        content: new_content.to_string(),
-        drift_baseline: None,
-        embedding: None,
-        editor_signature: None,
-        votes,
-        at: now(),
-    }
-}
-
-fn core_edit_rows(store: &Store) -> Vec<AuditEvent> {
-    store
-        .audit_by_kind(AuditKind::CoreEdit, None, 20)
-        .expect("audit")
-        .events
-}
+use common::*;
+use ed25519_dalek::Signer;
 
 #[test]
 fn a_single_writer_self_edit_is_rejected_and_audited() {
@@ -175,7 +35,7 @@ fn a_single_writer_self_edit_is_rejected_and_audited() {
     let core = editor(&store, CoreEditPolicy::default(), false);
 
     // The editor's own vote is the only voucher: never counted toward the quorum.
-    let self_vote = vote_for(&b.identity.id, &editor_id, &editor_key);
+    let self_vote = vote_for(&b, "I act in my own interest.", &editor_id, &editor_key);
     let outcome = core
         .edit(
             &principal,
@@ -222,7 +82,12 @@ fn an_attested_edit_succeeds_and_is_audited() {
             &request(
                 &b,
                 "I respond thoroughly.",
-                vec![vote_for(&b.identity.id, &attester_id, &attester_key)],
+                vec![vote_for(
+                    &b,
+                    "I respond thoroughly.",
+                    &attester_id,
+                    &attester_key,
+                )],
             ),
         )
         .expect("call");
@@ -296,7 +161,12 @@ fn sensitive_blocks_can_require_an_active_human_attester() {
             &request(
                 &b,
                 "I never expose user PII, ever.",
-                vec![vote_for(&b.identity.id, &model_id, &model_key)],
+                vec![vote_for(
+                    &b,
+                    "I never expose user PII, ever.",
+                    &model_id,
+                    &model_key,
+                )],
             ),
         )
         .expect("call");
@@ -313,7 +183,8 @@ fn sensitive_blocks_can_require_an_active_human_attester() {
                 &b,
                 "I never expose user PII, ever.",
                 vec![vote_for(
-                    &b.identity.id,
+                    &b,
+                    "I never expose user PII, ever.",
                     &retired_human_id,
                     &retired_human_key,
                 )],
@@ -332,7 +203,12 @@ fn sensitive_blocks_can_require_an_active_human_attester() {
             &request(
                 &b,
                 "I never expose user PII, ever.",
-                vec![vote_for(&b.identity.id, &human_id, &human_key)],
+                vec![vote_for(
+                    &b,
+                    "I never expose user PII, ever.",
+                    &human_id,
+                    &human_key,
+                )],
             ),
         )
         .expect("call");
@@ -400,8 +276,8 @@ fn a_forged_vote_refuses_the_whole_edit() {
                 &b,
                 "I repeat claims.",
                 vec![
-                    vote_for(&b.identity.id, &good_id, &good_key),
-                    vote_for(&b.identity.id, &forger_id, &wrong_key),
+                    vote_for(&b, "I repeat claims.", &good_id, &good_key),
+                    vote_for(&b, "I repeat claims.", &forger_id, &wrong_key),
                 ],
             ),
         )
@@ -446,7 +322,12 @@ fn a_stale_precondition_is_the_typed_stale_content() {
     let first = request(
         &b,
         "the second stance",
-        vec![vote_for(&b.identity.id, &attester_id, &attester_key)],
+        vec![vote_for(
+            &b,
+            "the second stance",
+            &attester_id,
+            &attester_key,
+        )],
     );
     assert!(matches!(
         core.edit(&principal, &first).expect("call"),
@@ -474,7 +355,7 @@ fn the_editor_provenance_leg_binds_the_edit_to_the_editors_key() {
     let unsigned = request(
         &b,
         "I am flexible.",
-        vec![vote_for(&b.identity.id, &attester_id, &attester_key)],
+        vec![vote_for(&b, "I am flexible.", &attester_id, &attester_key)],
     );
     assert_eq!(
         core.edit(&principal, &unsigned).expect("call"),
@@ -519,4 +400,16 @@ fn the_policy_validates_fail_closed() {
     assert!(sound.validate().is_ok());
 
     assert!(CoreEditPolicy::default().validate().is_ok());
+
+    // The constructor enforces the same rule — an invalid policy never stands a gate,
+    // no matter which caller composed it.
+    let store = store();
+    let resolver = Arc::new(StoreKeyResolver::new(Arc::clone(&store)));
+    let gate = AttestationGate::new(
+        Ed25519Verifier,
+        resolver,
+        Arc::new(FixedClock(now())),
+        60_000,
+    );
+    assert!(CoreEditor::new(Arc::clone(&store), gate, None, zero_k).is_err());
 }

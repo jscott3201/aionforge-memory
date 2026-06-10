@@ -9,7 +9,7 @@
 //! field), so neither a cross-protocol reuse nor a field-boundary ambiguity can
 //! produce a colliding payload.
 
-use crate::ids::Id;
+use crate::ids::{ContentHash, Id};
 use crate::nodes::forensic::{AuditEvent, AuditKind};
 use crate::time::Timestamp;
 
@@ -22,6 +22,7 @@ pub const SIGNING_ENCODING_VERSION: u8 = 2;
 
 const PROVENANCE_TAG: &str = "aionforge.provenance.v2";
 const ATTESTATION_TAG: &str = "aionforge.attestation.v2";
+const CORE_EDIT_ATTESTATION_TAG: &str = "aionforge.core-edit-attestation.v2";
 const AUDIT_TAG: &str = "aionforge.audit.v2";
 
 /// The canonical provenance signing payload over `(subject_id, writer_agent_id,
@@ -56,6 +57,38 @@ pub fn attestation_payload(fact_id: &Id, attester_id: &Id, attested_at: &Timesta
     encode(
         ATTESTATION_TAG,
         &[fact.as_bytes(), attester.as_bytes()],
+        attested_at,
+    )
+}
+
+/// The canonical core-block edit attestation payload over `(block_id, attester_id,
+/// prior_content_hash, new_content_hash, attested_at)` (05 §4, M5.T04).
+///
+/// A core block's id is deliberately **stable for the block's life** — unlike a fact,
+/// whose content-addressed id binds an attestation to its content all by itself — so a
+/// vote signed over the bare id (the fact-shaped [`attestation_payload`]) would
+/// authorize *any* content swap of that block inside the clock-skew window. This
+/// payload binds the exact transition instead: the attester vouches that the block
+/// move from these prior bytes to these new bytes, and nothing else. The hashes go in
+/// as their canonical hex strings, length-prefixed like every field.
+#[must_use]
+pub fn core_edit_attestation_payload(
+    block_id: &Id,
+    attester_id: &Id,
+    prior_content_hash: &ContentHash,
+    new_content_hash: &ContentHash,
+    attested_at: &Timestamp,
+) -> Vec<u8> {
+    let block = block_id.as_uuid();
+    let attester = attester_id.as_uuid();
+    encode(
+        CORE_EDIT_ATTESTATION_TAG,
+        &[
+            block.as_bytes(),
+            attester.as_bytes(),
+            prior_content_hash.as_str().as_bytes(),
+            new_content_hash.as_str().as_bytes(),
+        ],
         attested_at,
     )
 }
@@ -228,6 +261,52 @@ mod tests {
         let prov = provenance_payload(&id(1), &id(2), &ts(5));
         let att = attestation_payload(&id(1), &id(2), &ts(5));
         assert_ne!(prov, att);
+    }
+
+    #[test]
+    fn a_core_edit_vote_signs_the_exact_transition() {
+        let prior = ContentHash::of(b"the prior content");
+        let new = ContentHash::of(b"the new content");
+        let base = core_edit_attestation_payload(&id(1), &id(2), &prior, &new, &ts(5));
+
+        // Deterministic, versioned, and domain-separated from the fact-shaped payload
+        // built over the same ids and instant.
+        assert_eq!(
+            base,
+            core_edit_attestation_payload(&id(1), &id(2), &prior, &new, &ts(5))
+        );
+        assert_eq!(base[0], SIGNING_ENCODING_VERSION);
+        assert_ne!(base, attestation_payload(&id(1), &id(2), &ts(5)));
+
+        // Every field is signed — most importantly both content hashes, which is the
+        // whole point: a vote for one transition can never validate another.
+        let other = ContentHash::of(b"something else");
+        assert_ne!(
+            base,
+            core_edit_attestation_payload(&id(9), &id(2), &prior, &new, &ts(5))
+        );
+        assert_ne!(
+            base,
+            core_edit_attestation_payload(&id(1), &id(9), &prior, &new, &ts(5))
+        );
+        assert_ne!(
+            base,
+            core_edit_attestation_payload(&id(1), &id(2), &other, &new, &ts(5))
+        );
+        assert_ne!(
+            base,
+            core_edit_attestation_payload(&id(1), &id(2), &prior, &other, &ts(5))
+        );
+        assert_ne!(
+            base,
+            core_edit_attestation_payload(&id(1), &id(2), &prior, &new, &ts(6))
+        );
+
+        // Swapping prior and new is a *different* transition, not the same bytes.
+        assert_ne!(
+            base,
+            core_edit_attestation_payload(&id(1), &id(2), &new, &prior, &ts(5))
+        );
     }
 
     #[test]

@@ -17,8 +17,8 @@
 use std::sync::Arc;
 
 use aionforge_domain::gate::WallClock;
-use aionforge_domain::ids::Id;
-use aionforge_domain::signing::attestation_payload;
+use aionforge_domain::ids::{ContentHash, Id};
+use aionforge_domain::signing::{attestation_payload, core_edit_attestation_payload};
 use aionforge_domain::time::Timestamp;
 use aionforge_domain::verify::{PublicKeyResolver, SignatureVerifier};
 
@@ -109,6 +109,55 @@ impl AttestationGate {
         attested_at: &Timestamp,
         signature_b64: &str,
     ) -> Result<(), AttestError> {
+        let public_key = self.resolve_in_window(attester_id, attested_at)?;
+        let payload = attestation_payload(fact_id, attester_id, attested_at);
+        self.verifier
+            .verify(&public_key, signature_b64, &payload)
+            .map_err(|_| AttestRejection::BadSignature.into())
+    }
+
+    /// Verify a signed core-block edit attestation: the same skew, enrollment, and
+    /// signature discipline as [`AttestationGate::admit`], but over the
+    /// transition-binding [`core_edit_attestation_payload`] (05 §4, M5.T04).
+    ///
+    /// A core block's **stable** id cannot bind a vote to content the way a fact's
+    /// content-addressed id does, so the core-edit vote signs the exact prior-to-new
+    /// content transition — a voucher collected for one proposed edit can never
+    /// validate a different replacement of the same block, even inside the skew
+    /// window.
+    ///
+    /// # Errors
+    /// [`AttestError::Rejected`] for a skew/unknown-attester/bad-signature failure;
+    /// [`AttestError::Backend`] if the key resolution read itself failed.
+    pub fn admit_core_edit(
+        &self,
+        block_id: &Id,
+        attester_id: &Id,
+        prior_content_hash: &ContentHash,
+        new_content_hash: &ContentHash,
+        attested_at: &Timestamp,
+        signature_b64: &str,
+    ) -> Result<(), AttestError> {
+        let public_key = self.resolve_in_window(attester_id, attested_at)?;
+        let payload = core_edit_attestation_payload(
+            block_id,
+            attester_id,
+            prior_content_hash,
+            new_content_hash,
+            attested_at,
+        );
+        self.verifier
+            .verify(&public_key, signature_b64, &payload)
+            .map_err(|_| AttestRejection::BadSignature.into())
+    }
+
+    /// The shared front half of every admit: skew first (a replayed/storming
+    /// attestation is dropped before any store read), then fail-closed key resolution.
+    fn resolve_in_window(
+        &self,
+        attester_id: &Id,
+        attested_at: &Timestamp,
+    ) -> Result<String, AttestError> {
         let now_ms = self.clock.now().timestamp().as_millisecond();
         let attest_ms = attested_at.timestamp().as_millisecond();
         let skew_ms = (now_ms - attest_ms).abs();
@@ -119,17 +168,11 @@ impl AttestationGate {
             }
             .into());
         }
-
-        let public_key = match self.resolver.public_key(attester_id) {
-            Ok(Some(key)) => key,
-            Ok(None) => return Err(AttestRejection::UnknownAttester.into()),
-            Err(error) => return Err(AttestError::Backend(error.to_string())),
-        };
-
-        let payload = attestation_payload(fact_id, attester_id, attested_at);
-        self.verifier
-            .verify(&public_key, signature_b64, &payload)
-            .map_err(|_| AttestRejection::BadSignature.into())
+        match self.resolver.public_key(attester_id) {
+            Ok(Some(key)) => Ok(key),
+            Ok(None) => Err(AttestRejection::UnknownAttester.into()),
+            Err(error) => Err(AttestError::Backend(error.to_string())),
+        }
     }
 }
 
@@ -289,6 +332,42 @@ mod tests {
         assert!(matches!(
             make(-4_001).admit(&fact, &attester, &at, &signature),
             Err(AttestError::Rejected(AttestRejection::ClockSkew { .. }))
+        ));
+    }
+
+    #[test]
+    fn admits_a_core_edit_vote_for_the_exact_transition_only() {
+        let key = signing_key(7);
+        let (block, attester, at) = (id(1), id(2), ts(1_000));
+        let prior = ContentHash::of(b"who I was");
+        let new = ContentHash::of(b"who I am becoming");
+        let signature = sign_b64(
+            &key,
+            &core_edit_attestation_payload(&block, &attester, &prior, &new, &at),
+        );
+        let resolver = Arc::new(OneKeyResolver {
+            agent: attester,
+            public_key: public_key_b64(&key),
+        });
+        let gate = gate(resolver, 1_000, 60_000);
+
+        // The vouched transition verifies.
+        assert!(
+            gate.admit_core_edit(&block, &attester, &prior, &new, &at, &signature)
+                .is_ok()
+        );
+        // The same vote presented for a *different* replacement is a forged voucher —
+        // this is the content-swap surface the transition binding closes.
+        let swapped = ContentHash::of(b"something the attester never saw");
+        assert!(matches!(
+            gate.admit_core_edit(&block, &attester, &prior, &swapped, &at, &signature),
+            Err(AttestError::Rejected(AttestRejection::BadSignature))
+        ));
+        // And a fact-shaped signature over the bare ids does not pass the core-edit gate.
+        let bare = sign_b64(&key, &attestation_payload(&block, &attester, &at));
+        assert!(matches!(
+            gate.admit_core_edit(&block, &attester, &prior, &new, &at, &bare),
+            Err(AttestError::Rejected(AttestRejection::BadSignature))
         ));
     }
 

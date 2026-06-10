@@ -83,6 +83,10 @@ fn core_edit_audit(subject: &Id, seed: &[u8]) -> AuditEvent {
 }
 
 fn enroll_attester(store: &Store, seed: &[u8]) -> NodeId {
+    enroll_with_status(store, seed, AgentStatus::Active)
+}
+
+fn enroll_with_status(store: &Store, seed: &[u8], status: AgentStatus) -> NodeId {
     let agent = Agent {
         identity: Identity {
             id: Id::from_content_hash(seed),
@@ -94,7 +98,7 @@ fn enroll_attester(store: &Store, seed: &[u8]) -> NodeId {
         model_family: "test".to_string(),
         model_version: None,
         trust_scores: TrustScores::default(),
-        status: AgentStatus::Active,
+        status,
     };
     store.create_agent(&agent).expect("enroll attester")
 }
@@ -169,6 +173,7 @@ fn an_edit_swaps_content_in_place_on_the_same_stable_node() {
                 attester,
                 edge: vote(),
             }],
+            None,
             &core_edit_audit(&b.identity.id, b"edit-1"),
         )
         .expect("edit");
@@ -234,6 +239,7 @@ fn the_drift_baseline_updates_only_when_the_caller_rebaselines() {
                 attester,
                 edge: vote(),
             }],
+            None,
             &core_edit_audit(&b.identity.id, b"edit-rebaseline"),
         )
         .expect("edit");
@@ -275,6 +281,7 @@ fn a_stale_embedding_is_removed_rather_than_served() {
                 attester,
                 edge: vote(),
             }],
+            None,
             &core_edit_audit(&b.identity.id, b"edit-no-embedding"),
         )
         .expect("edit");
@@ -304,6 +311,7 @@ fn a_stale_embedding_is_removed_rather_than_served() {
                 attester,
                 edge: vote(),
             }],
+            None,
             &core_edit_audit(&b.identity.id, b"edit-with-embedding"),
         )
         .expect("edit");
@@ -340,6 +348,7 @@ fn duplicate_attestations_collapse_to_one_recorded_vote() {
                     edge: vote(),
                 },
             ],
+            None,
             &core_edit_audit(&b.identity.id, b"edit-dup"),
         )
         .expect("edit");
@@ -384,6 +393,7 @@ fn editing_a_retired_or_purged_block_is_the_typed_not_live() {
                 attester,
                 edge: vote(),
             }],
+            None,
             &core_edit_audit(&retired.identity.id, b"edit-retired"),
         )
         .expect("call");
@@ -420,6 +430,7 @@ fn editing_a_retired_or_purged_block_is_the_typed_not_live() {
                 attester,
                 edge: vote(),
             }],
+            None,
             &core_edit_audit(&doomed.identity.id, b"edit-purged"),
         )
         .expect("call");
@@ -455,6 +466,7 @@ fn a_stale_content_precondition_refuses_the_whole_edit() {
                 attester,
                 edge: vote(),
             }],
+            None,
             &core_edit_audit(&b.identity.id, b"edit-a"),
         )
         .expect("edit");
@@ -472,6 +484,7 @@ fn a_stale_content_precondition_refuses_the_whole_edit() {
                 attester,
                 edge: vote(),
             }],
+            None,
             &core_edit_audit(&b.identity.id, b"edit-b"),
         )
         .expect("call");
@@ -494,6 +507,74 @@ fn a_stale_content_precondition_refuses_the_whole_edit() {
         2,
         "genesis and edit A only; the stale edit audited nothing"
     );
+}
+
+#[test]
+fn a_required_attester_must_still_be_active_at_commit() {
+    let store = store();
+    let b = block("sensitive ground", BlockKind::Redline);
+    store
+        .create_core_block(&b, &core_edit_audit(&b.identity.id, b"genesis"))
+        .expect("create");
+    let node = block_node(&store, &b.identity.id);
+    let retired = enroll_with_status(&store, b"retired-human", AgentStatus::Retired);
+    let active = enroll_with_status(&store, b"active-human", AgentStatus::Active);
+
+    // The gate credited a human whose row is no longer Active by commit time: the
+    // in-lock status precondition refuses the whole edit — no swap, no votes, no audit.
+    let outcome = store
+        .edit_core_block(
+            node,
+            &hash("sensitive ground"),
+            &replacement("must not apply"),
+            &[CoreAttestation {
+                attester: retired,
+                edge: vote(),
+            }],
+            Some(retired),
+            &core_edit_audit(&b.identity.id, b"edit-stale-human"),
+        )
+        .expect("call");
+    assert_eq!(outcome, CoreEditWrite::RequiredAttesterInactive);
+    assert_eq!(
+        store
+            .core_block_by_id(&b.identity.id)
+            .expect("read")
+            .expect("present")
+            .content,
+        "sensitive ground",
+        "the refused edit touched nothing"
+    );
+    assert_eq!(
+        store.distinct_attesters(node).expect("attesters").len(),
+        0,
+        "no vote was recorded for the refused edit"
+    );
+    assert_eq!(
+        store
+            .audit_by_kind(AuditKind::CoreEdit, None, 10)
+            .expect("audit")
+            .events
+            .len(),
+        1,
+        "genesis only; the refused edit audited nothing here"
+    );
+
+    // The same precondition over a still-Active agent passes through to the swap.
+    let outcome = store
+        .edit_core_block(
+            node,
+            &hash("sensitive ground"),
+            &replacement("revised sensitive ground"),
+            &[CoreAttestation {
+                attester: active,
+                edge: vote(),
+            }],
+            Some(active),
+            &core_edit_audit(&b.identity.id, b"edit-live-human"),
+        )
+        .expect("edit");
+    assert!(matches!(outcome, CoreEditWrite::Applied { .. }));
 }
 
 #[test]

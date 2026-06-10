@@ -18,13 +18,14 @@
 use aionforge_domain::edges::{AttestedBy, Audit};
 use aionforge_domain::embedding::{EmbedderModel, Embedding};
 use aionforge_domain::ids::ContentHash;
+use aionforge_domain::nodes::agent::AgentStatus;
 use aionforge_domain::nodes::core::CoreBlock;
 use aionforge_domain::nodes::forensic::AuditEvent;
 use selene_core::{DbString, LabelDiff, NodeId, PropertyDiff, PropertyMap, Value, db_string};
 
 use crate::attestation::attested_by_props;
 use crate::convert::{
-    as_str, embedder_model_value, embedding_value, json_value, key, string_value,
+    as_str, embedder_model_value, embedding_value, enum_value, json_value, key, string_value,
 };
 use crate::error::StoreError;
 use crate::store::Store;
@@ -35,6 +36,7 @@ const CONTENT: &str = "content";
 const DRIFT_BASELINE: &str = "drift_baseline";
 const EMBEDDING: &str = "embedding_v1";
 const EMBEDDER_MODEL: &str = "embedder_model";
+const STATUS: &str = "status";
 
 /// The whole-value replacement an attested edit applies (06 §2: `CoreBlock.content` is
 /// attested whole-value — replaced entire, never merged).
@@ -85,6 +87,12 @@ pub enum CoreEditWrite {
     /// attester votes and a prior-hash claim against bytes that were never the actual
     /// predecessor, tearing the audit chain that *is* the block's non-lossy history.
     StaleContent,
+    /// The edit named a required-active attester (the credited human, 05 §4) whose
+    /// agent row is no longer `Active` — re-checked here, under the same write lock as
+    /// the swap, because the gate's status read is a separate lock acquisition and a
+    /// reviewer retired mid-flight must fail closed rather than ride a stale verdict.
+    /// The whole edit is refused; nothing was written.
+    RequiredAttesterInactive,
 }
 
 impl Store {
@@ -146,6 +154,13 @@ impl Store {
     /// error — the orchestrator pre-resolves the block, so reaching it is a benign
     /// race with a concurrent purge or retirement.
     ///
+    /// `required_active` names the one attester whose `Active` status is part of the
+    /// gate's verdict (the credited human, 05 §4) and so must still hold *at commit*:
+    /// the orchestrator's status read is its own lock acquisition, and this re-check
+    /// under the write lock is what keeps a reviewer retired mid-flight from carrying
+    /// an edit — the status twin of the content precondition. A mismatch is the typed
+    /// [`CoreEditWrite::RequiredAttesterInactive`] whole-op refusal.
+    ///
     /// # Errors
     /// Returns [`StoreError`] if translation, a mutation, or the commit fails. The
     /// whole edit is one transaction: an error leaves the block untouched.
@@ -155,10 +170,13 @@ impl Store {
         expected_prior: &ContentHash,
         replacement: &CoreBlockReplacement,
         attestations: &[CoreAttestation],
+        required_active: Option<NodeId>,
         audit_event: &AuditEvent,
     ) -> Result<CoreEditWrite, StoreError> {
         let expired_key = db_string(EXPIRED_AT)?;
         let content_key = db_string(CONTENT)?;
+        let status_key = db_string(STATUS)?;
+        let active = enum_value(&AgentStatus::Active)?;
         let audit_edge = db_string(Audit::LABEL)?;
 
         let mut txn = self.graph().begin_write();
@@ -169,24 +187,38 @@ impl Store {
             enum Probe {
                 NotLive,
                 Stale,
+                AttesterInactive,
                 Live { has_embedding: bool },
             }
             let probe = {
                 let graph = mutator.read();
-                match graph.node_properties(block) {
-                    None => Probe::NotLive,
-                    Some(props) if props.get(&expired_key).is_some() => Probe::NotLive,
-                    Some(props) => {
-                        let current = props.get(&content_key).ok_or_else(|| {
-                            StoreError::decode(
-                                "core block missing required property `content`".to_string(),
-                            )
-                        })?;
-                        if ContentHash::of(as_str(current)?.as_bytes()) != *expected_prior {
-                            Probe::Stale
-                        } else {
-                            Probe::Live {
-                                has_embedding: props.get(&db_string(EMBEDDING)?).is_some(),
+                // The status precondition first: the credited attester must still be
+                // an `Active` agent row in this same locked view as the swap.
+                let attester_active = match required_active {
+                    None => true,
+                    Some(node) => graph
+                        .node_properties(node)
+                        .and_then(|props| props.get(&status_key).cloned())
+                        .is_some_and(|status| status == active),
+                };
+                if !attester_active {
+                    Probe::AttesterInactive
+                } else {
+                    match graph.node_properties(block) {
+                        None => Probe::NotLive,
+                        Some(props) if props.get(&expired_key).is_some() => Probe::NotLive,
+                        Some(props) => {
+                            let current = props.get(&content_key).ok_or_else(|| {
+                                StoreError::decode(
+                                    "core block missing required property `content`".to_string(),
+                                )
+                            })?;
+                            if ContentHash::of(as_str(current)?.as_bytes()) != *expected_prior {
+                                Probe::Stale
+                            } else {
+                                Probe::Live {
+                                    has_embedding: props.get(&db_string(EMBEDDING)?).is_some(),
+                                }
                             }
                         }
                     }
@@ -195,6 +227,7 @@ impl Store {
             match probe {
                 Probe::NotLive => CoreEditWrite::NotLive,
                 Probe::Stale => CoreEditWrite::StaleContent,
+                Probe::AttesterInactive => CoreEditWrite::RequiredAttesterInactive,
                 Probe::Live { has_embedding } => {
                     // The whole-value swap: content always; drift_baseline only when the
                     // caller re-baselines (None = carry forward); the embedding pair swaps
