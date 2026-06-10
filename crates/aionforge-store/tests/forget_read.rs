@@ -172,6 +172,25 @@ fn pagination_resumes_exactly_where_the_scan_left_off() {
 }
 
 #[test]
+fn an_exact_fill_costs_one_empty_final_page() {
+    let store = store();
+    store.insert_episode(&episode(false)).expect("insert");
+    store.insert_fact(&fact(false)).expect("insert");
+    store.insert_fact(&fact(false)).expect("insert");
+
+    // The page fills flush at the end of the population, so the scan cannot yet know it
+    // is done: next is Some, and the follow-up page is empty with next None.
+    let page = store.forgettable_candidates(None, 3).expect("page");
+    assert_eq!(page.candidates.len(), 3);
+    let cursor = page.next.expect("a flush-full page continues");
+    let last = store
+        .forgettable_candidates(Some(&cursor), 3)
+        .expect("final page");
+    assert!(last.candidates.is_empty(), "nothing after the exact fill");
+    assert!(last.next.is_none(), "the empty page ends the scan");
+}
+
+#[test]
 fn a_cursor_from_outside_the_scan_order_is_rejected() {
     let store = store();
     let bogus = ForgetCursor {

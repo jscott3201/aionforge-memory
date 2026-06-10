@@ -146,14 +146,19 @@ impl Store {
                 if props.get(&db_string(EXPIRED_AT)?).is_some() {
                     continue;
                 }
-                let (identity, stats) = blocks_from_properties(props)?;
-                // Within the cursor's own label, only ids strictly after it.
+                // Within the cursor's own label, trim on the raw id *before* the full
+                // block decode: the consumed prefix is re-scanned on every resumed page,
+                // and decoding it each time is the O(N²/limit) shape the audit reader
+                // deliberately avoids. A missing id falls through to the decoder, which
+                // owns the error message.
                 if let Some(cursor) = after
                     && cursor.label == *label
-                    && identity.id <= cursor.id
+                    && let Some(value) = props.get(&db_string(ID)?)
+                    && as_id(value)? <= cursor.id
                 {
                     continue;
                 }
+                let (identity, stats) = blocks_from_properties(props)?;
                 page.push(ForgetCandidate {
                     node,
                     label: (*label).to_string(),
@@ -340,20 +345,17 @@ mod tests {
             .expect("migrate");
 
         let source = seed_note(&store, b"forget-probe-source");
+        let second = seed_note(&store, b"forget-probe-second");
         let target = seed_note(&store, b"forget-probe-target");
+        let link = |from: Id| LinkEdgeWrite {
+            source_id: from,
+            target_id: target,
+            relationship_label: "refines".to_string(),
+            valid_from: now(),
+        };
         store
-            .materialize_link_edges(
-                &[LinkEdgeWrite {
-                    source_id: source,
-                    target_id: target,
-                    relationship_label: "refines".to_string(),
-                    valid_from: now(),
-                }],
-                &[],
-                &[],
-                &now(),
-            )
-            .expect("open link");
+            .materialize_link_edges(&[link(source), link(second)], &[], &[], &now())
+            .expect("open links");
 
         let target_node = convert::node_by_id(&store.graph().read(), Note::LABEL, &target)
             .expect("lookup")
@@ -365,16 +367,29 @@ mod tests {
             "a current link version protects its target"
         );
 
-        // Close the version (the M3.T09 revision shape); the probe must stop protecting.
-        let link = store.relates_to_links(&source).expect("links")[0].clone();
+        // Close the first version (the M3.T09 revision shape). The probe must skip the
+        // closed edge and keep walking — the second, still-live link protects.
+        let first = store.relates_to_links(&source).expect("links")[0].clone();
         store
-            .materialize_link_edges(&[], &[link.edge_id], &[], &now())
-            .expect("close link");
+            .materialize_link_edges(&[], &[first.edge_id], &[], &now())
+            .expect("close first link");
+        assert!(
+            store
+                .has_protecting_reference(target_node, &[RelatesTo::LABEL])
+                .expect("probe"),
+            "a closed version does not mask a live sibling"
+        );
+
+        // Close the second as well; nothing live remains.
+        let rest = store.relates_to_links(&second).expect("links")[0].clone();
+        store
+            .materialize_link_edges(&[], &[rest.edge_id], &[], &now())
+            .expect("close second link");
         assert!(
             !store
                 .has_protecting_reference(target_node, &[RelatesTo::LABEL])
                 .expect("probe"),
-            "a closed link version no longer protects"
+            "closed link versions no longer protect"
         );
     }
 }
