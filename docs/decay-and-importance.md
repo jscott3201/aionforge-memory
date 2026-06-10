@@ -19,8 +19,8 @@ effective = stored × 0.5 ^ (elapsed_seconds(last_access → now) / half_life_se
 
 One half-life halves the score, two quarter it, and the curve never reaches zero —
 decay alone never erases anything. Elapsed time is measured in whole seconds (ample for
-half-lives measured in days) from the instant difference, so it is robust across
-time-zone representations.
+half-lives measured in days) from the UTC instant difference, so the result does not
+depend on either side's time-zone representation.
 
 **Two tiers, not three** (05 §2). Session-scoped episodic memory decays on the short
 half-life; everything semantic decays on the long one:
