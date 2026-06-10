@@ -123,16 +123,16 @@ async-trait = "0.1"
 # A `version` accompanies the git source so the dep is not a bare `*` wildcard (the
 # `bans.wildcards = "deny"` gate). The `"1"` requirement is a sanity floor against the
 # selene 1.x line; Cargo.lock still pins the exact `development` commit that builds.
-selene-core = { git = "ssh://git@github.com/jscott3201/selene-db.git", branch = "development", version = "1" }
-selene-graph = { git = "ssh://git@github.com/jscott3201/selene-db.git", branch = "development", version = "1" }
-selene-persist = { git = "ssh://git@github.com/jscott3201/selene-db.git", branch = "development", version = "1" }
-selene-gql = { git = "ssh://git@github.com/jscott3201/selene-db.git", branch = "development", version = "1" }
-selene-algorithms = { git = "ssh://git@github.com/jscott3201/selene-db.git", branch = "development", version = "1" }
+selene-core = { git = "ssh://git@github.com/Aionforge-Labs/selene-db.git", branch = "development", version = "1" }
+selene-graph = { git = "ssh://git@github.com/Aionforge-Labs/selene-db.git", branch = "development", version = "1" }
+selene-persist = { git = "ssh://git@github.com/Aionforge-Labs/selene-db.git", branch = "development", version = "1" }
+selene-gql = { git = "ssh://git@github.com/Aionforge-Labs/selene-db.git", branch = "development", version = "1" }
+selene-algorithms = { git = "ssh://git@github.com/Aionforge-Labs/selene-db.git", branch = "development", version = "1" }
 
 # Co-development escape hatch: to build against a local selene-db checkout instead of
 # the fetched branch, uncomment and point these at your sibling checkout. Do not
 # commit the uncommented form.
-# [patch."ssh://git@github.com/jscott3201/selene-db.git"]
+# [patch."ssh://git@github.com/Aionforge-Labs/selene-db.git"]
 # selene-core = { path = "../selene-db/crates/selene-core" }
 # selene-graph = { path = "../selene-db/crates/selene-graph" }
 # selene-persist = { path = "../selene-db/crates/selene-persist" }
