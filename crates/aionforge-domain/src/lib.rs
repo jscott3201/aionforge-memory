@@ -28,6 +28,7 @@ pub mod blocks;
 pub mod completion;
 pub mod contracts;
 pub mod decay;
+pub mod drift;
 pub mod edges;
 pub mod embedding;
 pub mod error;
