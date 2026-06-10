@@ -262,6 +262,12 @@ pub(crate) const NODE_TYPES: &[TypeDdl] = &[
     },
     TypeDdl {
         name: "AuditEvent",
+        // `signature` is deliberately NOT `IMMUTABLE` (02 §4.11 carve-out, M4.T06): the id is
+        // content-addressed over everything except the signature, so a blank-signature copy
+        // landing first would otherwise own the row forever and shadow the signed re-emit.
+        // The DDL cannot express "blank → signed exactly once"; that monotone latch is
+        // enforced by the single write funnel (`audit::ensure_event` — the module's only
+        // probe is private, so no author can write around it).
         ddl: r#"CREATE NODE TYPE IF NOT EXISTS :AuditEvent (
             id :: UUID NOT NULL UNIQUE IMMUTABLE,
             ingested_at :: ZONED DATETIME NOT NULL IMMUTABLE,
@@ -271,7 +277,7 @@ pub(crate) const NODE_TYPES: &[TypeDdl] = &[
             subject_id :: UUID NOT NULL,
             actor_id :: UUID NOT NULL,
             payload :: JSON NOT NULL,
-            signature :: STRING NOT NULL IMMUTABLE,
+            signature :: STRING NOT NULL,
             occurred_at :: ZONED DATETIME NOT NULL IMMUTABLE
         ) STRICT"#,
     },

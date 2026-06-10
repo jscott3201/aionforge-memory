@@ -73,7 +73,6 @@ impl Store {
         audit: &AuditEvent,
     ) -> Result<AttestWriteIds, StoreError> {
         let edge_props = attested_by_props(edge)?;
-        let (audit_labels, audit_props) = audit::to_node(audit)?;
         let audit_edge = db_string(Audit::LABEL)?;
 
         let mut txn = self.graph().begin_write();
@@ -85,21 +84,18 @@ impl Store {
             // Content-addressed dedup against the in-txn working graph (committed state plus
             // this txn's writes), under the write lock — so a concurrent re-attest cannot probe
             // the same id and both create a second audit. Mirrors the consolidation audit dedup.
-            let existing_audit = audit::find_existing(mutator.read(), &audit.identity.id)?;
-            let audit_node = match existing_audit {
-                Some(node) => node,
-                None => {
-                    let node = mutator.create_node(audit_labels, audit_props)?;
-                    mutator.create_edge(
-                        audit_edge,
-                        node,
-                        fact,
-                        PropertyMap::from_pairs(Vec::new())?,
-                    )?;
-                    node
-                }
-            };
-            AttestWriteIds { audit: audit_node }
+            let ensured = audit::ensure_event(&mut mutator, audit)?;
+            if ensured.created {
+                mutator.create_edge(
+                    audit_edge,
+                    ensured.node,
+                    fact,
+                    PropertyMap::from_pairs(Vec::new())?,
+                )?;
+            }
+            AttestWriteIds {
+                audit: ensured.node,
+            }
         };
         txn.commit()?;
         Ok(ids)

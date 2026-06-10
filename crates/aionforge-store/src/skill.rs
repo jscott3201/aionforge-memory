@@ -276,8 +276,10 @@ pub(crate) fn write_skill_into(
         )?;
     }
     for event in audits {
-        let (audit_labels, audit_props) = crate::audit::to_node(event)?;
-        let audit_node = mutator.create_node(audit_labels, audit_props)?;
+        // The caller's skill-level probe means a fresh version's audits are normally fresh
+        // too; the funnel still applies so a pre-placed copy of a content-addressed audit id
+        // heals (signature reconciled, node reused) instead of tripping the UNIQUE constraint.
+        let audit_node = crate::audit::ensure_event(mutator, event)?.node;
         mutator.create_edge(
             audit_label.clone(),
             audit_node,

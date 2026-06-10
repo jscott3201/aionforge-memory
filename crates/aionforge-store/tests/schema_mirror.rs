@@ -236,7 +236,11 @@ fn expected_nodes() -> Vec<(&'static str, Vec<Prop>)> {
                 req("subject_id", K::Uuid),
                 req("actor_id", K::Uuid),
                 req("payload", K::Json),
-                req_imm("signature", K::String),
+                // Mutable on purpose (02 §4.11 carve-out, M4.T06): the blank -> signed
+                // upgrade latch lives in `audit::ensure_event`, which the DDL cannot
+                // express. Every other signature in the schema (ProvenanceRecord,
+                // ATTESTED_BY) stays IMMUTABLE.
+                req("signature", K::String),
                 req_imm("occurred_at", K::ZonedDateTime),
             ]),
         ),

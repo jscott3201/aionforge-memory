@@ -50,6 +50,10 @@ impl Store {
                 provenance_id,
                 PropertyMap::from_pairs(Vec::new())?,
             )?;
+            // Direct create, not the `audit::ensure_event` funnel: capture audit ids are
+            // freshly generated (UUIDv7), never content-addressed, so there is no predictable
+            // id for a shadow copy to claim and no replay that should dedup — capture is an
+            // append, and a duplicate id here is a real invariant violation that must surface.
             let audit_id = mutator.create_node(audit_labels, audit_props)?;
             mutator.create_edge(
                 audit_edge,
@@ -83,18 +87,15 @@ impl Store {
     /// # Errors
     /// Returns [`StoreError`] if translating the event or the commit fails.
     pub fn commit_audit(&self, audit: &AuditEvent) -> Result<NodeId, StoreError> {
-        let (labels, props) = audit::to_node(audit)?;
         let mut txn = self.graph().begin_write();
         let id = {
             let mut mutator = txn.mutator();
             // Content-addressed dedup against the in-txn working graph, under the write lock: a
-            // replayed event (same `AuditEvent.id`) is a no-op that returns the existing node, so a
-            // deterministic retry — e.g. a refused attestation re-sent verbatim — never trips the
-            // `id` UNIQUE constraint and surfaces a spurious store error. Mirrors `attest_fact`.
-            match audit::find_existing(mutator.read(), &audit.identity.id)? {
-                Some(node) => node,
-                None => mutator.create_node(labels, props)?,
-            }
+            // replayed event (same `AuditEvent.id`) reuses the existing node, so a deterministic
+            // retry — e.g. a refused attestation re-sent verbatim — never trips the `id` UNIQUE
+            // constraint and surfaces a spurious store error. `ensure_event` also reconciles the
+            // stored signature with the incoming copy's (the funnel for every audit author).
+            audit::ensure_event(&mut mutator, audit)?.node
         };
         txn.commit()?;
         Ok(id)

@@ -240,7 +240,6 @@ impl Store {
         let about_props = fact::about_props(about)?;
         let promoted_props = lineage_props(&promoted.temporal)?;
         let (ledger_labels, ledger_props) = to_node(ledger)?;
-        let (audit_labels, audit_props) = audit::to_node(audit)?;
         let audit_edge = db_string(Audit::LABEL)?;
 
         let mut txn = self.graph().begin_write();
@@ -250,10 +249,10 @@ impl Store {
             // under the write lock — so each probe and its write are atomic and no concurrent
             // committer can slip a duplicate global node, ledger row, or audit between them. The
             // UNIQUE ids are the commit-time backstop; this keeps the heal decision consistent.
+            // (The audit probe lives inside `audit::ensure_event` below, same lock, same graph.)
             let existing_global =
                 crate::attestation::fact_node_in(mutator.read(), &global_fact.identity.id)?;
             let existing_ledger = find_by_candidate(mutator.read(), &ledger.candidate_fact_id)?;
-            let existing_audit = audit::find_existing(mutator.read(), &audit.identity.id)?;
             let global_node = match existing_global {
                 Some(node) => {
                     // Resurrect a previously-demoted copy. The global id is content-addressed, so a
@@ -300,22 +299,18 @@ impl Store {
                     mutator.create_node(ledger_labels, ledger_props)?;
                 }
             }
-            let audit_node = match existing_audit {
-                Some(node) => node,
-                None => {
-                    let node = mutator.create_node(audit_labels, audit_props)?;
-                    mutator.create_edge(
-                        audit_edge,
-                        node,
-                        team_fact,
-                        PropertyMap::from_pairs(Vec::new())?,
-                    )?;
-                    node
-                }
-            };
+            let ensured = audit::ensure_event(&mut mutator, audit)?;
+            if ensured.created {
+                mutator.create_edge(
+                    audit_edge,
+                    ensured.node,
+                    team_fact,
+                    PropertyMap::from_pairs(Vec::new())?,
+                )?;
+            }
             PromoteWriteIds {
                 global_fact: global_node,
-                audit: audit_node,
+                audit: ensured.node,
             }
         };
         txn.commit()?;
@@ -379,9 +374,6 @@ impl Store {
                     == Some(FactStatus::Quarantined)
             };
             let existing_ledger = find_by_candidate(mutator.read(), &ledger.candidate_fact_id)?;
-            let existing_demote = audit::find_existing(mutator.read(), &demote_audit.identity.id)?;
-            let existing_quarantine =
-                audit::find_existing(mutator.read(), &quarantine_audit.identity.id)?;
 
             materialize::ensure_edge(
                 &mut mutator,
@@ -411,22 +403,20 @@ impl Store {
                     mutator.create_node(ledger_labels, ledger_props)?;
                 }
             }
-            if existing_demote.is_none() {
-                let (labels, props) = audit::to_node(demote_audit)?;
-                let node = mutator.create_node(labels, props)?;
+            let demote = audit::ensure_event(&mut mutator, demote_audit)?;
+            if demote.created {
                 mutator.create_edge(
                     audit_edge.clone(),
-                    node,
+                    demote.node,
                     global_fact,
                     PropertyMap::from_pairs(Vec::new())?,
                 )?;
             }
-            if existing_quarantine.is_none() {
-                let (labels, props) = audit::to_node(quarantine_audit)?;
-                let node = mutator.create_node(labels, props)?;
+            let quarantine = audit::ensure_event(&mut mutator, quarantine_audit)?;
+            if quarantine.created {
                 mutator.create_edge(
                     audit_edge,
-                    node,
+                    quarantine.node,
                     global_fact,
                     PropertyMap::from_pairs(Vec::new())?,
                 )?;

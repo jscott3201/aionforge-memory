@@ -117,7 +117,7 @@ impl Store {
 
             // Provenance for each written note: audit node (deduped by id), then `AUDIT -> Note`.
             for (write, note_node) in written.iter().zip(note_nodes) {
-                let audit_node = upsert_audit(&mut mutator, &write.audit)?;
+                let audit_node = crate::audit::ensure_event(&mut mutator, &write.audit)?.node;
                 ensure_edge(
                     &mut mutator,
                     Audit::LABEL,
@@ -129,7 +129,7 @@ impl Store {
 
             // Calls that produced no note: audit recorded anyway, anchored on the subject entity.
             for event in declined {
-                let audit_node = upsert_audit(&mut mutator, event)?;
+                let audit_node = crate::audit::ensure_event(&mut mutator, event)?.node;
                 match entity_node_by_id(mutator.read(), &event.subject_id)? {
                     Some(subject_node) => ensure_edge(
                         &mut mutator,
@@ -148,20 +148,5 @@ impl Store {
         }
         txn.commit()?;
         Ok(())
-    }
-}
-
-/// Find the audit node carrying this event's content-addressed id, or create it. Dedup by id
-/// (UNIQUE) makes a replay reuse the node rather than collide — mirrors the cursor audit path.
-fn upsert_audit(
-    mutator: &mut selene_graph::Mutator<'_, '_>,
-    event: &AuditEvent,
-) -> Result<NodeId, StoreError> {
-    match crate::audit::find_existing(mutator.read(), &event.identity.id)? {
-        Some(node) => Ok(node),
-        None => {
-            let (labels, props) = crate::audit::to_node(event)?;
-            Ok(mutator.create_node(labels, props)?)
-        }
     }
 }

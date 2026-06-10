@@ -396,13 +396,7 @@ impl Store {
             // The audit id is content-derived (keyed on episode + attempt), and `AuditEvent.id`
             // is UNIQUE, so the write must dedup: a re-recorded attempt reuses the node and
             // edge rather than colliding on the constraint (mirrors the materialize audit path).
-            let audit_node = match audit::find_existing(mutator.read(), &audit_event.identity.id)? {
-                Some(node) => node,
-                None => {
-                    let (audit_labels, audit_props) = audit::to_node(audit_event)?;
-                    mutator.create_node(audit_labels, audit_props)?
-                }
-            };
+            let audit_node = audit::ensure_event(&mut mutator, audit_event)?.node;
             ensure_edge(
                 &mut mutator,
                 Audit::LABEL,

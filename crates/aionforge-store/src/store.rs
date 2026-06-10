@@ -138,13 +138,14 @@ impl Store {
     /// land, the recovery baseline must come from the snapshot's recorded type.
     ///
     /// Recovery does not migrate — the schema is already present in the replayed log —
-    /// but it does re-run the §13.5 dimension-consistency check, which the version-
-    /// guarded [`Store::migrate`] would skip on an already-current graph.
+    /// but it does re-run the §13.5 dimension-consistency check and the audit-signature
+    /// latch check (02 §4.11), both of which the version-guarded [`Store::migrate`]
+    /// would skip on an already-current graph.
     ///
     /// # Errors
     /// Returns [`StoreError`] if recovery fails (corrupt or mismatched persistence,
-    /// type drift, or a recovered vector index whose dimension disagrees with
-    /// `config`).
+    /// type drift, a recovered vector index whose dimension disagrees with `config`,
+    /// or a replayed schema that still declares `AuditEvent.signature` immutable).
     pub fn recover(dir: &Path, config: StoreConfig) -> Result<Self, StoreError> {
         let graph = SharedGraph::recover_closed_with_providers(
             dir,
@@ -154,6 +155,7 @@ impl Store {
         )?;
         let store = Self { graph, config };
         store.dimension_consistency_check(config.embedding_dimension)?;
+        store.audit_signature_latch_check()?;
         Ok(store)
     }
 

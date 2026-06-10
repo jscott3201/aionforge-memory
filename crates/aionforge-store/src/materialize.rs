@@ -361,13 +361,7 @@ pub(crate) fn materialize_into(
     //    the same episode reuses the existing audit node and `ensure_edge` adds no second edge,
     //    making the whole audit set idempotent like the facts and notes (04 §3).
     for event in &artifacts.audit_events {
-        let audit_node = match audit::find_existing(mutator.read(), &event.identity.id)? {
-            Some(node) => node,
-            None => {
-                let (labels, props) = audit::to_node(event)?;
-                mutator.create_node(labels, props)?
-            }
-        };
+        let audit_node = audit::ensure_event(mutator, event)?.node;
         ensure_edge(
             mutator,
             Audit::LABEL,

@@ -267,13 +267,7 @@ impl Store {
 
             // Provenance audits: dedup by content-addressed id, then `AUDIT -> source Note`.
             for event in audits {
-                let audit_node = match audit::find_existing(mutator.read(), &event.identity.id)? {
-                    Some(node) => node,
-                    None => {
-                        let (labels, props) = audit::to_node(event)?;
-                        mutator.create_node(labels, props)?
-                    }
-                };
+                let audit_node = audit::ensure_event(&mut mutator, event)?.node;
                 match node_by_id(mutator.read(), Note::LABEL, &event.subject_id)? {
                     Some(subject_node) => ensure_edge(
                         &mut mutator,

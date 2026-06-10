@@ -85,6 +85,12 @@ impl Store {
     pub fn migrate(&self, now: &Timestamp) -> Result<MigrationReport, StoreError> {
         let from_version = self.schema_version()?;
         if from_version >= SCHEMA_VERSION {
+            // Already current — but assert the binding still admits the audit-signature
+            // latch (02 §4.11) before declaring the no-op: a pre-latch binding cannot be
+            // migrated forward (no `ALTER TYPE`), so it must fail loudly here, not at
+            // some later commit's in-place signature upgrade. `Store::recover` runs the
+            // same check for stores that never pass through `migrate`.
+            self.audit_signature_latch_check()?;
             return Ok(MigrationReport {
                 from_version,
                 to_version: from_version,

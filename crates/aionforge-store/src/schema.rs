@@ -9,6 +9,7 @@
 use selene_core::PropertyValueType;
 use selene_graph::{GraphTypeDef, PropertyTypeDef};
 
+use crate::error::StoreError;
 use crate::store::Store;
 
 /// The full declared schema: every node and edge type and its properties.
@@ -41,6 +42,16 @@ pub struct NodeTypeShape {
     pub name: String,
     /// The declared properties.
     pub properties: Vec<PropertyShape>,
+}
+
+impl NodeTypeShape {
+    /// The property with this name, if declared.
+    #[must_use]
+    pub fn property(&self, name: &str) -> Option<&PropertyShape> {
+        self.properties
+            .iter()
+            .find(|property| property.name == name)
+    }
 }
 
 /// A declared edge type.
@@ -117,6 +128,42 @@ impl Store {
     #[must_use]
     pub fn schema_snapshot(&self) -> Option<SchemaSnapshot> {
         self.graph().graph_type().as_deref().map(snapshot_from)
+    }
+
+    /// Assert the bound type admits the audit signature latch (02 §4.11, M4.T06).
+    ///
+    /// The audit write funnel heals a blank-signature `AuditEvent` row by upgrading the
+    /// `signature` property in place, so the live binding must declare that property
+    /// mutable. A store whose persisted DDL predates the latch still declares it
+    /// `IMMUTABLE` — recovery replays the persisted statements, not the compiled-in
+    /// catalog, and the engine has no `ALTER TYPE`, so the divergence cannot be migrated
+    /// forward. On such a binding the heal would surface as an `ImmutablePropertyUpdate`
+    /// aborting the whole enclosing write at some arbitrary later commit; this check
+    /// turns that into a loud open-time failure instead (pre-1.0 posture: recreate the
+    /// store from a fresh migration).
+    ///
+    /// Quiet on an unbound graph or before the `AuditEvent` type exists (the
+    /// pre-migration states — nothing has drifted yet).
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the bound `AuditEvent.signature` is declared immutable.
+    pub fn audit_signature_latch_check(&self) -> Result<(), StoreError> {
+        let Some(snapshot) = self.schema_snapshot() else {
+            return Ok(());
+        };
+        let Some(audit) = snapshot.node_type("AuditEvent") else {
+            return Ok(());
+        };
+        if audit.property("signature").is_some_and(|p| p.immutable) {
+            return Err(StoreError::invariant(
+                "this store's AuditEvent.signature is declared IMMUTABLE (a schema from \
+                 before the M4.T06 audit-signature latch); the blank->signed heal cannot \
+                 work on this binding and the engine has no ALTER TYPE to migrate it — \
+                 recreate the store from a fresh migration (pre-1.0 schema change)"
+                    .to_string(),
+            ));
+        }
+        Ok(())
     }
 }
 

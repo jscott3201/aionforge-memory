@@ -209,30 +209,25 @@ impl Store {
     /// # Errors
     /// Returns [`StoreError`] if translating or committing the event fails.
     pub fn record_reliability_update(&self, event: &AuditEvent) -> Result<NodeId, StoreError> {
-        let (labels, props) = audit::to_node(event)?;
         let audit_edge = db_string(Audit::LABEL)?;
         let mut txn = self.graph().begin_write();
         let id = {
             let mut mutator = txn.mutator();
-            match audit::find_existing(mutator.read(), &event.identity.id)? {
-                Some(node) => node,
-                None => {
-                    let agent_node = agent_node_in(mutator.read(), &event.subject_id)?;
-                    let node = mutator.create_node(labels, props)?;
-                    // Wire AUDIT -> the agent subject so the M4.T06 by-subject walk reaches it.
-                    // The agent should exist; if it somehow does not, the by-subject_id index read
-                    // (reliability_events) still finds the event, so skip the edge rather than fail.
-                    if let Some(agent_node) = agent_node {
-                        mutator.create_edge(
-                            audit_edge,
-                            node,
-                            agent_node,
-                            PropertyMap::from_pairs(Vec::new())?,
-                        )?;
-                    }
-                    node
+            let ensured = audit::ensure_event(&mut mutator, event)?;
+            if ensured.created {
+                // Wire AUDIT -> the agent subject so the M4.T06 by-subject walk reaches it.
+                // The agent should exist; if it somehow does not, the by-subject_id index read
+                // (reliability_events) still finds the event, so skip the edge rather than fail.
+                if let Some(agent_node) = agent_node_in(mutator.read(), &event.subject_id)? {
+                    mutator.create_edge(
+                        audit_edge,
+                        ensured.node,
+                        agent_node,
+                        PropertyMap::from_pairs(Vec::new())?,
+                    )?;
                 }
             }
+            ensured.node
         };
         txn.commit()?;
         Ok(id)

@@ -7,8 +7,10 @@
 use aionforge_domain::blocks::Identity;
 use aionforge_domain::ids::Id;
 use aionforge_domain::nodes::forensic::AuditEvent;
-use selene_core::{DbString, LabelSet, NodeId, PropertyMap, Value, db_string};
-use selene_graph::{RowIndex, SeleneGraph};
+use selene_core::{
+    DbString, LabelDiff, LabelSet, NodeId, PropertyDiff, PropertyMap, Value, db_string,
+};
+use selene_graph::{Mutator, RowIndex, SeleneGraph};
 
 use crate::convert::{
     as_id, as_namespace, as_str, as_timestamp, enum_from_value, enum_value, id_value,
@@ -82,8 +84,9 @@ pub(crate) fn from_properties(props: &PropertyMap) -> Result<AuditEvent, StoreEr
 /// Find an audit event already written with this content-addressed id, returning its node.
 /// `AuditEvent.id` is `UNIQUE`, so this is a probe — the dedup that makes a replay of the same
 /// episode write no second copy of an audit it already produced (04 §3), mirroring the fact
-/// and note paths.
-pub(crate) fn find_existing(snapshot: &SeleneGraph, id: &Id) -> Result<Option<NodeId>, StoreError> {
+/// and note paths. Private on purpose: every author goes through [`ensure_event`], so nothing
+/// outside this module can probe-and-create around the signature reconcile.
+fn find_existing(snapshot: &SeleneGraph, id: &Id) -> Result<Option<NodeId>, StoreError> {
     let label = db_string(AuditEvent::LABEL)?;
     let prop = db_string(ID)?;
     let value = id_value(id)?;
@@ -93,4 +96,144 @@ pub(crate) fn find_existing(snapshot: &SeleneGraph, id: &Id) -> Result<Option<No
     Ok(rows
         .iter()
         .find_map(|row| snapshot.node_id_for_row(RowIndex::new(row))))
+}
+
+/// Outcome of [`ensure_event`]: the audit node, plus whether this call created it — so the
+/// call sites that wire side effects only for a fresh node (the `AUDIT` edge in
+/// `record_reliability_update` and the promotion paths) can branch on `created`.
+pub(crate) struct EnsuredAudit {
+    pub(crate) node: NodeId,
+    pub(crate) created: bool,
+}
+
+/// What [`ensure_event`] does to the stored row's `signature` when a content-identical
+/// event (same content-addressed `AuditEvent.id`) is re-emitted.
+#[derive(Debug, PartialEq, Eq)]
+enum SignatureAction {
+    /// Leave the stored signature untouched.
+    Keep,
+    /// Overwrite the stored signature with the incoming copy's.
+    Upgrade,
+}
+
+/// Decide what happens to the stored signature when a content-identical event is re-emitted.
+///
+/// `AuditEvent.id` is content-addressed over everything EXCEPT the signature (a signature
+/// cannot sign itself — `audit_payload` excludes it), and the id is UNIQUE. So two copies of
+/// "the same" event can disagree only in their `signature` field, and exactly one row exists.
+/// This function is the single policy point deciding which signature that row keeps.
+///
+/// The policy is a one-way latch: blank → signed is the only legal transition.
+///
+/// The four cases and why each lands where it does:
+/// 1. `stored == incoming` (both blank or both the same bytes) — a pure replay (Ed25519 is
+///    deterministic, so honest crash-replays re-sign identical bytes). Keep skips the write.
+/// 2. `stored` blank, `incoming` non-blank — a signed re-emit reaches a row some earlier
+///    unsigned write (or an attacker pre-placing a blank shadow copy) owns. UPGRADE — the
+///    shadow-fix this funnel exists for.
+/// 3. `stored` non-blank, `incoming` blank — an unsigned re-emit reaches an already-signed
+///    row (signing later disabled, or a downgrade attempt). Keep: proof is monotone — a row
+///    can gain a signature, never lose one.
+/// 4. both non-blank but different — reachable honestly by a verbatim crash-heal AFTER a key
+///    rotation (same content, re-signed by the new key). Keep: the verifier binds an event
+///    to the key whose validity window contains the row's STORED `ingested_at`
+///    (audit_verifier.rs cutover), and a dedup hit never re-stamps `ingested_at` — so the
+///    stored signature is the one that verifies, and overwriting it with newer-key bytes
+///    would flip the row from `Valid` to `Invalid`. `(ingested_at, signature)` must stay a
+///    matched pair; Keep is the only action that never tears it apart.
+fn signature_action(stored: &str, incoming: &str) -> SignatureAction {
+    if stored.is_empty() && !incoming.is_empty() {
+        SignatureAction::Upgrade
+    } else {
+        SignatureAction::Keep
+    }
+}
+
+/// The stored `signature` property of an existing audit node.
+fn stored_signature(snapshot: &SeleneGraph, node: NodeId) -> Result<String, StoreError> {
+    let props = snapshot
+        .node_properties(node)
+        .ok_or_else(|| StoreError::decode("audit node has no properties".to_string()))?;
+    let value = props
+        .get(&db_string(SIGNATURE)?)
+        .ok_or_else(|| StoreError::decode("audit node missing `signature`".to_string()))?;
+    Ok(as_str(value)?.to_string())
+}
+
+/// Find-or-create the audit node for this content-addressed event, reconciling the stored
+/// signature with the incoming copy's (M4.T06 PR-5e). Every audit author funnels through
+/// here so the dedup probe and the signature policy stay one code path.
+///
+/// The probe runs against the in-txn working graph under the caller's write lock, so the
+/// probe, any signature reconcile, and the create are atomic with the caller's other writes.
+///
+/// Why reconcile at all: before this, "row exists" meant "write nothing", so whichever copy
+/// of an event landed FIRST owned the row forever — anyone able to write the store could
+/// pre-place a blank-signature copy of a predictable content id, and the later, legitimately
+/// signed emit deduped into a silent no-op. The blank copy permanently shadowed the signed
+/// one and read back as benign "legacy unsigned".
+pub(crate) fn ensure_event(
+    mutator: &mut Mutator<'_, '_>,
+    event: &AuditEvent,
+) -> Result<EnsuredAudit, StoreError> {
+    match find_existing(mutator.read(), &event.identity.id)? {
+        Some(node) => {
+            let stored = stored_signature(mutator.read(), node)?;
+            if signature_action(&stored, &event.signature) == SignatureAction::Upgrade {
+                mutator.update_node(
+                    node,
+                    LabelDiff::new([], [])?,
+                    PropertyDiff::new([(key(SIGNATURE)?, string_value(&event.signature)?)], [])?,
+                )?;
+            } else if !stored.is_empty() && !event.signature.is_empty() && stored != event.signature
+            {
+                // Two signed copies disagree (policy case 4): either a verbatim crash-heal
+                // re-signed by a post-rotation key (benign — the stored signature is the one
+                // the verifier's key window matches) or an attempt to overwrite a valid
+                // signature. Kept either way; rare enough to be worth a forensic trace.
+                tracing::warn!(
+                    audit = %event.identity.id,
+                    "audit dedup kept the stored signature over a conflicting signed copy"
+                );
+            }
+            Ok(EnsuredAudit {
+                node,
+                created: false,
+            })
+        }
+        None => {
+            let (labels, props) = to_node(event)?;
+            Ok(EnsuredAudit {
+                node: mutator.create_node(labels, props)?,
+                created: true,
+            })
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SignatureAction, signature_action};
+
+    /// The one-way latch, pinned case by case: blank → signed is the ONLY transition that
+    /// writes. Flipping any row of this table is a security regression (silent downgrade,
+    /// or tearing the verifier's `(ingested_at, signature)` pairing), not a refactor.
+    #[test]
+    fn the_signature_latch_upgrades_only_blank_to_signed() {
+        let cases = [
+            ("", "", SignatureAction::Keep, "blank replay"),
+            ("sig", "sig", SignatureAction::Keep, "signed replay"),
+            ("", "sig", SignatureAction::Upgrade, "the shadow heal"),
+            ("sig", "", SignatureAction::Keep, "downgrade refused"),
+            (
+                "sig",
+                "other",
+                SignatureAction::Keep,
+                "conflict keeps stored",
+            ),
+        ];
+        for (stored, incoming, expected, why) in cases {
+            assert_eq!(signature_action(stored, incoming), expected, "{why}");
+        }
+    }
 }
