@@ -14,11 +14,17 @@
 //! one-shot and host-coordinated: the caller collects the editor's and the attesters'
 //! signatures out-of-band and presents them together — the substrate holds no pending
 //! edit, because a pending-edit surface is the browse-pending trust-laundering path
-//! the spec forbids (06 §4). Each attester signs the canonical attestation payload
-//! over the block's **stable id** at an `attested_at` inside the clock-skew window, so
-//! a vote recorded for one edit cannot be replayed onto a later one. The content being
-//! vouched for is bound by the compare-and-swap precondition: the store re-checks the
-//! prior-content hash under the write lock and refuses a stale edit whole.
+//! the spec forbids (06 §4). Each attester signs the canonical **core-edit**
+//! attestation payload over the block's stable id *and the exact prior-to-new content
+//! transition*, at an `attested_at` inside the clock-skew window — a vote authorizes
+//! one specific replacement of one block, never "some edit of this block in the
+//! window" (a fact's content-addressed id binds content by itself; a core block's
+//! deliberately stable id cannot, so the transition rides in the signed bytes). The
+//! compare-and-swap precondition then re-checks the prior under the store's write
+//! lock and refuses a stale edit whole. Residual, accepted: if a block is edited back
+//! to the exact prior bytes inside the skew window, an unexpired vote for that same
+//! transition could re-apply — time-bounded, and content-exact, so what re-applies is
+//! precisely what was vouched for.
 //!
 //! Humanness is a **host policy assertion**, not a substrate-verifiable fact: the
 //! policy carries the agent ids the deployment certifies as human-controlled keys, the
@@ -134,11 +140,12 @@ impl CoreEditPolicy {
 pub struct CoreAttesterVote {
     /// The attesting agent.
     pub attester_id: Id,
-    /// When the attester signed — must sit inside the clock-skew window, which is
-    /// what stops a prior edit's vote being replayed onto this one.
+    /// When the attester signed — must sit inside the clock-skew window.
     pub attested_at: Timestamp,
-    /// Base64 Ed25519 signature over the canonical attestation payload
-    /// `(block_id, attester_id, attested_at)`.
+    /// Base64 Ed25519 signature over the canonical core-edit attestation payload
+    /// `(block_id, attester_id, prior_content_hash, new_content_hash, attested_at)` —
+    /// the vote vouches for the exact transition, so it can never be replayed onto a
+    /// different replacement of the same block.
     pub signature_b64: String,
     /// The trust category the vote is made under, if any.
     pub category: Option<String>,
@@ -256,21 +263,27 @@ impl std::fmt::Debug for CoreEditor {
 }
 
 impl CoreEditor {
-    /// Build over the store with a validated policy, the attestation gate, and the
-    /// optional editor-provenance gate (present exactly when signed writes are on).
-    #[must_use]
+    /// Build over the store with the attestation gate and the optional
+    /// editor-provenance gate (present exactly when signed writes are on). The policy
+    /// is validated here, fail-closed — an invalid strictness policy (a zero `k`, a
+    /// human requirement with an empty human list) never stands a gate, no matter
+    /// which caller composed it.
+    ///
+    /// # Errors
+    /// Returns the policy's validation message, naming the offending knob.
     pub fn new(
         store: Arc<Store>,
         attester_gate: AttestationGate,
         editor_gate: Option<Arc<dyn ProvenanceGate>>,
         policy: CoreEditPolicy,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, String> {
+        policy.validate()?;
+        Ok(Self {
             store,
             attester_gate,
             editor_gate,
             policy,
-        }
+        })
     }
 
     /// The policy this editor runs.
@@ -352,12 +365,18 @@ impl CoreEditor {
             distinct.push(vote);
         }
 
-        // Verify every counted vote; one forged or skewed voucher refuses the whole
-        // edit rather than being silently dropped.
+        // Verify every counted vote over the exact transition this request ships
+        // (prior hash -> new-content hash); one forged or skewed voucher refuses the
+        // whole edit rather than being silently dropped. A vote collected for a
+        // different proposed replacement fails here — the transition is in the signed
+        // bytes, not merely implied by the block id.
+        let new_hash = ContentHash::of(request.content.as_bytes());
         for vote in &distinct {
-            match self.attester_gate.admit(
+            match self.attester_gate.admit_core_edit(
                 &request.block_id,
                 &vote.attester_id,
+                &prior_hash,
+                &new_hash,
                 &vote.attested_at,
                 &vote.signature_b64,
             ) {
@@ -415,8 +434,12 @@ impl CoreEditor {
         }
 
         // Resolve attester nodes; a vote whose agent node vanished between the key
-        // check and here is the same coarse refusal as a failed verification.
+        // check and here is the same coarse refusal as a failed verification. The
+        // credited human's node is kept aside: its `Active` status is part of the
+        // verdict, so the store re-checks it under the write lock (the status twin of
+        // the content precondition — the read above was its own lock acquisition).
         let mut attestations: Vec<CoreAttestation> = Vec::with_capacity(distinct.len());
+        let mut required_active = None;
         for vote in &distinct {
             let Some(node) = self.store.agent_node_by_id(&vote.attester_id)? else {
                 return self.reject(
@@ -426,6 +449,9 @@ impl CoreEditor {
                     CoreEditRejection::AttestationFailed,
                 );
             };
+            if human_attester_id == Some(vote.attester_id) {
+                required_active = Some(node);
+            }
             attestations.push(CoreAttestation {
                 attester: node,
                 edge: AttestedBy {
@@ -442,18 +468,30 @@ impl CoreEditor {
             return Ok(CoreEditOutcome::NotFound);
         };
 
-        let new_hash = ContentHash::of(request.content.as_bytes());
         let mut attester_ids: Vec<String> = distinct
             .iter()
             .map(|vote| vote.attester_id.to_string())
             .collect();
         attester_ids.sort();
+        // Content-addressed over the whole applied verdict — block, transition,
+        // editor, attester set, instant — so an at-least-once replay of the same edit
+        // converges to one audit row (the audit funnel dedups by id, the attester
+        // edges are write-when-absent, and the swap is byte-idempotent), while any
+        // *different* edit keeps its own row. This matters for the no-op transition
+        // (prior == new), the one case the compare-and-swap cannot distinguish a
+        // replay from a first apply.
+        let fold = format!(
+            "core_edit|{}|{}|{}|{}|{}|{}",
+            block.identity.id,
+            prior_hash.as_str(),
+            new_hash.as_str(),
+            principal.agent_id,
+            attester_ids.join(","),
+            request.at.timestamp().as_millisecond()
+        );
         let audit = AuditEvent {
-            // Generated, not content-addressed: every applied edit is its own row even
-            // inside one millisecond; replay idempotency lives in the compare-and-swap
-            // (a replayed edit's precondition no longer holds).
             identity: namespace_identity(
-                Id::generate(),
+                Id::from_content_hash(fold.as_bytes()),
                 block.identity.namespace.clone(),
                 &request.at,
             ),
@@ -487,6 +525,7 @@ impl CoreEditor {
             &request.expected_prior,
             &replacement,
             &attestations,
+            required_active,
             &audit,
         )? {
             CoreEditWrite::Applied {
@@ -500,6 +539,15 @@ impl CoreEditor {
             // The block died between the gate and the write: gone is gone.
             CoreEditWrite::NotLive => Ok(CoreEditOutcome::NotFound),
             CoreEditWrite::StaleContent => Ok(CoreEditOutcome::StaleContent),
+            // The credited human retired between the gate's status read and the
+            // commit; the in-lock re-check refused the whole edit, and the refusal is
+            // audited like every human-requirement failure.
+            CoreEditWrite::RequiredAttesterInactive => self.reject(
+                principal,
+                &block,
+                request,
+                CoreEditRejection::HumanAttestationRequired,
+            ),
         }
     }
 
@@ -526,6 +574,20 @@ impl CoreEditor {
             reason,
             request.at.timestamp().as_millisecond()
         );
+        // The refused transition rides in the payload — what the editor tried to
+        // replace and with what — so the rejection row carries the same forensic
+        // anchors as an applied row, and a count shortfall records the exact bar.
+        let mut payload = serde_json::json!({
+            "outcome": "rejected",
+            "reason": reason,
+            "editor_id": principal.agent_id.to_string(),
+            "expected_prior_hash": request.expected_prior.as_str(),
+            "new_content_hash": ContentHash::of(request.content.as_bytes()).as_str(),
+        });
+        if let CoreEditRejection::InsufficientAttesters { required, verified } = &rejection {
+            payload["k_required"] = (*required).into();
+            payload["verified"] = (*verified).into();
+        }
         let audit = AuditEvent {
             identity: namespace_identity(
                 Id::from_content_hash(key.as_bytes()),
@@ -535,11 +597,7 @@ impl CoreEditor {
             kind: AuditKind::CoreEdit,
             subject_id: block.identity.id,
             actor_id: principal.agent_id,
-            payload: serde_json::json!({
-                "outcome": "rejected",
-                "reason": reason,
-                "editor_id": principal.agent_id.to_string(),
-            }),
+            payload,
             signature: String::new(),
             occurred_at: request.at.clone(),
         };
