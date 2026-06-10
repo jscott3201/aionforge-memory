@@ -65,7 +65,7 @@ recall.
 
 ## The forget-eligibility seam
 
-The sweep side of that seam is the pure `forget_eligible` predicate (05 §3, M5.T02): a
+The sweep side of that seam is the pure `forget_eligible` predicate (05 §2, M5.T02): a
 strict AND across the pure axes — unpinned, decayed importance below the sweep's floor,
 trust below the trust floor, unreferenced, and at least a minimum age — where any single
 axis can only *spare* a candidate, never doom one on its own. The pin is double-enforced:
@@ -77,6 +77,15 @@ lineage, and the reference probe itself) belong to the forgetting orchestrator, 
 these pure functions; soft-forget is also the only revision channel that writes a bare
 `expired_at` with the status untouched, which is what keeps it distinguishable from
 supersession, contradiction, and reliability demotion at read time.
+
+On the store side, the sweep reads through two surfaces. A candidate page enumerates the
+sweep-scoped kinds (`Episode` and `Fact` only — identity memory is hard-exempt, skills
+belong to deprecate-never-delete, bad patterns are protected negative knowledge) with
+already-expired nodes filtered at the source, keyset-paginated over `(label, id)` so a
+resumed sweep visits exactly what one full scan would. The "unreferenced" axis is
+answered by a live-edge probe over a node's incoming references — the authoritative
+signal is the edges themselves, never the loss-tolerant `referenced_count` cache, and a
+closed `RELATES_TO` version no longer protects.
 
 ## The caller's clock
 
