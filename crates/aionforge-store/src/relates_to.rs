@@ -30,7 +30,7 @@ use selene_core::{EdgeId, NodeId, PropertyDiff, PropertyMap, db_string};
 use selene_graph::{RowIndex, SeleneGraph};
 
 use crate::convert::{
-    as_id, as_str, id_value, key, namespace_value, string_value, timestamp_value,
+    as_id, as_str, key, namespace_value, node_by_id, string_value, timestamp_value,
 };
 use crate::error::StoreError;
 use crate::materialize::ensure_edge;
@@ -338,17 +338,4 @@ fn live_link_label(
         }
     }
     Ok(None)
-}
-
-/// The committed node carrying this id under the given label (ids are unique per kind).
-fn node_by_id(snapshot: &SeleneGraph, label: &str, id: &Id) -> Result<Option<NodeId>, StoreError> {
-    let label = db_string(label)?;
-    let prop = db_string("id")?;
-    let value = id_value(id)?;
-    let Some(rows) = snapshot.nodes_with_property_eq(&label, &prop, &value) else {
-        return Ok(None);
-    };
-    Ok(rows
-        .iter()
-        .find_map(|row| snapshot.node_id_for_row(RowIndex::new(row))))
 }

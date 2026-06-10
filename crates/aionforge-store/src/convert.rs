@@ -206,3 +206,20 @@ pub(crate) fn json_from_value<T: DeserializeOwned>(value: &Value) -> Result<T, S
         ))),
     }
 }
+
+/// The committed node carrying this id under the given label (ids are unique per kind).
+pub(crate) fn node_by_id(
+    snapshot: &selene_graph::SeleneGraph,
+    label: &str,
+    id: &Id,
+) -> Result<Option<NodeId>, StoreError> {
+    let label = db_string(label)?;
+    let prop = db_string("id")?;
+    let value = id_value(id)?;
+    let Some(rows) = snapshot.nodes_with_property_eq(&label, &prop, &value) else {
+        return Ok(None);
+    };
+    Ok(rows
+        .iter()
+        .find_map(|row| snapshot.node_id_for_row(selene_graph::RowIndex::new(row))))
+}
