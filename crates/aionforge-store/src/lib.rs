@@ -20,6 +20,7 @@ mod config;
 mod consolidation;
 mod convert;
 mod core_block;
+mod core_block_write;
 mod dedup;
 mod distill;
 mod entity;
@@ -57,6 +58,7 @@ pub use config::{
     DEFAULT_EMBEDDING_DIMENSION, StoreConfig, default_data_dir, default_data_dir_checked,
 };
 pub use consolidation::{ConsolidationCursor, ConsolidationWorkItem, LagSnapshot};
+pub use core_block_write::{CoreAttestation, CoreBlockReplacement, CoreEditWrite};
 pub use distill::DistilledNoteWrite;
 pub use error::StoreError;
 pub use forget_read::{FORGET_SCAN_LABELS, ForgetCandidate, ForgetCandidatePage, ForgetCursor};

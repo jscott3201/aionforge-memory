@@ -41,8 +41,9 @@ pub struct AttestWriteIds {
 }
 
 /// The `ATTESTED_BY` edge property map (immutable signature + attest instant + optional
-/// category).
-fn attested_by_props(edge: &AttestedBy) -> Result<PropertyMap, StoreError> {
+/// category) — shared with the core-block edit surface, which records the same edge
+/// shape from a `CoreBlock` source.
+pub(crate) fn attested_by_props(edge: &AttestedBy) -> Result<PropertyMap, StoreError> {
     let mut pairs = vec![
         (key(ATTESTED_AT)?, timestamp_value(&edge.attested_at)),
         (key(SIGNATURE)?, string_value(&edge.signature)?),

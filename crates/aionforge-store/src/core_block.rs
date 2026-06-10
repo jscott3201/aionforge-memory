@@ -51,15 +51,11 @@ const EMBEDDING: &str = "embedding_v1";
 const EMBEDDER_MODEL: &str = "embedder_model";
 
 /// The selene-db node label for a core block (mirrors [`CoreBlock::LABEL`]).
-// The write slice (create + attested edit) is this pair's production caller; until it
-// lands, only the in-crate round-trip tests drive it.
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn label() -> Result<LabelSet, StoreError> {
     Ok(LabelSet::single(db_string(CoreBlock::LABEL)?))
 }
 
 /// Translate a [`CoreBlock`] into the `(labels, properties)` pair for `create_node`.
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn to_node(block: &CoreBlock) -> Result<(LabelSet, PropertyMap), StoreError> {
     let mut pairs: Vec<(DbString, Value)> = Vec::with_capacity(17);
 
