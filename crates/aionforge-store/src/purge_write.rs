@@ -1,7 +1,7 @@
 //! The hard-purge write primitive (05 §3, M5.T03) — the **only** destructive write in
-//! the system, by design and by inspection: nothing else in any aionforge crate calls a
-//! selene delete API, so invariant 13.2 ("only the erasure path destroys") is checkable
-//! by grepping this file's neighbors.
+//! the system, by design and by inspection: the selene delete APIs appear nowhere in
+//! the workspace outside this file, so invariant 13.2 ("only the erasure path
+//! destroys") is checkable by one grep.
 //!
 //! `hard_purge` consumes a closure the read half already computed and bounded
 //! ([`crate::PurgeClosure`]) and destroys it in **one transaction**: every node, every

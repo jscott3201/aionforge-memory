@@ -11,10 +11,12 @@
 //! publishes, and writers serialize with it exactly like a commit. Compaction can never
 //! lose data: it is a pure transform of the live graph.
 //!
-//! What compaction does **not** do: it writes no snapshot and truncates no WAL. On a
-//! persistent store the pre-purge property values still sit in WAL archives until the
-//! snapshot pipeline publishes and rotates — that residency boundary is reported
-//! honestly by the erasure facade, never papered over here.
+//! What compaction does **not** do: it writes no snapshot and truncates no WAL. The
+//! substrate's snapshot publication does truncate the log when it runs, but the store
+//! does not yet drive that pipeline — so on a persistent store the pre-purge property
+//! values remain in the WAL **indefinitely** until snapshot wiring lands. The erasure
+//! facade reports that boundary as it actually stands, never as a process assumed to
+//! be running.
 //!
 //! [`Store::compaction_pressure`] is the cheap scheduling probe: row counters that let
 //! a host decide whether a dense rebuild is worth running without performing one.

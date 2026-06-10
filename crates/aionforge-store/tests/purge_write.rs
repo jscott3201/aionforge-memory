@@ -302,14 +302,23 @@ fn attestation_is_severed_while_entities_and_prior_audits_survive() {
         "the prior attest audit row survives the purge of its subject"
     );
 
-    // Purge the episode: the mentioned entity survives.
+    // Purge the episode: the mentioned entity survives, and the MENTIONS edge to it —
+    // an edge whose far endpoint lives — is both severed and counted.
     let episode_closure = closure_of(&store, e_node);
-    store
+    let episode_outcome = store
         .hard_purge(
             &episode_closure.nodes,
             &purge_audit(e.identity.id, "purge-episode"),
         )
         .expect("purge episode");
+    assert_eq!(
+        episode_outcome,
+        PurgeWrite::Applied {
+            deleted_nodes: 1,
+            deleted_edges: 1,
+        },
+        "the edge to the surviving entity is in the severed count"
+    );
     assert!(!is_live(&store, &e.identity.id, "Episode"));
     assert!(
         is_live(&store, &entity.identity.id, "Entity"),
@@ -426,4 +435,66 @@ fn the_wal_round_trips_a_purge() {
     );
     assert_eq!(audit_count(&recovered, AuditKind::Purge), 1);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A deterministic stand-in for the substrate audit signer (the real one is Ed25519 in
+/// aionforge-trust): object-safe, content-derived output, no crypto.
+#[derive(Debug)]
+struct FakeSigner;
+impl aionforge_domain::verify::AuditEventSigner for FakeSigner {
+    fn sign(&self, event: &AuditEvent) -> String {
+        format!("fake-sig|{}", event.identity.id)
+    }
+}
+
+#[test]
+fn an_installed_signer_stamps_the_purge_row_at_commit() {
+    let store = store();
+    store
+        .install_audit_signer(std::sync::Arc::new(FakeSigner))
+        .expect("install signer");
+    let f = fact("signed and purged");
+    let node = store.insert_fact(&f).expect("insert");
+
+    let event = purge_audit(f.identity.id, "signed-purge");
+    store.hard_purge(&[node], &event).expect("purge");
+    let row = &store
+        .audit_by_kind(AuditKind::Purge, None, 10)
+        .expect("audit")
+        .events[0];
+    assert_eq!(
+        row.signature,
+        format!("fake-sig|{}", event.identity.id),
+        "the blank purge event was stamped inside the commit by the installed signer"
+    );
+}
+
+#[test]
+fn identical_content_reinserted_after_a_purge_resolves_and_searches() {
+    let store = store();
+    let first = episode("reinserted after a purge");
+    let node = store.insert_episode(&first).expect("insert");
+    store
+        .hard_purge(&[node], &purge_audit(first.identity.id, "purge-reinsert"))
+        .expect("purge");
+
+    // The same content under a fresh id: the purge left no residue that blocks it.
+    let again = Episode {
+        identity: Identity {
+            id: Id::generate(),
+            ingested_at: now(),
+            namespace: Namespace::Global,
+            expired_at: None,
+        },
+        ..first.clone()
+    };
+    store.insert_episode(&again).expect("re-insert");
+    assert!(is_live(&store, &again.identity.id, "Episode"));
+    assert!(
+        !store
+            .text_search(SearchKind::Episode, "reinserted", 5)
+            .expect("search")
+            .is_empty(),
+        "the re-inserted content is searchable through the maintained text index"
+    );
 }
