@@ -116,3 +116,14 @@ the engine nor the retrieval crate takes a config dependency. The conservative d
 (seven days episodic, a year semantic) reflect the spec's posture that aggressive
 forgetting risks losing rarely-but-critically-needed memories; deployments tune from
 there.
+
+The forgetting sweep (M5.T02) has its own `forgetting` section — also off by default —
+carrying the floors the sweep measures candidates against: `importance_floor`,
+`trust_floor`, `min_age_secs`, the per-page `batch_cap`, and a `forget_bad_patterns`
+toggle that keeps negative knowledge protected unless a deployment opts it in. The
+section deliberately re-declares no half-lives: the sweep's decayed-importance axis
+reads the `decay` section's, so rank-time and sweep-time aging can never disagree.
+Validation when enabled keeps each floor finite in `[0.0, 1.0]` and rejects both floors
+at the ceiling together — a configuration that would make nearly every unpinned memory
+a sweep candidate. The section ships ahead of the sweep that consumes it, the same way
+the decay section landed before its retrieval wiring.
