@@ -211,6 +211,7 @@ async fn a_custom_authorizer_is_honored_by_the_facade() {
         FakeEmbedder::new(),
         MemoryConfig::default(),
         Arc::new(DenyAll),
+        &now(),
     )
     .expect("build memory");
 

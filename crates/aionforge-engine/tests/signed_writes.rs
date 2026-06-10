@@ -108,6 +108,7 @@ fn signed_config() -> MemoryConfig {
         security: SecurityGate {
             signed_writes: true,
             clock_skew_tolerance_ms: 60_000,
+            ..SecurityGate::default()
         },
         ..MemoryConfig::default()
     }
@@ -155,8 +156,13 @@ async fn a_correctly_signed_write_lands_with_the_host_subject_id() {
     let store = migrated_store();
     let key = SigningKey::from_bytes(&[7u8; 32]);
     let agent = enroll(&store, &key);
-    let memory = Memory::new(Arc::clone(&store), FakeEmbedder::new(), signed_config())
-        .expect("build signed memory");
+    let memory = Memory::new(
+        Arc::clone(&store),
+        FakeEmbedder::new(),
+        signed_config(),
+        &migrate_ts(),
+    )
+    .expect("build signed memory");
 
     let subject = Id::generate();
     let receipt = memory
@@ -182,8 +188,13 @@ async fn a_wrong_key_signature_is_rejected() {
     let enrolled = SigningKey::from_bytes(&[7u8; 32]);
     let attacker = SigningKey::from_bytes(&[9u8; 32]);
     let agent = enroll(&store, &enrolled);
-    let memory = Memory::new(Arc::clone(&store), FakeEmbedder::new(), signed_config())
-        .expect("build signed memory");
+    let memory = Memory::new(
+        Arc::clone(&store),
+        FakeEmbedder::new(),
+        signed_config(),
+        &migrate_ts(),
+    )
+    .expect("build signed memory");
 
     let subject = Id::generate();
     // Signed by the attacker's key, which is not the one the store holds for `agent`.
@@ -204,8 +215,13 @@ async fn an_unenrolled_writer_is_rejected_fail_closed() {
     let key = SigningKey::from_bytes(&[7u8; 32]);
     // No enrollment: the writer's key is never registered.
     let agent = Id::generate();
-    let memory = Memory::new(Arc::clone(&store), FakeEmbedder::new(), signed_config())
-        .expect("build signed memory");
+    let memory = Memory::new(
+        Arc::clone(&store),
+        FakeEmbedder::new(),
+        signed_config(),
+        &migrate_ts(),
+    )
+    .expect("build signed memory");
 
     let subject = Id::generate();
     let error = memory
@@ -224,8 +240,13 @@ async fn an_unsigned_write_is_rejected_under_a_signed_policy() {
     let store = migrated_store();
     let key = SigningKey::from_bytes(&[7u8; 32]);
     let agent = enroll(&store, &key);
-    let memory = Memory::new(Arc::clone(&store), FakeEmbedder::new(), signed_config())
-        .expect("build signed memory");
+    let memory = Memory::new(
+        Arc::clone(&store),
+        FakeEmbedder::new(),
+        signed_config(),
+        &migrate_ts(),
+    )
+    .expect("build signed memory");
 
     let request = CaptureRequest {
         content: "no envelope".to_string(),
@@ -263,6 +284,7 @@ async fn signed_writes_off_admits_an_unsigned_write_unchanged() {
         Arc::clone(&store),
         FakeEmbedder::new(),
         MemoryConfig::default(),
+        &migrate_ts(),
     )
     .expect("build default memory");
 
@@ -298,9 +320,10 @@ fn a_zero_skew_tolerance_with_signed_writes_is_a_config_error() {
         security: SecurityGate {
             signed_writes: true,
             clock_skew_tolerance_ms: 0,
+            ..SecurityGate::default()
         },
         ..MemoryConfig::default()
     };
-    let result = Memory::new(store, FakeEmbedder::new(), config);
+    let result = Memory::new(store, FakeEmbedder::new(), config, &migrate_ts());
     assert!(matches!(result, Err(EngineError::Config(_))));
 }
