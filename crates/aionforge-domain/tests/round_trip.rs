@@ -87,12 +87,13 @@ fn arb_fact() -> impl Strategy<Value = Fact> {
             prop::option::of(arb_embedding()),
             prop::option::of(arb_embedder_model()),
             prop::option::of(arb_extraction()),
+            prop::option::of(arb_timestamp()),
         ),
     )
         .prop_map(
             |(
                 (identity, stats, subject_id, predicate, object, confidence),
-                (status, statement, embedding, embedder_model, extraction),
+                (status, statement, embedding, embedder_model, extraction, cooled_until),
             )| Fact {
                 identity,
                 stats,
@@ -105,6 +106,7 @@ fn arb_fact() -> impl Strategy<Value = Fact> {
                 embedding,
                 embedder_model,
                 extraction,
+                cooled_until,
             },
         )
 }

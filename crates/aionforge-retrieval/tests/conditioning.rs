@@ -213,6 +213,7 @@ fn assert_fact(
         embedding: Some(Embedding::new(embedding.to_vec()).expect("valid")),
         embedder_model: None,
         extraction: None,
+        cooled_until: None,
     };
     let about = About {
         temporal: BiTemporal {

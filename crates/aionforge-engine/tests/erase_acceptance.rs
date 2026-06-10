@@ -114,6 +114,7 @@ fn fact(statement: &str, namespace: Namespace) -> Fact {
         embedding: Some(fake_embedding()),
         embedder_model: None,
         extraction: None,
+        cooled_until: None,
     }
 }
 

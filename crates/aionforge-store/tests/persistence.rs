@@ -12,7 +12,7 @@ use aionforge_domain::blocks::Identity;
 use aionforge_domain::ids::Id;
 use aionforge_domain::namespace::Namespace;
 use aionforge_domain::nodes::forensic::{AuditEvent, AuditKind};
-use aionforge_store::{BoundQuery, QueryResult, Store, StoreConfig, Value};
+use aionforge_store::{BoundQuery, QueryResult, SCHEMA_VERSION, Store, StoreConfig, Value};
 
 use jiff::Zoned;
 
@@ -184,7 +184,10 @@ fn persistence_round_trips_schema_data_indexes_and_providers() {
         .unwrap();
         store.execute(&supersede).expect("supersede");
 
-        assert_eq!(store.schema_version().expect("schema version"), 1);
+        assert_eq!(
+            store.schema_version().expect("schema version"),
+            SCHEMA_VERSION
+        );
         assert_eq!(store.vector_indexes().len(), 7);
         assert_eq!(store.text_indexes().len(), 5);
         assert_eq!(store.property_indexes().len(), 51);
@@ -199,7 +202,7 @@ fn persistence_round_trips_schema_data_indexes_and_providers() {
     let recovered = Store::recover(&dir, config).expect("recover");
     assert_eq!(
         recovered.schema_version().expect("schema version"),
-        1,
+        SCHEMA_VERSION,
         "schema version survives"
     );
     assert_eq!(
@@ -347,14 +350,20 @@ fn open_or_recover_creates_then_recovers() {
     // First call: no WAL yet, so it creates the directory, opens fresh, and migrates.
     {
         let store = Store::open_or_recover(&dir, config, &now()).expect("first open creates");
-        assert_eq!(store.schema_version().expect("schema version"), 1);
+        assert_eq!(
+            store.schema_version().expect("schema version"),
+            SCHEMA_VERSION
+        );
         insert_fact(&store, "fact-1", "entity-a");
         drop(store);
     }
 
     // Second call: the WAL exists, so it recovers and the data is there.
     let store = Store::open_or_recover(&dir, config, &now()).expect("second open recovers");
-    assert_eq!(store.schema_version().expect("schema version"), 1);
+    assert_eq!(
+        store.schema_version().expect("schema version"),
+        SCHEMA_VERSION
+    );
     assert_eq!(
         fact_count(&store),
         1,

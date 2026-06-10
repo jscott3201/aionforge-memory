@@ -96,6 +96,7 @@ fn low_fact() -> Fact {
         embedding: None,
         embedder_model: None,
         extraction: None,
+        cooled_until: None,
     }
 }
 

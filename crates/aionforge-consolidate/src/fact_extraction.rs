@@ -414,6 +414,7 @@ where
                     embedding: None,
                     embedder_model: Some(model.clone()),
                     extraction: Some(extraction),
+                    cooled_until: None,
                 },
                 about: about_window(episode, &cx.now),
             });

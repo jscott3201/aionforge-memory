@@ -237,6 +237,7 @@ mod tests {
             embedding: None,
             embedder_model: None,
             extraction: None,
+            cooled_until: None,
         }
     }
 

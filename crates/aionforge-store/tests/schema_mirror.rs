@@ -125,6 +125,7 @@ fn expected_nodes() -> Vec<(&'static str, Vec<Prop>)> {
                 opt("object_value", K::Json),
                 req("confidence", K::Float),
                 req("status", K::String),
+                opt("cooled_until", K::ZonedDateTime),
                 req("statement", K::String),
                 opt("embedding_v1", K::Vector),
                 opt("embedder_model", K::String),

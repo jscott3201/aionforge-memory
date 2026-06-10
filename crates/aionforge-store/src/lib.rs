@@ -23,6 +23,7 @@ mod core_block;
 mod core_block_write;
 mod dedup;
 mod distill;
+mod drift_read;
 mod entity;
 mod episode;
 mod error;
@@ -60,6 +61,7 @@ pub use config::{
 pub use consolidation::{ConsolidationCursor, ConsolidationWorkItem, LagSnapshot};
 pub use core_block_write::{CoreAttestation, CoreBlockReplacement, CoreEditWrite};
 pub use distill::DistilledNoteWrite;
+pub use drift_read::BehaviorVector;
 pub use error::StoreError;
 pub use forget_read::{FORGET_SCAN_LABELS, ForgetCandidate, ForgetCandidatePage, ForgetCursor};
 pub use forget_write::ForgetWrite;

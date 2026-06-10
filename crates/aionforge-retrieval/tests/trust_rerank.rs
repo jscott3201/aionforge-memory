@@ -155,6 +155,7 @@ fn fact_with_trust(store: &Store, statement: &str, trust: f64) -> Id {
         embedding: Some(Embedding::new(NEAR.to_vec()).expect("valid")),
         embedder_model: None,
         extraction: None,
+        cooled_until: None,
     };
     let about = About {
         temporal: BiTemporal {

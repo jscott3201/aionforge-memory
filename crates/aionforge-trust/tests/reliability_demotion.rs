@@ -166,6 +166,7 @@ fn fact(store: &Store, namespace: Namespace, statement: &str) -> (NodeId, Fact) 
         embedding: None,
         embedder_model: None,
         extraction: None,
+        cooled_until: None,
     };
     let node = store
         .assert_fact(

@@ -173,6 +173,7 @@ fn team_fact(store: &Store, statement: &str) -> (NodeId, Id) {
         embedding: None,
         embedder_model: None,
         extraction: None,
+        cooled_until: None,
     };
     let node = store
         .assert_fact(

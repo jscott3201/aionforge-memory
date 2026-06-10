@@ -142,6 +142,7 @@ fn fact(store: &Store, statement: &str) -> (NodeId, Fact) {
         embedding: None,
         embedder_model: None,
         extraction: None,
+        cooled_until: None,
     };
     let about = About {
         temporal: BiTemporal {

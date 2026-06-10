@@ -177,6 +177,7 @@ fn fact_with_stats(
         embedding: Some(Embedding::new(vector.to_vec()).expect("valid")),
         embedder_model: None,
         extraction: None,
+        cooled_until: None,
     };
     let about = About {
         temporal: BiTemporal {

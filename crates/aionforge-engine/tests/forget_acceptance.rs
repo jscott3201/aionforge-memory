@@ -389,6 +389,7 @@ async fn ac4_conservative_protections_hold_and_off_sweeps_nothing() {
         embedding: None,
         embedder_model: None,
         extraction: None,
+        cooled_until: None,
     };
     store.insert_fact(&fact).expect("insert");
     let report = off.sweep_forgetting(None, 200, &now()).expect("sweep");

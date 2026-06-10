@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::blocks::{Identity, Stats};
 use crate::embedding::{EmbedderModel, Embedding};
 use crate::ids::Id;
+use crate::time::Timestamp;
 use crate::value::ObjectValue;
 
 /// The assertion lifecycle status of a fact (02 §4.2).
@@ -91,6 +92,11 @@ pub struct Fact {
     pub embedder_model: Option<EmbedderModel>,
     /// Extractor identity and source provenance.
     pub extraction: Option<Extraction>,
+    /// The cooling stamp (05 §1, M5.T05): set once by the off-cursor cooling sweep
+    /// when the fact lands proximate to a high-trust core block. Rank-time trust is
+    /// reduced until this instant and recovers without a write — the modulation is a
+    /// pure read-time computation over this stamp. `None` = never cooled.
+    pub cooled_until: Option<Timestamp>,
 }
 
 impl Fact {

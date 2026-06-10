@@ -79,6 +79,7 @@ fn fact(subject: Id, predicate: &str, object: ObjectValue, statement: &str) -> F
         embedding: None,
         embedder_model: None,
         extraction: None,
+        cooled_until: None,
     }
 }
 

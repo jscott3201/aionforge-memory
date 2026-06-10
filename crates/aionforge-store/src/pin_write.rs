@@ -186,6 +186,7 @@ mod tests {
             embedding: None,
             embedder_model: None,
             extraction: None,
+            cooled_until: None,
         };
         let node = store.insert_fact(&fact).expect("insert");
         let props_of = || -> PropertyMap {

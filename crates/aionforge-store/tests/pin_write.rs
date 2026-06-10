@@ -64,6 +64,7 @@ fn fact_with(status: FactStatus, expired: bool) -> Fact {
         embedding: None,
         embedder_model: None,
         extraction: None,
+        cooled_until: None,
     }
 }
 

@@ -30,7 +30,7 @@
 /// The migration runner bumps the `SchemaVersion` singleton to this value once every
 /// type is declared. A future embedder change or added kind is a new version with its
 /// own forward-only step; this catalog is version 1, the full v1.0.0 surface.
-pub const SCHEMA_VERSION: i64 = 1;
+pub const SCHEMA_VERSION: i64 = 2;
 
 /// One catalog entry: a type's identifying label and the statement that declares it.
 pub(crate) struct TypeDdl {
@@ -89,6 +89,7 @@ pub(crate) const NODE_TYPES: &[TypeDdl] = &[
             object_value :: JSON,
             confidence :: FLOAT NOT NULL,
             status :: STRING NOT NULL DEFAULT 'active',
+            cooled_until :: ZONED DATETIME,
             statement :: STRING NOT NULL,
             embedding_v1 :: VECTOR,
             embedder_model :: STRING,

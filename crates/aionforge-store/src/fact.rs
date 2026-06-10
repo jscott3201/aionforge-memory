@@ -48,6 +48,7 @@ const OBJECT_ENTITY_ID: &str = "object_entity_id";
 const OBJECT_VALUE: &str = "object_value";
 const CONFIDENCE: &str = "confidence";
 const STATUS: &str = "status";
+const COOLED_UNTIL: &str = "cooled_until";
 const STATEMENT: &str = "statement";
 const EMBEDDING: &str = "embedding_v1";
 const EMBEDDER_MODEL: &str = "embedder_model";
@@ -147,6 +148,9 @@ pub(crate) fn to_node(fact: &Fact) -> Result<(LabelSet, PropertyMap), StoreError
     if let Some(extraction) = &fact.extraction {
         pairs.push((key(EXTRACTION)?, json_value(extraction)?));
     }
+    if let Some(cooled_until) = &fact.cooled_until {
+        pairs.push((key(COOLED_UNTIL)?, timestamp_value(cooled_until)));
+    }
 
     Ok((label()?, PropertyMap::from_pairs(pairs)?))
 }
@@ -191,6 +195,7 @@ pub(crate) fn from_properties(props: &PropertyMap) -> Result<Fact, StoreError> {
         statement: as_str(require(STATEMENT)?)?.to_string(),
         embedding: get(EMBEDDING)?.map(as_embedding).transpose()?,
         embedder_model: get(EMBEDDER_MODEL)?.map(as_embedder_model).transpose()?,
+        cooled_until: get(COOLED_UNTIL)?.map(as_timestamp).transpose()?,
         extraction: get(EXTRACTION)?.map(json_from_value).transpose()?,
     })
 }

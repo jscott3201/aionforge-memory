@@ -197,6 +197,7 @@ fn assert_fact(store: &Store, subject: &Id, subject_node: NodeId, statement: &st
         embedding: Some(Embedding::new(emb.to_vec()).expect("valid")),
         embedder_model: None,
         extraction: None,
+        cooled_until: None,
     };
     let about = About {
         temporal: BiTemporal {

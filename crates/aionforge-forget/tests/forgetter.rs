@@ -89,6 +89,7 @@ fn fact_with(stats: Stats, status: FactStatus) -> Fact {
         embedding: None,
         embedder_model: None,
         extraction: None,
+        cooled_until: None,
     }
 }
 
