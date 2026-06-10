@@ -12,7 +12,7 @@
 
 Aionforge Memory gives AI agents a real long-term memory: one that remembers across
 sessions, keeps its facts straight over time, and can be shared safely between
-agents. It's a Rust library built on [`selene-db`](https://github.com/jscott3201/selene-db),
+agents. It's a Rust library built on [`selene-db`](https://github.com/Aionforge-Labs/selene-db),
 an embeddable graph engine, and it uses that engine's own storage, search, and graph
 machinery instead of bolting on a separate database or vector index.
 

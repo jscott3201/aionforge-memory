@@ -122,4 +122,4 @@ allow-registry = ["https://github.com/rust-lang/crates.io-index"]
 # selene-db is consumed as a git dependency tracking its `development` branch.
 # Cargo.lock pins the exact commit (reproducible; CI builds `--locked`); the branch
 # source is allow-listed here.
-allow-git = ["ssh://git@github.com/jscott3201/selene-db.git"]
+allow-git = ["ssh://git@github.com/Aionforge-Labs/selene-db.git"]
