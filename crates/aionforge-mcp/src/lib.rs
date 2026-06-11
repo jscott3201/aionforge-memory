@@ -22,9 +22,12 @@ mod surface;
 mod tools;
 
 pub use http_transport::{
-    AionforgeAuthenticatedStreamableHttpService, AionforgeStreamableHttpService, BearerAuthService,
-    BearerToken, STREAMABLE_HTTP_ENDPOINT, StreamableHttpConfigError, StreamableHttpOptions,
-    streamable_http_config, streamable_http_service, streamable_http_service_with_auth,
+    AionforgeAuthenticatedStreamableHttpService, AionforgeStreamableHttpService,
+    BearerAuthChallenge, BearerAuthService, BearerToken,
+    OAUTH_PROTECTED_RESOURCE_WELL_KNOWN_PREFIX, OAuthProtectedResourceMetadata,
+    STREAMABLE_HTTP_ENDPOINT, StreamableHttpConfigError, StreamableHttpOptions,
+    oauth_protected_resource_well_known_path, streamable_http_config, streamable_http_service,
+    streamable_http_service_with_auth, streamable_http_service_with_auth_challenge,
 };
 pub use lifecycle::{
     AuditCursorToolParam, AuditHistoryToolParams, ConsolidationRunToolParams,

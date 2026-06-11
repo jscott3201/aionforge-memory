@@ -37,6 +37,29 @@ Default HTTP posture:
 - Session mode: stateful, matching normal Streamable HTTP clients.
 - Auth: available through the bearer wrapper; required for shared or remote use.
 
+## OAuth Readiness
+
+The built-in bearer wrapper is a local/private deployment guard, not a complete
+OAuth resource server. For remote multi-user deployments, mount an OAuth verifier
+at the HTTP boundary that validates issuer, expiry, scope, and audience/resource
+binding before the MCP service sees the request. Do not pass inbound MCP access
+tokens through to downstream services.
+
+The crate exposes two small helpers for MCP OAuth 2.1 integration:
+
+- `OAuthProtectedResourceMetadata` renders RFC 9728 metadata for the MCP endpoint.
+  For the default `/mcp` path, serve it at
+  `/.well-known/oauth-protected-resource/mcp` or expose the same URL through the
+  `WWW-Authenticate` challenge.
+- `BearerAuthChallenge` can advertise `resource_metadata` and `scope` parameters
+  on 401 responses so SDK clients can discover the authorization server and
+  request the right scopes.
+
+Use the MCP endpoint URL as the OAuth `resource` value, for example
+`https://memory.example.com/mcp`. Authorization and token requests should include
+that resource value, and the verifier should reject tokens that are not audience
+bound to it.
+
 ## Codex CLI
 
 Codex reads MCP servers from `config.toml`. HTTP entries use `url`, and static
