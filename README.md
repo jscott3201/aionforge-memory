@@ -99,6 +99,18 @@ AIONFORGE_MCP_TOKEN=change-me \
   --bearer-token-env AIONFORGE_MCP_TOKEN
 ```
 
+Or build the Alpine container image. The Docker build needs BuildKit SSH
+forwarding because `selene-db` is a private git dependency:
+
+```bash
+DOCKER_BUILDKIT=1 docker build --ssh default -t aionforge-memory:dev .
+docker run --rm \
+  -e AIONFORGE_MCP_TOKEN=change-me \
+  -p 127.0.0.1:3918:3918 \
+  -v aionforge-data:/data \
+  aionforge-memory:dev
+```
+
 `Cargo.lock` pins the exact substrate commit, so builds are reproducible and CI runs
 `--locked`. To pull a newer `development` commit, run `cargo update -p selene-core` (and
 the other `selene-*` crates).

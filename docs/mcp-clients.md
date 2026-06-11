@@ -36,6 +36,17 @@ AIONFORGE_MCP_TOKEN=change-me \
   --bearer-token-env AIONFORGE_MCP_TOKEN
 ```
 
+The Docker image defaults to the authenticated HTTP server on port `3918` and
+stores state under `/data`:
+
+```bash
+docker run --rm \
+  -e AIONFORGE_MCP_TOKEN=change-me \
+  -p 127.0.0.1:3918:3918 \
+  -v aionforge-data:/data \
+  aionforge-memory:dev
+```
+
 Default HTTP posture:
 
 - Allowed hosts: `localhost`, `127.0.0.1`, and `::1`.
