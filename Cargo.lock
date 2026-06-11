@@ -156,6 +156,7 @@ dependencies = [
  "aionforge-trust",
  "base64",
  "ed25519-dalek",
+ "metrics",
  "miette",
  "secrecy",
  "serde_json",
@@ -250,6 +251,7 @@ version = "0.1.0"
 dependencies = [
  "aionforge-domain",
  "jiff",
+ "metrics",
  "miette",
  "proptest",
  "selene-core",

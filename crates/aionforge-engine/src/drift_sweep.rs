@@ -20,7 +20,7 @@ use aionforge_domain::time::{Timestamp, to_utc};
 use aionforge_forget::{CentroidOutcome, CoolingSweepReport, DriftBaseline, DriftSweepReport};
 use aionforge_store::CoolingCursor;
 
-use crate::{EngineError, Memory};
+use crate::{EngineError, Memory, telemetry};
 
 /// The outcome of [`Memory::compute_drift_baseline`]: the document for attesters to
 /// co-sign, or the named reason there is none. Never an auto-applied write — the
@@ -63,9 +63,16 @@ impl<E: Embedder> Memory<E> {
         now: &Timestamp,
     ) -> Result<DriftSweepReport, EngineError> {
         let Some(detector) = &self.drift_detector else {
+            telemetry::drift_disabled("drift");
             return Ok(DriftSweepReport::default());
         };
-        Ok(detector.sweep(self.embedder.model(), after, limit, now)?)
+        let started = std::time::Instant::now();
+        let result = detector.sweep(self.embedder.model(), after, limit, now);
+        match &result {
+            Ok(report) => telemetry::drift_sweep(report, started.elapsed()),
+            Err(_) => telemetry::drift_error("drift", started.elapsed()),
+        }
+        Ok(result?)
     }
 
     /// Sweep one page of recently-ingested facts and stamp the core-proximate ones'
@@ -89,9 +96,16 @@ impl<E: Embedder> Memory<E> {
         now: &Timestamp,
     ) -> Result<CoolingSweepReport, EngineError> {
         let Some(detector) = &self.drift_detector else {
+            telemetry::drift_disabled("cooling");
             return Ok(CoolingSweepReport::default());
         };
-        Ok(detector.sweep_cooling(after, limit, now)?)
+        let started = std::time::Instant::now();
+        let result = detector.sweep_cooling(after, limit, now);
+        match &result {
+            Ok(report) => telemetry::cooling_sweep(report, started.elapsed()),
+            Err(_) => telemetry::drift_error("cooling", started.elapsed()),
+        }
+        Ok(result?)
     }
 
     /// Compute the drift-baseline document for one live core block: the block's

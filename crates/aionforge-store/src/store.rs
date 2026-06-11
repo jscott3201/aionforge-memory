@@ -1,8 +1,11 @@
 //! The L0 store: a single owned `SharedGraph` with typed read/write and
 //! parameter-bound GQL.
 
-use std::path::Path;
-use std::sync::Arc;
+use std::{
+    path::Path,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use aionforge_domain::edges::{About, Contradicts, SupersededBy};
 use aionforge_domain::embedding::Embedding;
@@ -217,11 +220,19 @@ impl Store {
         config: StoreConfig,
         now: &Timestamp,
     ) -> Result<Self, StoreError> {
-        if dir.join(DEFAULT_WAL_FILE_NAME).exists() {
+        let started = Instant::now();
+        let mode = if dir.join(DEFAULT_WAL_FILE_NAME).exists() {
+            "recover"
+        } else {
+            "fresh"
+        };
+        let result = if mode == "recover" {
             Self::recover(dir, config)
         } else {
             Self::open_persistent_migrated(dir, config, now)
-        }
+        };
+        emit_open_metrics(mode, &result, started.elapsed());
+        result
     }
 
     /// Open an in-memory store with the full schema already applied.
@@ -750,6 +761,22 @@ impl Store {
         txn.commit()?;
         Ok(())
     }
+}
+
+fn emit_open_metrics(mode: &'static str, result: &Result<Store, StoreError>, elapsed: Duration) {
+    let outcome = if result.is_ok() { "success" } else { "error" };
+    metrics::counter!(
+        "aionforge_store_open_total",
+        "mode" => mode,
+        "outcome" => outcome,
+    )
+    .increment(1);
+    metrics::histogram!(
+        "aionforge_store_open_duration_seconds",
+        "mode" => mode,
+        "outcome" => outcome,
+    )
+    .record(elapsed.as_secs_f64());
 }
 
 /// This store's fixed graph identity. A single graph per store, so a constant id;

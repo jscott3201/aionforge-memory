@@ -17,7 +17,7 @@
 //! crash can lose at most the in-flight episode, which stays `raw` and is re-run, never
 //! double-committed.
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Instant};
 
 use aionforge_domain::blocks::Identity;
 use aionforge_domain::ids::Id;
@@ -110,6 +110,16 @@ impl<C: Clock> Consolidator<C> {
     /// fails. A *pass* failure is not an error here — it is audited and reflected in the
     /// returned [`TickReport`].
     pub async fn tick_once(&self) -> Result<TickReport, ConsolidationError> {
+        let started = Instant::now();
+        let result = self.tick_once_inner().await;
+        match &result {
+            Ok(report) => emit_tick_metrics(report, started.elapsed()),
+            Err(error) => emit_tick_error_metrics(error, started.elapsed()),
+        }
+        result
+    }
+
+    async fn tick_once_inner(&self) -> Result<TickReport, ConsolidationError> {
         let batch = self
             .store
             .discover_consolidation_work(self.config.batch_size)?;
@@ -161,6 +171,7 @@ impl<C: Clock> Consolidator<C> {
         match consolidator.store.reset_in_progress_episodes() {
             Ok(0) => {}
             Ok(count) => {
+                metrics::counter!("consolidation_recovery_resets_total").increment(count);
                 tracing::info!(
                     count,
                     "reset in_progress episodes left by an interrupted run"
@@ -358,6 +369,44 @@ fn emit_lag_metrics(lag: &ConsolidationLag, ceiling: std::time::Duration) {
             "consolidation lag exceeds the configured ceiling"
         );
     }
+}
+
+fn emit_tick_metrics(report: &TickReport, elapsed: std::time::Duration) {
+    metrics::counter!(
+        "consolidation_ticks_total",
+        "outcome" => "success",
+        "error" => "none",
+    )
+    .increment(1);
+    metrics::histogram!(
+        "consolidation_tick_duration_seconds",
+        "outcome" => "success",
+        "error" => "none",
+    )
+    .record(elapsed.as_secs_f64());
+    metrics::counter!("consolidation_episodes_consolidated_total")
+        .increment(report.consolidated as u64);
+    metrics::counter!("consolidation_episodes_retried_total").increment(report.retried as u64);
+    metrics::counter!("consolidation_episodes_failed_total").increment(report.failed as u64);
+}
+
+fn emit_tick_error_metrics(error: &ConsolidationError, elapsed: std::time::Duration) {
+    let kind = match error {
+        ConsolidationError::Store(_) => "store",
+        ConsolidationError::Timeout(_) => "timeout",
+    };
+    metrics::counter!(
+        "consolidation_ticks_total",
+        "outcome" => "error",
+        "error" => kind,
+    )
+    .increment(1);
+    metrics::histogram!(
+        "consolidation_tick_duration_seconds",
+        "outcome" => "error",
+        "error" => kind,
+    )
+    .record(elapsed.as_secs_f64());
 }
 
 /// A handle to a spawned consolidation loop.

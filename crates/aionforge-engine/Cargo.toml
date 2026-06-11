@@ -25,6 +25,7 @@ thiserror = { workspace = true }
 # never reads the environment itself); same redaction/zeroize posture as the config crate.
 secrecy = { workspace = true }
 miette = { workspace = true }
+metrics = { workspace = true }
 # The core-block facade authors its genesis and namespace-denied audit payloads (05 §4).
 # Already pinned at the workspace; no new versions enter the tree.
 serde_json = { workspace = true }

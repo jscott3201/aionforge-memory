@@ -21,7 +21,7 @@ use aionforge_domain::time::Timestamp;
 use aionforge_forget::{ForgetSweepPage, PointForget, PointUnforget};
 use aionforge_store::ForgetCursor;
 
-use crate::{EngineError, Memory};
+use crate::{EngineError, Memory, telemetry};
 
 impl<E: Embedder> Memory<E> {
     /// Soft-forget one memory by id, fully gated: a pinned, attested, lineage, or
@@ -71,8 +71,15 @@ impl<E: Embedder> Memory<E> {
         now: &Timestamp,
     ) -> Result<ForgetSweepPage, EngineError> {
         let Some(forgetter) = &self.forgetter else {
+            telemetry::forgetting_disabled();
             return Ok(ForgetSweepPage::default());
         };
-        Ok(forgetter.sweep_page(after, limit, now)?)
+        let started = std::time::Instant::now();
+        let result = forgetter.sweep_page(after, limit, now);
+        match &result {
+            Ok(report) => telemetry::forgetting_sweep(report, started.elapsed()),
+            Err(_) => telemetry::forgetting_error(started.elapsed()),
+        }
+        Ok(result?)
     }
 }

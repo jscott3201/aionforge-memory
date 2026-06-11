@@ -4,7 +4,7 @@ use aionforge_domain::contracts::Embedder;
 use aionforge_domain::embedding::EmbedderModel;
 use aionforge_store::{StoreDoctorReport, VectorDimensionMismatch};
 
-use crate::{EngineError, Memory};
+use crate::{EngineError, Memory, telemetry};
 
 /// Live embedder health as seen by the engine facade.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,6 +41,7 @@ impl<E: Embedder> Memory<E> {
         let store = self.store.doctor_report()?;
         let embedder = self.embedder_doctor_report();
         let ok = store.ok && embedder.ok;
+        telemetry::doctor_report(&store, ok);
         Ok(MemoryDoctorReport {
             ok,
             store,

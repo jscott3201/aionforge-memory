@@ -84,6 +84,8 @@ This is reference and guides, not planning or changelogs.
 
 ## Boundaries
 
+- [Observability](observability.md) — the low-cardinality metrics inventory, label policy,
+  recovery and maintenance counters, and the doctor capacity gauges.
 - [Namespace authorization](namespace-authorization.md) — who can write where: the caller-asserted
   principal, the own-private / member-team write policy, refused-and-audited denials, and the
   visible set that bounds reads.

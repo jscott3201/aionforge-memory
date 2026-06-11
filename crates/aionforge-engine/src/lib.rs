@@ -12,7 +12,7 @@
 //! namespace authorization, and the recall bundle is deterministic. The consolidation,
 //! procedural, trust, and forgetting subsystems join the facade in their milestones.
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Instant};
 
 use aionforge_capture::{Capturer, ProvenanceGate};
 use aionforge_consolidate::{
@@ -83,6 +83,7 @@ mod guard;
 mod lineage;
 mod pin;
 mod reliability_sweep;
+mod telemetry;
 pub use aionforge_store::{AuditCursor, MAX_AUDIT_PAGE};
 pub use aionforge_store::{ConsolidatingModel, NoteLineage, WriterFamilySet};
 pub use audit::{AuditPage, AuditRecord, AuditVerification};
@@ -468,6 +469,7 @@ impl<E: Embedder> Memory<E> {
                 .as_deref(),
             now,
         )?;
+        telemetry::startup_warnings(&startup_warnings);
         Ok(Self {
             store,
             embedder,
@@ -524,7 +526,10 @@ impl<E: Embedder> Memory<E> {
     /// # Errors
     /// Returns [`EngineError::Capture`] if filtering or the commit fails.
     pub async fn capture(&self, request: CaptureRequest) -> Result<CaptureReceipt, EngineError> {
-        Ok(self.capturer.capture(request).await?)
+        let started = Instant::now();
+        let result = self.capturer.capture(request).await;
+        telemetry::capture_result(&result, started.elapsed());
+        Ok(result?)
     }
 
     /// Run a retrieval, returning a deterministic recall bundle (03 §6).
@@ -533,8 +538,14 @@ impl<E: Embedder> Memory<E> {
     /// Returns [`EngineError::Store`] if an explicit cross-namespace recall attempt cannot be
     /// audited, or [`EngineError::Retrieval`] if a search fails or the deadline is exceeded.
     pub async fn search(&self, query: RecallQuery) -> Result<RecallBundle, EngineError> {
-        self.audit_explicit_namespace_denials(&query)?;
-        Ok(self.retriever.recall(query).await?)
+        let started = Instant::now();
+        if let Err(error) = self.audit_explicit_namespace_denials(&query) {
+            telemetry::recall_error("audit", started.elapsed());
+            return Err(error);
+        }
+        let result = self.retriever.recall(query).await;
+        telemetry::recall_result(&result, started.elapsed());
+        Ok(result?)
     }
 
     /// Record explicit non-visible namespace references in recall text without storing the
@@ -745,8 +756,10 @@ impl<E: Embedder + 'static> Memory<E> {
             config,
             self.consolidation_guard.mode,
         );
-        let report = distiller.distill(&self.store, namespace, now).await?;
-        Ok(report)
+        let started = Instant::now();
+        let result = distiller.distill(&self.store, namespace, now).await;
+        telemetry::distillation_result(&result, started.elapsed());
+        Ok(result?)
     }
 
     /// Evolve the live notes of one namespace into non-canonical `RELATES_TO` links with the
@@ -782,8 +795,10 @@ impl<E: Embedder + 'static> Memory<E> {
         Lv: LinkEvolver,
     {
         let pass = LinkEvolvePass::new(evolver, config, self.consolidation_guard.mode);
-        let report = pass.evolve_links(&self.store, namespace, now).await?;
-        Ok(report)
+        let started = Instant::now();
+        let result = pass.evolve_links(&self.store, namespace, now).await;
+        telemetry::link_evolution_result(&result, started.elapsed());
+        Ok(result?)
     }
 
     /// Record a signed attestation of a fact and evaluate it for promotion (06 §4).
