@@ -1,5 +1,7 @@
 //! Error types for the CLI boundary.
 
+use std::path::PathBuf;
+
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum CliError {
     #[error(transparent)]
@@ -16,6 +18,14 @@ pub(crate) enum CliError {
 
     #[error("could not serve MCP: {0}")]
     Serve(String),
+
+    #[error(
+        "could not recover store at {data_dir}: missing WAL file {wal_path}; use `doctor` for a fresh deploy"
+    )]
+    RecoverMissingWal {
+        data_dir: PathBuf,
+        wal_path: PathBuf,
+    },
 
     #[error("could not render doctor report: {0}")]
     Format(#[from] std::fmt::Error),

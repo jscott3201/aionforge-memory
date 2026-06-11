@@ -108,6 +108,9 @@ This is reference and guides, not planning or changelogs.
   M6.T04's query-only injection, poisoned-RAG recall, and malicious-skill promotion probes,
   M6.T05's subliminal-trait effect-size probe and pre-registered noise floor, and M6.T06's
   signature-forge, clock-skew, and cross-namespace extraction probes.
+- [Operations and recovery](operations-recovery.md) — the single-binary operator path:
+  layered config, locked-down data directories, fresh deploy doctor checks, explicit
+  WAL-backed recovery validation, and the current backup boundary.
 
 ## Substrate
 

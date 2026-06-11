@@ -65,6 +65,9 @@ impl std::fmt::Debug for Store {
 }
 
 impl Store {
+    /// File name of the write-ahead log inside a durable store directory.
+    pub const WAL_FILE_NAME: &'static str = DEFAULT_WAL_FILE_NAME;
+
     /// Install the substrate audit-event signer (M4.T06 PR-5g), once per store life.
     /// Every subsequent audit write whose signature is blank is stamped at commit time
     /// inside the write funnel. Takes `&self` so the engine can install through its

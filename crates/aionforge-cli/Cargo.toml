@@ -7,7 +7,7 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "The aionforge single binary: serve, doctor, migrate, and recover subcommands."
+description = "The aionforge single binary: serve, doctor, and recover subcommands."
 
 [[bin]]
 name = "aionforge"

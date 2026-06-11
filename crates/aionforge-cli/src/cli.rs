@@ -48,6 +48,8 @@ impl Cli {
 pub(crate) enum Command {
     /// Inspect schema, indexes, providers, lag, capacity, and embedder binding.
     Doctor(DoctorArgs),
+    /// Recover an existing WAL-backed store and report post-replay health.
+    Recover(RecoverArgs),
     /// Serve the Aionforge Memory MCP surface over stdio or Streamable HTTP.
     Serve(ServeArgs),
 }
@@ -55,6 +57,13 @@ pub(crate) enum Command {
 #[derive(Debug, Args, Clone, Copy)]
 pub(crate) struct DoctorArgs {
     /// Emit the complete typed doctor report as JSON.
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Debug, Args, Clone, Copy)]
+pub(crate) struct RecoverArgs {
+    /// Emit the complete typed recovery report as JSON.
     #[arg(long)]
     pub(crate) json: bool,
 }
@@ -131,6 +140,7 @@ mod tests {
         );
         match cli.command {
             Command::Doctor(args) => assert!(args.json),
+            Command::Recover(_) => panic!("expected doctor command"),
             Command::Serve(_) => panic!("expected doctor command"),
         }
     }
@@ -141,6 +151,16 @@ mod tests {
 
         assert_eq!(cli.host_options().config_path, default_config_path());
         assert!(cli.host_options().data_dir.is_none());
+    }
+
+    #[test]
+    fn parses_recover_json() {
+        let cli = Cli::try_parse_from(["aionforge", "recover", "--json"]).expect("parse");
+
+        match cli.command {
+            Command::Recover(args) => assert!(args.json),
+            Command::Doctor(_) | Command::Serve(_) => panic!("expected recover command"),
+        }
     }
 
     #[test]

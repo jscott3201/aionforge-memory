@@ -31,7 +31,7 @@ fn run_with_config(
     let rendered = if args.json {
         render_json(config_path, config.data_dir(), &report)?
     } else {
-        render_human(config_path, config.data_dir(), &report)?
+        render_human("doctor", config_path, config.data_dir(), &report)?
     };
     Ok(DoctorOutcome {
         ok: report.ok,
@@ -39,7 +39,7 @@ fn run_with_config(
     })
 }
 
-fn render_json(
+pub(crate) fn render_json(
     config_path: &Path,
     data_dir: &Path,
     report: &MemoryDoctorReport,
@@ -62,7 +62,8 @@ fn render_json(
     Ok(serde_json::to_string_pretty(&value)?)
 }
 
-fn render_human(
+pub(crate) fn render_human(
+    command: &str,
     config_path: &Path,
     data_dir: &Path,
     report: &MemoryDoctorReport,
@@ -75,7 +76,7 @@ fn render_human(
     let embedder = &report.embedder;
 
     let mut out = String::new();
-    writeln!(out, "aionforge doctor: {}", status(report.ok))?;
+    writeln!(out, "aionforge {command}: {}", status(report.ok))?;
     writeln!(
         out,
         "config: path={} data_dir={}",

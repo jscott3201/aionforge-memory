@@ -1,4 +1,4 @@
-//! The aionforge single binary: serve, doctor, migrate, and recover subcommands.
+//! The aionforge single binary: serve, doctor, and recover subcommands.
 
 use std::io::{self, Write};
 use std::process::ExitCode;
@@ -9,6 +9,7 @@ mod cli;
 mod doctor;
 mod error;
 mod host;
+mod recover;
 mod serve;
 
 use crate::cli::{Cli, Command};
@@ -33,6 +34,15 @@ fn run(cli: Cli, output: &mut impl Write) -> Result<ExitCode, CliError> {
     match cli.command {
         Command::Doctor(args) => {
             let outcome = doctor::run(&host_options, args)?;
+            writeln!(output, "{}", outcome.rendered)?;
+            Ok(if outcome.ok {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::from(2)
+            })
+        }
+        Command::Recover(args) => {
+            let outcome = recover::run(&host_options, args)?;
             writeln!(output, "{}", outcome.rendered)?;
             Ok(if outcome.ok {
                 ExitCode::SUCCESS
