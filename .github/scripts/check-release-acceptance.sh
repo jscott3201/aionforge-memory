@@ -73,6 +73,10 @@ require_grep ".github/workflows/release-gate.yml" "check-thirdparty-current.sh" 
   "third-party attribution gate"
 require_grep ".github/workflows/release-gate.yml" "docker image build + hadolint" \
   "Docker build gate"
+require_grep ".github/workflows/release-gate.yml" "docker/setup-buildx-action@v3" \
+  "Docker buildx release gate setup"
+require_grep ".github/workflows/release-gate.yml" "docker/setup-qemu-action@v3" \
+  "Docker arm64 emulation release gate setup"
 require_grep ".github/workflows/release-gate.yml" "check-release-acceptance.sh" \
   "M8 release acceptance gate"
 
@@ -85,6 +89,10 @@ require_grep ".github/workflows/release-publish.yml" "container image" \
   "container image publishing"
 require_grep ".github/workflows/release-publish.yml" "linux/amd64,linux/arm64" \
   "multi-platform GHCR image publishing"
+require_grep ".github/workflows/release-publish.yml" "docker/setup-buildx-action@v3" \
+  "multi-platform publish buildx setup"
+require_grep ".github/workflows/release-publish.yml" "docker/setup-qemu-action@v3" \
+  "multi-platform publish arm64 emulation setup"
 require_grep ".github/workflows/release-publish.yml" "crates.io publishing is intentionally deferred" \
   "crates.io deferral note"
 require_grep ".github/workflows/release-publish.yml" "gh release create" \
