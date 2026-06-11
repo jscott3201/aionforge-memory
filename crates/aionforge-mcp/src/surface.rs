@@ -84,7 +84,7 @@ pub(crate) const TOOLS: &[ToolSurface] = &[
     ToolSurface {
         name: "audit_history",
         class: ToolClass::ReadLike,
-        default_output: "compact audit page with cursor",
+        default_output: "compact audit page with cursor; subject=* means all visible subjects for a kind",
         verbose: true,
         read_only_hint: true,
         destructive_hint: false,
@@ -92,6 +92,7 @@ pub(crate) const TOOLS: &[ToolSurface] = &[
         open_world_hint: false,
         errors: &[
             "ERR_INVALID_SUBJECT_ID",
+            "ERR_INVALID_AUDIT_QUERY",
             "ERR_INVALID_VIEWER",
             "ERR_INVALID_AUDIT_CURSOR",
             "ERR_INVALID_AUDIT_CURSOR_ID",

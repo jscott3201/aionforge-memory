@@ -104,6 +104,11 @@ global rows and its own, never the `system` namespace where governance events li
 forensic access — including system rows — is the host's path, through the store-level
 readers. Counts and pages stay honest across hidden rows: pages refill rather than shorten.
 
+The MCP `audit_history` tool exposes those same agent-facing axes: pass `subject_id` for a
+subject's full history, pass both `subject_id` and `kind` for subject+kind, or omit
+`subject_id` and pass `kind` to page every visible event of that kind. The compact kind-only
+header uses `subject=*` and each row includes its concrete subject id.
+
 ## Runbook
 
 - **Enable:** set `security.sign_audit_events = true` and a data directory. First start
