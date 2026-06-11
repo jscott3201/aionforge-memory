@@ -184,6 +184,9 @@ struct Edit {
     replacement: String,
     redaction: Option<Redaction>,
     flag: Option<String>,
+    /// Index into `self.markers` for a marker edit, so an applied hit can be tallied
+    /// in marker-declaration order (`None` for a redaction edit).
+    marker_idx: Option<usize>,
 }
 
 impl PrivacyFilter for CaptureFilter {
@@ -211,10 +214,11 @@ impl PrivacyFilter for CaptureFilter {
                         kind: pattern.kind.clone(),
                     }),
                     flag: None,
+                    marker_idx: None,
                 });
             }
         }
-        for marker in &self.markers {
+        for (idx, marker) in self.markers.iter().enumerate() {
             for m in marker.regex.find_iter(content) {
                 edits.push(Edit {
                     start: m.start(),
@@ -222,6 +226,7 @@ impl PrivacyFilter for CaptureFilter {
                     replacement: String::new(),
                     redaction: None,
                     flag: Some(marker.id.clone()),
+                    marker_idx: Some(idx),
                 });
             }
         }
@@ -236,6 +241,9 @@ impl PrivacyFilter for CaptureFilter {
         let mut cleaned = String::with_capacity(content.len());
         let mut redactions = Vec::new();
         let mut injection_flags: Vec<String> = Vec::new();
+        // Applied-hit tally per marker, indexed by position in `self.markers` so the
+        // counts stay in declaration order without a clock, RNG, or hash map.
+        let mut marker_hit_counts = vec![0u32; self.markers.len()];
         let mut cursor = 0usize;
 
         for edit in edits {
@@ -253,6 +261,11 @@ impl PrivacyFilter for CaptureFilter {
             if let Some(redaction) = edit.redaction {
                 redactions.push(redaction);
             }
+            // Tally the applied marker before the de-duplicating `injection_flags` push,
+            // so a marker that fires more than once is counted each time it fires.
+            if let Some(idx) = edit.marker_idx {
+                marker_hit_counts[idx] += 1;
+            }
             if let Some(id) = edit.flag
                 && !injection_flags.contains(&id)
             {
@@ -261,10 +274,20 @@ impl PrivacyFilter for CaptureFilter {
         }
         cleaned.push_str(&content[cursor..]);
 
+        // Emit per-marker counts in declaration order, one entry per marker that fired.
+        let marker_hits = self
+            .markers
+            .iter()
+            .zip(&marker_hit_counts)
+            .filter(|&(_, &count)| count > 0)
+            .map(|(marker, &count)| (marker.id.clone(), count))
+            .collect();
+
         Ok(FilterOutcome {
             cleaned,
             redactions,
             injection_flags,
+            marker_hits,
         })
     }
 }

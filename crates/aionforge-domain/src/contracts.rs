@@ -223,6 +223,16 @@ pub struct FilterOutcome {
     pub redactions: Vec<Redaction>,
     /// Ids of detected prompt-injection markers, recorded in `Episode.origin`.
     pub injection_flags: Vec<String>,
+    /// Per-marker applied-hit counts for tuning (M6.T03): `(marker_id, count)` in marker
+    /// declaration order, one entry per marker that fired at least once. Unlike
+    /// [`injection_flags`](Self::injection_flags) (which de-duplicates to one id per marker),
+    /// this records how many times each marker actually fired in this content, so corpus
+    /// measurement can attribute block-rate to individual patterns.
+    ///
+    /// This is observability metadata only: it is deliberately **not** folded into the
+    /// content hash or `Episode.origin` (which record `cleaned`/`redactions`/`injection_flags`),
+    /// so adding or tuning a marker never perturbs the canonical stored bytes of an episode.
+    pub marker_hits: Vec<(String, u32)>,
 }
 
 /// The privacy and prompt-injection filter on the capture hot path (04 §1, 07).
