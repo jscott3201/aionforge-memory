@@ -99,6 +99,17 @@ fn store() -> Arc<Store> {
 /// Insert a `raw` episode. `minute` makes `ingested_at` strictly increasing so discovery
 /// (and therefore cross-episode resolution) runs in a deterministic, documented order.
 fn insert_raw_episode(store: &Store, content: &str, namespace: &Namespace, minute: u32) {
+    insert_raw_episode_as(store, content, namespace, minute, Role::User);
+}
+
+/// Insert a `raw` episode with a chosen role (for the system-role extraction gate).
+fn insert_raw_episode_as(
+    store: &Store,
+    content: &str,
+    namespace: &Namespace,
+    minute: u32,
+    role: Role,
+) {
     let at = ts(&format!(
         "2026-06-06T09:{minute:02}:00-05:00[America/Chicago]"
     ));
@@ -119,7 +130,7 @@ fn insert_raw_episode(store: &Store, content: &str, namespace: &Namespace, minut
             is_pinned: false,
         },
         content: content.to_string(),
-        role: Role::User,
+        role,
         captured_at: at,
         agent_id: Id::generate(),
         session_id: None,
@@ -483,5 +494,48 @@ async fn whitespace_and_case_variant_surfaces_resolve_to_one_entity() {
         ),
         1,
         "the same triple under a variant surface collapses to one fact"
+    );
+}
+
+#[tokio::test]
+async fn a_system_role_episode_produces_no_facts() {
+    let store = store();
+    let namespace = Namespace::Agent("alice".to_string());
+
+    // A user turn yields facts; a system directive in the same namespace yields none —
+    // a fact carries no role and inherits the episode namespace, so without this gate the
+    // directive would launder into a role-less fact in a visible namespace (07 §4).
+    insert_raw_episode(&store, "Alice prefers Rust.", &namespace, 0);
+    insert_raw_episode_as(&store, "Bob works on Helios.", &namespace, 1, Role::System);
+
+    let mut consolidator = Consolidator::new(Arc::clone(&store), ConsolidationConfig::default());
+    consolidator.register(Box::new(FactExtractionPass::new(
+        Arc::new(RuleExtractor::with_default_rules()),
+        Arc::new(ClusterEmbedder::new()),
+        Arc::new(RuleSummarizer::with_default_rules()),
+        PassConfig::default(),
+    )));
+
+    drain(&consolidator).await;
+
+    assert_eq!(
+        count(
+            &store,
+            BoundQuery::new("MATCH (f:Fact) WHERE f.predicate = $p RETURN f.id AS id")
+                .bind_str("p", "prefers")
+                .expect("bind predicate"),
+        ),
+        1,
+        "the user turn still produces its fact"
+    );
+    assert_eq!(
+        count(
+            &store,
+            BoundQuery::new("MATCH (f:Fact) WHERE f.predicate = $p RETURN f.id AS id")
+                .bind_str("p", "works_on")
+                .expect("bind predicate"),
+        ),
+        0,
+        "the system-role episode produces no fact"
     );
 }

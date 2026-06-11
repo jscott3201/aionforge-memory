@@ -24,7 +24,7 @@ use aionforge_domain::embedding::Embedding;
 use aionforge_domain::ids::Id;
 use aionforge_domain::namespace::Namespace;
 use aionforge_domain::nodes::associative::Note;
-use aionforge_domain::nodes::episodic::Episode;
+use aionforge_domain::nodes::episodic::{Episode, Role};
 use aionforge_domain::nodes::forensic::AuditEvent;
 use aionforge_domain::nodes::semantic::{Entity, Extraction, Fact, FactStatus};
 use aionforge_domain::time::{BiTemporal, Timestamp};
@@ -280,11 +280,25 @@ where
 
     fn version(&self) -> u32 {
         // 3: M2.T06b added conservative summary-note output to this pass.
-        3
+        // 4: M6.T02 skips system-role episodes so a system directive cannot launder
+        //    into a role-less fact (the gate is version-keyed for replay determinism).
+        4
     }
 
     async fn apply(&self, cx: &PassContext<'_>) -> Result<PassOutput, PassError> {
         let episode = cx.episode;
+
+        // System-role episodes never produce facts (07 §4, M6.T02). A Fact carries no
+        // role and inherits the episode's namespace, so a fact extracted from a system
+        // directive would be excluded by neither the recall-side role gate (facts have no
+        // role) nor the namespace gate (if the episode sat in a visible namespace) — it
+        // would launder the directive into default recall. Mirrors the skill-induction
+        // role gate. A capture-path system-role write is already refused (M6.T02 PR-2);
+        // this also covers a substrate-internal or historical system episode.
+        if episode.role == Role::System {
+            return Ok(PassOutput::default());
+        }
+
         let extracted = self
             .extractor
             .extract(episode)
