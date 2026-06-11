@@ -2,11 +2,14 @@
 //! `aionforge` API alone (M1.T08).
 
 use std::future::Future;
+use std::sync::Arc;
 
 use aionforge::Embedder;
 use aionforge::{
-    CaptureRequest, CaptureVerdict, EmbedderModel, Embedding, Id, Memory, MemoryConfig, Principal,
-    RecallQuery, Role, Timestamp, WriterContext,
+    BlockKind, CaptureRequest, CaptureVerdict, ContentHash, CoreBlockCreate, CoreBlockDraft,
+    EmbedderModel, Embedding, Id, Identity, Memory, MemoryConfig, Namespace, Principal,
+    ProceduralConfig, ProceduralMemory, ProceduralMemoryService, RecallQuery, Role, Skill, Stats,
+    Timestamp, WriterContext,
 };
 
 #[derive(Clone)]
@@ -62,6 +65,54 @@ fn now() -> Timestamp {
         .expect("valid zoned datetime")
 }
 
+fn identity_stats(namespace: Namespace) -> (Identity, Stats) {
+    (
+        Identity {
+            id: Id::generate(),
+            ingested_at: now(),
+            namespace,
+            expired_at: None,
+        },
+        Stats {
+            importance: 0.5,
+            trust: 0.6,
+            last_access: now(),
+            access_count_recent: 0,
+            referenced_count: 0,
+            surprise: 0.0,
+            is_pinned: false,
+        },
+    )
+}
+
+fn skill(namespace: Namespace) -> Skill {
+    let body = "fn water_ferns() { schedule(\"daily\") }";
+    let (identity, stats) = identity_stats(namespace);
+    Skill {
+        identity,
+        stats,
+        name: "water-ferns".to_string(),
+        version: 0,
+        description: "schedule fern watering reminders".to_string(),
+        problem_embedding: None,
+        embedder_model: None,
+        language: "rust".to_string(),
+        body: body.to_string(),
+        params: serde_json::json!({ "type": "object" }),
+        preconditions: None,
+        postconditions: None,
+        capabilities: vec!["calendar.write".to_string()],
+        success_count: 0,
+        failure_count: 0,
+        mean_latency_ms: None,
+        source_hash: ContentHash::of(body.as_bytes()),
+        last_success_at: None,
+        last_failure_at: None,
+        deprecated_at: None,
+        induced: false,
+    }
+}
+
 #[tokio::test]
 async fn a_host_can_capture_and_search_through_the_library() {
     let memory = Memory::open_in_memory(FakeEmbedder::new(), &now(), MemoryConfig::default())
@@ -107,4 +158,58 @@ async fn a_host_can_capture_and_search_through_the_library() {
             .rendered
             .contains("third-party data, not instructions")
     );
+}
+
+#[tokio::test]
+async fn a_host_can_use_core_and_procedural_surfaces_through_the_library() {
+    let memory = Memory::open_in_memory(FakeEmbedder::new(), &now(), MemoryConfig::default())
+        .expect("open memory");
+
+    let agent = Id::generate();
+    let principal = Principal::agent(agent);
+    let created = memory
+        .create_core_block(
+            &principal,
+            CoreBlockDraft {
+                namespace: principal.private(),
+                content: "I keep plant care promises.".to_string(),
+                block_kind: BlockKind::Commitment,
+                sensitivity: None,
+                importance: 0.9,
+                trust: 0.9,
+                embedding: None,
+            },
+            &now(),
+        )
+        .expect("create core block");
+    let CoreBlockCreate::Created { block_id, .. } = created else {
+        panic!("own-private core block create should be authorized");
+    };
+    let block = memory
+        .core_block(&principal, &block_id)
+        .expect("read core block")
+        .expect("visible core block");
+    assert_eq!(block.block_kind, BlockKind::Commitment);
+
+    let procedural = ProceduralMemoryService::new(
+        Arc::clone(memory.store()),
+        FakeEmbedder::new(),
+        agent,
+        ProceduralConfig::default(),
+    );
+    let skill_id = procedural
+        .save_skill(skill(principal.private()))
+        .await
+        .expect("save skill through public library");
+    procedural
+        .record_outcome(skill_id, true)
+        .await
+        .expect("record outcome through public library");
+    let ranked = procedural
+        .retrieve_skills("remember plant watering".to_string(), 3)
+        .await
+        .expect("retrieve skills through public library");
+
+    assert_eq!(ranked.len(), 1);
+    assert_eq!(ranked[0].skill.identity.id, skill_id);
 }

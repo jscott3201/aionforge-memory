@@ -28,6 +28,8 @@ version = "0.1.0"
 dependencies = [
  "aionforge-domain",
  "aionforge-engine",
+ "aionforge-procedural",
+ "serde_json",
  "tokio",
 ]
 
