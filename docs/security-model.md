@@ -36,7 +36,10 @@ The marker set is precision-first and measured in CI against benign and hostile
 corpora, but it is not a complete semantic injection detector. It blocks known
 imperative override patterns at write time; recall-side untrusted-data tagging,
 system-role exclusion, namespace authorization, and the red-team probes carry the
-rest of the defense.
+rest of the defense. A capture hollowed out by marker excision is refused outright
+(`ResidueRejected` audit) rather than stored as a junk fragment, and the refusal
+triggers only when a marker fired, so the measured benign false-positive ceiling
+is unaffected.
 
 ## Signed writes and audit signing
 

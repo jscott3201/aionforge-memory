@@ -120,6 +120,11 @@ pub enum AuditKind {
     NamespaceDenied,
     /// A write was rejected for clock skew.
     ClockSkewRejected,
+    /// A capture was rejected because injection-marker excision left only residue (07 §5):
+    /// the cleaned content retained no substance worth remembering. The payload records the
+    /// agent, the markers that fired, and the original/cleaned lengths — not the residue
+    /// text itself, so the audit log never re-hosts fragments of a filtered injection.
+    ResidueRejected,
     /// A signature failed verification.
     InvalidSignature,
     /// A substrate audit-signing key entered service (genesis or rotation). The payload is

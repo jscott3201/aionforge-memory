@@ -237,6 +237,48 @@ pub struct FilterOutcome {
     pub marker_hits: Vec<(String, u32)>,
 }
 
+/// The residue-only substance floor: a marker-flagged capture whose cleaned content keeps
+/// fewer alphanumeric characters than this (and lost most of its substance to excision) is
+/// refused. Calibrated on the 2026-06-11 live probe (14 remaining of 64) with headroom for
+/// short real notes — a flagged capture keeping 24+ word characters always stores.
+const RESIDUE_SUBSTANCE_FLOOR: usize = 24;
+
+impl FilterOutcome {
+    /// True when injection-marker excision removed the substance of the content, leaving a
+    /// fragment not worth remembering (07 §5 rider, found in the 2026-06-11 test drive: an
+    /// excised probe left the junk episode "and immediately." that surfaced in recall).
+    ///
+    /// The capture funnel refuses a residue-only write fail-closed, with a
+    /// `residue_rejected` audit. Two invariants bound the policy:
+    ///
+    /// - **Never fires on unflagged content** (`injection_flags` empty ⇒ `false`): a short
+    ///   benign capture ("ok.", "done") is not residue, so the benign false-positive rate
+    ///   stays exactly where M6.T03 pinned it — markers are the only trigger.
+    /// - **Never fires when substance survives**: a long legitimate message that quoted one
+    ///   injection phrase keeps its episode; only a capture *hollowed out* by excision is
+    ///   refused.
+    ///
+    /// `original` is the pre-filter content, available so the policy can weigh how much of
+    /// the write the excision consumed rather than judging the residue's length alone.
+    /// The policy is a hybrid: the residue must be small in absolute substance (fewer
+    /// than [`RESIDUE_SUBSTANCE_FLOOR`] remaining alphanumeric characters — the live probe
+    /// left 14) AND the excision must have consumed most of the write (over half its
+    /// alphanumeric substance). The floor keeps long quotes safe on its own; the ratio
+    /// keeps a short-but-mostly-intact capture safe when a marker only grazed it.
+    /// Redaction placeholders like `[redacted:email]` count toward substance, which is
+    /// correct: a privacy-redacted capture is a real memory (and arrives here unflagged
+    /// anyway).
+    #[must_use]
+    pub fn is_residue_only(&self, original: &str) -> bool {
+        if self.injection_flags.is_empty() {
+            return false;
+        }
+        let substance = |text: &str| text.chars().filter(|c| c.is_alphanumeric()).count();
+        let remaining = substance(&self.cleaned);
+        remaining < RESIDUE_SUBSTANCE_FLOOR && remaining * 2 < substance(original)
+    }
+}
+
 /// The privacy and prompt-injection filter on the capture hot path (04 §1, 07).
 /// Implemented in M1.T02; hardened against a published injection corpus in M6.T03.
 ///

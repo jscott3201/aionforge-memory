@@ -59,6 +59,13 @@ pub enum CaptureError {
     /// before this error is returned; no memory is written.
     #[error("a system-role memory cannot be written through the capture funnel")]
     SystemRoleNotWritable,
+
+    /// Injection-marker excision left only residue (07 §5): the filtered content retained no
+    /// substance worth remembering, so storing it would plant a junk episode in recall.
+    /// Recorded as a `residue_rejected` audit before this error is returned; no memory is
+    /// written.
+    #[error("the capture content was only residue after injection-marker excision")]
+    ResidueOnly,
 }
 
 impl CaptureError {
