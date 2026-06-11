@@ -158,6 +158,7 @@ async fn mcp_transport_lists_lifecycle_tools() -> TestResult {
         .map(|tool| tool.name.to_string())
         .collect();
     for name in [
+        "server_status",
         "capture",
         "search",
         "consolidation_status",

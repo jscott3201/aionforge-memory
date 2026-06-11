@@ -17,6 +17,7 @@ mod http_transport;
 mod lifecycle;
 mod prompt;
 mod resources;
+mod status;
 mod tools;
 
 pub use http_transport::{
@@ -38,6 +39,7 @@ pub use resources::{
     MCP_SURFACE_GUIDE_RESOURCE_URI, OPENCODE_CONFIG_RESOURCE_URI,
     TOOL_APPROVAL_POLICY_RESOURCE_URI,
 };
+pub use status::{ServerStatusToolParams, server_status_tool};
 pub use tools::{CaptureToolParams, SearchToolParams, capture_tool, search_tool};
 
 use std::sync::Arc;
@@ -95,6 +97,19 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
             tool_router: Self::tool_router(),
             prompt_router: Self::prompt_router(),
         }
+    }
+
+    #[tool(
+        description = "Report compact server status: version, tool/resource/prompt counts, transports, sampling posture, and mutating-tool count."
+    )]
+    async fn server_status(
+        &self,
+        params: Parameters<ServerStatusToolParams>,
+    ) -> Result<String, String> {
+        Ok(server_status_tool(
+            resources::static_resource_count(),
+            params.0,
+        ))
     }
 
     #[tool(

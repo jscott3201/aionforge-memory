@@ -120,11 +120,13 @@ async fn mcp_transport_lists_client_policy_resources() -> TestResult {
 
     let codex = read_text_resource(&client, CODEX_CONFIG_RESOURCE_URI).await?;
     assert!(codex.contains("[mcp_servers.aionforge_memory]"));
+    assert!(codex.contains("\"server_status\""));
     assert!(codex.contains("bearer_token_env_var = \"AIONFORGE_MCP_TOKEN\""));
     assert!(codex.contains("approval_mode = \"prompt\""));
 
     let policy = read_text_resource(&client, TOOL_APPROVAL_POLICY_RESOURCE_URI).await?;
     assert!(policy.contains("Read-like tools"));
+    assert!(policy.contains("server_status"));
     assert!(policy.contains("Prompt-gated mutating tools"));
     assert!(policy.contains("ERR_CONSOLIDATE_BUSY"));
 

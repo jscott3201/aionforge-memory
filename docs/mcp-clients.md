@@ -57,6 +57,7 @@ prompts:
 ```toml
 [mcp_servers.aionforge_memory]
 enabled_tools = [
+  "server_status",
   "search",
   "consolidation_status",
   "audit_history",
@@ -65,6 +66,8 @@ enabled_tools = [
   "forget",
   "unforget",
 ]
+[mcp_servers.aionforge_memory.tools.server_status]
+approval_mode = "approve"
 [mcp_servers.aionforge_memory.tools.search]
 approval_mode = "approve"
 [mcp_servers.aionforge_memory.tools.consolidation_status]
@@ -135,6 +138,7 @@ rules for this server:
 ```json
 {
   "permission": {
+    "aionforge-memory_server_status": "allow",
     "aionforge-memory_search": "allow",
     "aionforge-memory_consolidation_status": "allow",
     "aionforge-memory_audit_history": "allow",
@@ -172,13 +176,16 @@ failures. Use Cursor's tool approval and run-mode controls for `capture`,
 
 ## Tool approval posture
 
-Read-like tools are `search`, `consolidation_status`, and `audit_history`.
-Mutating tools are `capture`, `consolidate`, `forget`, and `unforget`; configure
-clients to ask before running them unless the host has a stronger local policy.
-`consolidate` runs bounded foreground ticks with server-owned deterministic
-rules only and returns `ERR_CONSOLIDATE_BUSY` if another foreground run is active.
-`forget` and `unforget` require a `viewer` and enforce the viewer's writable
-namespace set at the server boundary.
+Read-like tools are `server_status`, `search`, `consolidation_status`, and
+`audit_history`. Mutating tools are `capture`, `consolidate`, `forget`, and
+`unforget`; configure clients to ask before running them unless the host has a
+stronger local policy. `server_status` is the cheapest connection sanity check:
+it reports the crate version, tool/resource/prompt counts, advertised transports,
+sampling posture, and mutating-tool count. `consolidate` runs bounded foreground
+ticks with server-owned deterministic rules only and returns
+`ERR_CONSOLIDATE_BUSY` if another foreground run is active. `forget` and
+`unforget` require a `viewer` and enforce the viewer's writable namespace set at
+the server boundary.
 
 The compact resources listed above intentionally mirror this section. Keep them
 short: they are meant for agent context, not exhaustive documentation.
