@@ -66,6 +66,14 @@ pub enum CaptureError {
     /// written.
     #[error("the capture content was only residue after injection-marker excision")]
     ResidueOnly,
+
+    /// The supersedes hint did not name a live episode the writer may supersede (04 §1
+    /// step 3). Missing id, soft-forgotten target, and a target outside the writer's
+    /// writable namespaces all collapse to this one error — the specific cause is
+    /// recorded in a `supersedes_rejected` audit, not exposed, so the hint cannot be
+    /// used to probe which ids exist. No memory is written.
+    #[error("the capture supersedes hint does not name a live memory this writer may supersede")]
+    InvalidSupersedesTarget,
 }
 
 impl CaptureError {

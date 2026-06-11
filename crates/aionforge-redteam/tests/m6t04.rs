@@ -103,6 +103,7 @@ fn capture_request(agent: Id, content: &str) -> CaptureRequest {
         },
         trusted: false,
         namespace: None,
+        supersedes: None,
     }
 }
 

@@ -148,6 +148,7 @@ fn signed_request(
         },
         trusted: false,
         namespace: None,
+        supersedes: None,
     }
 }
 
@@ -265,6 +266,7 @@ async fn an_unsigned_write_is_rejected_under_a_signed_policy() {
         },
         trusted: false,
         namespace: None,
+        supersedes: None,
     };
     let error = memory
         .capture(request)
@@ -305,6 +307,7 @@ async fn signed_writes_off_admits_an_unsigned_write_unchanged() {
         },
         trusted: false,
         namespace: None,
+        supersedes: None,
     };
     // No gate, no enrollment, no signature — the unsigned fast path commits as before.
     memory

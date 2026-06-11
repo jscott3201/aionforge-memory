@@ -101,6 +101,7 @@ fn request(content: &str, agent: &Id) -> CaptureRequest {
         },
         trusted: false,
         namespace: None,
+        supersedes: None,
     }
 }
 

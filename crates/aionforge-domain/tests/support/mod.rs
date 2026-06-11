@@ -205,6 +205,7 @@ pub fn arb_origin() -> impl Strategy<Value = Origin> {
         prop::collection::vec(arb_redaction(), 0..3),
         prop::collection::vec(any::<String>(), 0..3),
         prop::option::of(any::<u64>()),
+        prop::option::of(arb_id()),
     )
         .prop_map(
             |(
@@ -215,6 +216,7 @@ pub fn arb_origin() -> impl Strategy<Value = Origin> {
                 redactions,
                 injection_flags,
                 capture_latency_ms,
+                supersedes,
             )| Origin {
                 model_family,
                 model_version,
@@ -223,6 +225,7 @@ pub fn arb_origin() -> impl Strategy<Value = Origin> {
                 redactions,
                 injection_flags,
                 capture_latency_ms,
+                supersedes,
             },
         )
 }

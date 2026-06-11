@@ -92,6 +92,7 @@ async fn open_capture_then_search_round_trips() {
             },
             trusted: false,
             namespace: None,
+            supersedes: None,
         })
         .await
         .expect("capture");
@@ -138,6 +139,7 @@ async fn an_exact_duplicate_is_not_recaptured() {
         },
         trusted: false,
         namespace: None,
+        supersedes: None,
     };
 
     let first = memory
@@ -242,6 +244,7 @@ fn capture_request(agent: &Id, content: &str) -> CaptureRequest {
         },
         trusted: false,
         namespace: None,
+        supersedes: None,
     }
 }
 

@@ -216,6 +216,7 @@ fn insert_episode(store: &Store, ns: &Namespace, family: Option<&str>) {
             redactions: Vec::new(),
             injection_flags: Vec::new(),
             capture_latency_ms: None,
+            supersedes: None,
         }),
     };
     store.insert_episode(&episode).expect("insert episode");

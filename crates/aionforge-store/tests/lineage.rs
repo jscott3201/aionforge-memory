@@ -51,6 +51,7 @@ fn origin_with(family: Option<&str>) -> Origin {
         redactions: Vec::new(),
         injection_flags: Vec::new(),
         capture_latency_ms: None,
+        supersedes: None,
     }
 }
 

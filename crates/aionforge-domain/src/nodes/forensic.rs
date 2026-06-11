@@ -125,6 +125,11 @@ pub enum AuditKind {
     /// agent, the markers that fired, and the original/cleaned lengths — not the residue
     /// text itself, so the audit log never re-hosts fragments of a filtered injection.
     ResidueRejected,
+    /// A capture was rejected because its supersedes hint named no live episode the writer
+    /// may supersede (04 §1 step 3). The payload records the claimed target id and the
+    /// specific cause (not found vs. not writable) for forensics, while the returned error
+    /// stays coarse so the hint is no existence oracle.
+    SupersedesRejected,
     /// A signature failed verification.
     InvalidSignature,
     /// A substrate audit-signing key entered service (genesis or rotation). The payload is

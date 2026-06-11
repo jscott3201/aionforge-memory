@@ -35,6 +35,7 @@
 //!         },
 //!         trusted: false,
 //!         namespace: None,
+//!         supersedes: None,
 //!     })
 //!     .await?;
 //!
