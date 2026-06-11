@@ -914,8 +914,8 @@ limitations under the License.
 
 Used by:
 - blake3 v1.8.5 — https://github.com/BLAKE3-team/BLAKE3
-- rmcp-macros v1.7.0 — https://github.com/modelcontextprotocol/rust-sdk/
-- rmcp v1.7.0 — https://github.com/modelcontextprotocol/rust-sdk/
+- rmcp-macros v1.6.0 — https://github.com/modelcontextprotocol/rust-sdk/
+- rmcp v1.6.0 — https://github.com/modelcontextprotocol/rust-sdk/
 - sync_wrapper v1.0.2 — https://github.com/Actyx/sync_wrapper
 
 ```
@@ -3064,6 +3064,42 @@ DEALINGS IN THE SOFTWARE.
 ## MIT License (MIT)
 
 Used by:
+- rand_core v0.10.1 — https://github.com/rust-random/rand_core
+
+```
+Copyright (c) 2018-2026 The Rand Project Developers
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the &quot;Software&quot;), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+```
+
+---
+
+## MIT License (MIT)
+
+Used by:
 - getrandom v0.4.2 — https://github.com/rust-random/getrandom
 
 ```
@@ -3415,6 +3451,42 @@ Used by:
 
 ```
 Copyright (c) 2019-2025 Sean McArthur &amp; Hyper Contributors
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the &quot;Software&quot;), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+```
+
+---
+
+## MIT License (MIT)
+
+Used by:
+- chacha20 v0.10.0 — https://github.com/RustCrypto/stream-ciphers
+
+```
+Copyright (c) 2019-2026 The RustCrypto Project Developers
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated
@@ -3933,6 +4005,7 @@ THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF ANY KIND, EXPRES
 ## MIT License (MIT)
 
 Used by:
+- rand v0.10.1 — https://github.com/rust-random/rand
 - rand v0.9.4 — https://github.com/rust-random/rand
 - rand_chacha v0.9.0 — https://github.com/rust-random/rand
 - rand_core v0.6.4 — https://github.com/rust-random/rand
@@ -4602,6 +4675,7 @@ Used by:
 - r-efi v5.3.0 — https://github.com/r-efi/r-efi
 - r-efi v6.0.0 — https://github.com/r-efi/r-efi
 - rustls-platform-verifier-android v0.1.1 — https://github.com/rustls/rustls-platform-verifier
+- sse-stream v0.2.3 — https://github.com/4t145/sse-stream/
 - wasip3 v0.4.0+wasi-0.3.0-rc-2026-01-06 — https://github.com/bytecodealliance/wasi-rs
 - wide v0.7.33 — https://github.com/Lokathor/wide
 - windows-core v0.62.2 — https://github.com/microsoft/windows-rs

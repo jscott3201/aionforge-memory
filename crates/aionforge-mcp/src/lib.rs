@@ -13,9 +13,15 @@
 //! [`search_tool`] so it can be tested without the transport; this module is the rmcp
 //! wiring on top.
 
+mod http_transport;
 mod prompt;
 mod tools;
 
+pub use http_transport::{
+    AionforgeAuthenticatedStreamableHttpService, AionforgeStreamableHttpService, BearerAuthService,
+    BearerToken, STREAMABLE_HTTP_ENDPOINT, StreamableHttpConfigError, StreamableHttpOptions,
+    streamable_http_config, streamable_http_service, streamable_http_service_with_auth,
+};
 pub use prompt::{
     RECALL_UNTRUSTED_DATA_PROMPT, RECALL_UNTRUSTED_DATA_PROMPT_NAME,
     RECALL_UNTRUSTED_DATA_PROMPT_RESOURCE_URI, RECALL_WRAPPER_TAG,

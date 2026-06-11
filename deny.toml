@@ -104,9 +104,11 @@ skip = [
   { name = "r-efi", version = "=5.3.0" },
   # rand_core: 0.6 is the line ed25519-dalek 2.x links, made graph-reachable by the
   # audit-key mint (M4.T06, the rand_core feature on the trust crate's dalek line);
-  # 0.9 via imbl (selene-graph) is the newest and stays unskipped. Dedup needs a
-  # dalek release on the rand 0.9 line.
+  # 0.9 reaches through imbl/proptest (selene/test graph); 0.10 reaches through rmcp's
+  # Streamable HTTP server-side nonce/session stack and stays unskipped as the newest
+  # line. Dedup needs upstream convergence across dalek/selene/rmcp.
   { name = "rand_core", version = "=0.6.4" },
+  { name = "rand_core", version = "=0.9.5" },
   # windows-sys (Windows targets only): 0.52 via the tokio/mio generation, 0.61 via
   # newer crates which stays unskipped.
   { name = "windows-sys", version = "=0.52.0" },
