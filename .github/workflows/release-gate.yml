@@ -84,6 +84,24 @@ jobs:
           cargo nextest run --workspace --locked --all-features --profile ci
           cargo test --workspace --locked --all-features --doc
 
+  rustdoc:
+    name: rustdoc (no broken intra-doc links)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: authenticate to the selene-db substrate
+        uses: webfactory/ssh-agent@v0.9.1
+        with:
+          ssh-private-key: ${{ secrets.SELENE_DB_DEPLOY_KEY }}
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo doc
+        env:
+          RUSTDOCFLAGS: -D warnings
+        # --lib only: the `aionforge` lib and bin share a name, so documenting
+        # bins trips an output-filename collision unrelated to doc quality.
+        run: cargo doc --no-deps --workspace --lib --document-private-items --locked
+
   m6-redteam-probes:
     name: M6 red-team probes
     runs-on: ubuntu-latest
@@ -184,6 +202,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: bash .github/scripts/check-store-only-selene.sh
+
+  m8-release-acceptance:
+    name: M8 release acceptance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash .github/scripts/check-release-acceptance.sh
 
   detect:
     name: detect optional files
