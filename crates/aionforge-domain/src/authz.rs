@@ -79,29 +79,46 @@ impl Principal {
 }
 
 /// The set of namespaces a [`Principal`] may read, computed once per query so each candidate is an
-/// O(1) check (06 §1). `global` is always readable and `system` never; the principal's own private
-/// namespace and its team namespaces complete the set.
+/// O(1) check (06 §1). `global` is always readable and `system` never (unless an admin reveal
+/// grants it, 07 §4); the principal's own private namespace and its team namespaces complete the
+/// set.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VisibleSet {
     private: Namespace,
     teams: Vec<Namespace>,
+    system: bool,
 }
 
 impl VisibleSet {
     /// Build the visible set from the principal's private namespace and its team namespaces.
+    /// The system namespace is excluded — use [`VisibleSet::with_system`] for an admin reveal.
     #[must_use]
     pub fn new(private: Namespace, teams: Vec<Namespace>) -> Self {
-        Self { private, teams }
+        Self {
+            private,
+            teams,
+            system: false,
+        }
+    }
+
+    /// The same set, additionally admitting the `system` namespace — the namespace half of the
+    /// admin reveal (07 §4, M6.T02). Only an authority that grants `may_surface_system` should
+    /// build this; the default authority never does.
+    #[must_use]
+    pub fn with_system(mut self) -> Self {
+        self.system = true;
+        self
     }
 
     /// Whether `candidate` is readable by this principal. `global` is always visible; `system` is
-    /// never agent-visible (substrate-internal); otherwise the candidate must be the principal's
-    /// own private namespace or one of its team namespaces.
+    /// never agent-visible (substrate-internal) unless this set was built for an admin reveal;
+    /// otherwise the candidate must be the principal's own private namespace or one of its team
+    /// namespaces.
     #[must_use]
     pub fn contains(&self, candidate: &Namespace) -> bool {
         match candidate {
             Namespace::Global => true,
-            Namespace::System => false,
+            Namespace::System => self.system,
             other => *other == self.private || self.teams.iter().any(|team| team == other),
         }
     }
@@ -170,6 +187,18 @@ pub trait Authorizer: Send + Sync + std::fmt::Debug {
 
     /// The set of namespaces `principal` may read, computed once per query.
     fn visible_namespaces(&self, principal: &Principal) -> VisibleSet;
+
+    /// Whether `principal` holds the admin capability to surface system-role memories,
+    /// which are excluded from default recall (07 §4, M6.T02). The default is **`false`**,
+    /// so every authority is closed unless it deliberately overrides this — a recall only
+    /// surfaces system content when the caller both requests it (`RecallOptions::
+    /// include_system`) AND this grants it. The capability lives here, on the
+    /// embedder-injected authority, rather than on the host-asserted [`Principal`] or a
+    /// bare request flag, so an untrusted caller cannot forge it.
+    fn may_surface_system(&self, principal: &Principal) -> bool {
+        let _ = principal;
+        false
+    }
 }
 
 /// A shared authority is itself an authority, so one instance backs both the capture and retrieval
@@ -185,6 +214,13 @@ impl<A: Authorizer + ?Sized> Authorizer for std::sync::Arc<A> {
 
     fn visible_namespaces(&self, principal: &Principal) -> VisibleSet {
         (**self).visible_namespaces(principal)
+    }
+
+    fn may_surface_system(&self, principal: &Principal) -> bool {
+        // Forward explicitly: a stricter authority injected behind Arc<dyn Authorizer>
+        // (the retriever's actual shape) must be consulted, not silently shadowed by the
+        // trait default.
+        (**self).may_surface_system(principal)
     }
 }
 

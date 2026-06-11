@@ -365,7 +365,20 @@ impl<E: Embedder> HybridRetriever<E> {
         //    so every candidate is gated by the same O(1) membership check (06 §1).
         let assemble_started = Instant::now();
         let fused = fuse(&rankings, DEFAULT_RRF_K);
-        let visible = self.authorizer.visible_namespaces(&query.principal);
+        // The admin reveal (07 §4, M6.T02): system-role memories surface only when the
+        // caller requests it AND the injected authority grants the capability — the request
+        // flag alone is inert. When granted, BOTH exclusion gates lift in lockstep: the
+        // visible set admits the system namespace, and `admit_episode` skips the role gate.
+        let surface_system =
+            query.options.include_system && self.authorizer.may_surface_system(&query.principal);
+        let visible = {
+            let base = self.authorizer.visible_namespaces(&query.principal);
+            if surface_system {
+                base.with_system()
+            } else {
+                base
+            }
+        };
         // The identity pre-pass (05 §4): every live core block in the reader's
         // visible set is prepended ahead of the ranked results — identity is the
         // standing context a recall is read against, not a hit that competes on
@@ -375,7 +388,14 @@ impl<E: Embedder> HybridRetriever<E> {
         // gets all of it, honestly, rather than a silent truncation of a redline.
         let core = self.core_block_entries(&visible)?;
         let ranked_budget = query.limit.saturating_sub(core.len());
-        let selection = self.select(&query, &visible, fused, &fact_nodes, ranked_budget)?;
+        let selection = self.select(
+            &query,
+            &visible,
+            surface_system,
+            fused,
+            &fact_nodes,
+            ranked_budget,
+        )?;
 
         // 4. Structured view stays in score order behind the identity prefix; the
         //    rendered view re-sorts by serialization id so the same set renders
@@ -427,6 +447,7 @@ impl<E: Embedder> HybridRetriever<E> {
         &self,
         query: &RecallQuery,
         visible: &VisibleSet,
+        surface_system: bool,
         fused: Vec<FusedCandidate>,
         fact_nodes: &HashSet<NodeId>,
         limit: usize,
@@ -452,7 +473,7 @@ impl<E: Embedder> HybridRetriever<E> {
             let Some(episode) = self.store.episode_by_node_id(candidate.node)? else {
                 continue;
             };
-            if !admit_episode(query, visible, &episode) {
+            if !admit_episode(query, visible, surface_system, &episode) {
                 continue;
             }
             considered += 1;
@@ -791,11 +812,16 @@ fn effective_fanout(query: &RecallQuery, config: &RetrieverConfig) -> usize {
     base.max(query.limit).max(1)
 }
 
-/// Whether an episode may surface for this query: not a system-role message (07 §4),
-/// active unless history was asked for (03 §5), and within the reader's visible set
-/// (03 §8, 06 §1).
-fn admit_episode(query: &RecallQuery, visible: &VisibleSet, episode: &Episode) -> bool {
-    if episode.role == Role::System {
+/// Whether an episode may surface for this query: not a system-role message unless the
+/// admin reveal is in force (07 §4), active unless history was asked for (03 §5), and
+/// within the reader's visible set (03 §8, 06 §1).
+fn admit_episode(
+    query: &RecallQuery,
+    visible: &VisibleSet,
+    surface_system: bool,
+    episode: &Episode,
+) -> bool {
+    if episode.role == Role::System && !surface_system {
         return false;
     }
     if !query.options.include_expired && episode.identity.expired_at.is_some() {

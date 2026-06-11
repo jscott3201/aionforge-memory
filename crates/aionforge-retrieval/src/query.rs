@@ -111,6 +111,15 @@ pub struct RecallOptions {
     /// ambient clock in the retrieval path, so these signals exist only when the caller
     /// stamps this.
     pub now: Option<Timestamp>,
+    /// **Request** to surface system-role memories, which are excluded from default recall
+    /// (07 §4, M6.T02). This flag alone is inert: it takes effect only when the injected
+    /// [`Authorizer`](aionforge_domain::authz::Authorizer) also grants `may_surface_system`
+    /// for the principal, so it is a request the authority must confirm, never a
+    /// self-service reveal. The default `false`, and a host must not expose it on an
+    /// untrusted surface (the MCP search tool does not). When honored it lifts BOTH
+    /// exclusion gates in lockstep — the role gate and the system-namespace visibility gate
+    /// — since system content is excluded twice.
+    pub include_system: bool,
 }
 
 impl Default for RecallOptions {
@@ -124,6 +133,7 @@ impl Default for RecallOptions {
             fanout: 0,
             sensitive: false,
             now: None,
+            include_system: false,
         }
     }
 }
