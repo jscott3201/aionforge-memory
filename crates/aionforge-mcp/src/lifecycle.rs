@@ -1,0 +1,383 @@
+//! Lifecycle and audit tool logic for the MCP surface.
+//!
+//! These helpers keep host-maintenance operations small and explicitly scoped at the
+//! MCP boundary. Point forget/unforget resolve the target memory first and require it
+//! to sit in a namespace writable by the supplied principal before calling the engine's maintenance
+//! primitive.
+
+use std::time::Duration;
+
+use aionforge_domain::contracts::Embedder;
+use aionforge_domain::ids::Id;
+use aionforge_domain::namespace::Namespace;
+use aionforge_domain::nodes::associative::Note;
+use aionforge_domain::nodes::episodic::Episode;
+use aionforge_domain::nodes::forensic::AuditKind;
+use aionforge_domain::nodes::procedural::{BadPattern, Skill};
+use aionforge_domain::nodes::semantic::{Entity, Fact};
+use aionforge_domain::time::Timestamp;
+use aionforge_engine::{
+    AuditCursor, AuditPage, AuditRecord, AuditVerification, Memory, PointForget, PointUnforget,
+    Principal,
+};
+use schemars::JsonSchema;
+use serde::Deserialize;
+
+const DEFAULT_AUDIT_LIMIT: usize = 20;
+const MAX_AUDIT_LIMIT: usize = 50;
+const PAYLOAD_PREVIEW_CHARS: usize = 240;
+
+const MCP_MEMORY_LABELS: [&str; 6] = [
+    Episode::LABEL,
+    Fact::LABEL,
+    Entity::LABEL,
+    Note::LABEL,
+    Skill::LABEL,
+    BadPattern::LABEL,
+];
+
+/// Parameters for the `consolidation_status` tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ConsolidationStatusToolParams {
+    /// Include an explanatory status hint.
+    #[schemars(description = "Include an explanatory status hint.")]
+    pub verbose: Option<bool>,
+}
+
+/// Parameters for point forget/unforget tools.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MemoryLifecycleToolParams {
+    /// The memory id to mutate.
+    #[schemars(description = "The memory id to mutate.")]
+    pub memory_id: String,
+    /// The acting agent namespace, `agent:<id>`. The memory must be in this agent's writable set.
+    #[schemars(
+        description = "The acting agent namespace, agent:<id>. The target memory must be in this agent's writable set."
+    )]
+    pub viewer: String,
+    /// Teams the host asserts this reader belongs to.
+    #[serde(default)]
+    #[schemars(description = "Teams the host asserts this reader belongs to. Optional.")]
+    pub teams: Vec<String>,
+}
+
+/// A keyset cursor returned by `audit_history`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct AuditCursorToolParam {
+    /// The `occurred_at` value returned in the prior cursor.
+    #[schemars(description = "The occurred_at value returned in the prior cursor.")]
+    pub occurred_at: String,
+    /// The audit event id returned in the prior cursor.
+    #[schemars(description = "The audit event id returned in the prior cursor.")]
+    pub id: String,
+}
+
+/// Parameters for the `audit_history` tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct AuditHistoryToolParams {
+    /// The memory or node id whose audit history should be read.
+    #[schemars(description = "The memory or node id whose audit history should be read.")]
+    pub subject_id: String,
+    /// The reading agent namespace, `agent:<id>`.
+    #[schemars(description = "The reading agent namespace, agent:<id>.")]
+    pub viewer: String,
+    /// Teams the host asserts this reader belongs to.
+    #[serde(default)]
+    #[schemars(description = "Teams the host asserts this reader belongs to. Optional.")]
+    pub teams: Vec<String>,
+    /// Optional snake_case audit kind filter, such as `forget` or `capture`.
+    #[schemars(description = "Optional snake_case audit kind filter, such as forget or capture.")]
+    pub kind: Option<String>,
+    /// Continuation cursor returned by a prior audit_history call.
+    #[schemars(description = "Continuation cursor returned by a prior audit_history call.")]
+    pub after: Option<AuditCursorToolParam>,
+    /// Maximum rows to return (default 20, max 50).
+    #[schemars(description = "Maximum rows to return (default 20, max 50).")]
+    pub limit: Option<usize>,
+    /// Include compact payload previews.
+    #[schemars(description = "Include compact payload previews.")]
+    pub verbose: Option<bool>,
+}
+
+struct WritableMemory {
+    id: Id,
+    label: String,
+    namespace: Namespace,
+}
+
+/// Render the current consolidation backlog.
+///
+/// # Errors
+/// Returns a structured `ERR_*` string if the backlog query fails.
+pub fn consolidation_status_tool<E: Embedder>(
+    memory: &Memory<E>,
+    params: ConsolidationStatusToolParams,
+    now: &Timestamp,
+) -> Result<String, String> {
+    let lag = memory
+        .consolidation_lag(now)
+        .map_err(|error| format!("ERR_CONSOLIDATION_STATUS: {error}"))?;
+    let mut out = format!(
+        "[consolidation] pending={} failed={} oldest_pending_lag_s={} generation={}",
+        lag.episodes_pending,
+        lag.episodes_failed,
+        duration_seconds(lag.oldest_pending_lag),
+        lag.generation
+    );
+    if params.verbose.unwrap_or(false) {
+        let state = if lag.episodes_pending == 0 && lag.episodes_failed == 0 {
+            "idle"
+        } else if lag.episodes_failed > 0 {
+            "attention_required"
+        } else {
+            "backlog_pending"
+        };
+        out.push_str(" state=");
+        out.push_str(state);
+    }
+    Ok(out)
+}
+
+/// Soft-forget one writable memory by id.
+///
+/// # Errors
+/// Returns a structured `ERR_*` string if parameters are invalid, the target is not
+/// writable by the viewer, or the engine returns an error.
+pub fn forget_tool<E: Embedder>(
+    memory: &Memory<E>,
+    params: MemoryLifecycleToolParams,
+    now: &Timestamp,
+) -> Result<String, String> {
+    let target = writable_memory(memory, &params.memory_id, &params.viewer, params.teams)?;
+    let outcome = memory
+        .forget(&target.id, now)
+        .map_err(|error| format!("ERR_FORGET: {error}"))?;
+    Ok(format!(
+        "[forget] {} kind={} ns={} outcome={}",
+        target.id,
+        target.label,
+        target.namespace,
+        point_forget_outcome(outcome)
+    ))
+}
+
+/// Restore one writable soft-forgotten memory by id.
+///
+/// # Errors
+/// Returns a structured `ERR_*` string if parameters are invalid, the target is not
+/// writable by the viewer, or the engine returns an error.
+pub fn unforget_tool<E: Embedder>(
+    memory: &Memory<E>,
+    params: MemoryLifecycleToolParams,
+    now: &Timestamp,
+) -> Result<String, String> {
+    let target = writable_memory(memory, &params.memory_id, &params.viewer, params.teams)?;
+    let outcome = memory
+        .unforget(&target.id, now)
+        .map_err(|error| format!("ERR_UNFORGET: {error}"))?;
+    Ok(format!(
+        "[unforget] {} kind={} ns={} outcome={}",
+        target.id,
+        target.label,
+        target.namespace,
+        point_unforget_outcome(outcome)
+    ))
+}
+
+/// Read a principal-scoped audit history page for a subject.
+///
+/// # Errors
+/// Returns a structured `ERR_*` string if parameters are invalid or the audit read fails.
+pub fn audit_history_tool<E: Embedder>(
+    memory: &Memory<E>,
+    params: AuditHistoryToolParams,
+) -> Result<String, String> {
+    let subject = parse_id(&params.subject_id, "SUBJECT_ID")?;
+    let principal = parse_principal(&params.viewer, params.teams)?;
+    let after = params.after.map(parse_audit_cursor).transpose()?;
+    let limit = params
+        .limit
+        .unwrap_or(DEFAULT_AUDIT_LIMIT)
+        .clamp(1, MAX_AUDIT_LIMIT);
+    let verbose = params.verbose.unwrap_or(false);
+    let kind_filter = params
+        .kind
+        .as_deref()
+        .map(str::trim)
+        .filter(|kind| !kind.is_empty());
+
+    let (kind_label, page) = match kind_filter {
+        Some(raw) => {
+            let kind = parse_audit_kind(raw)?;
+            let page = memory
+                .audit_by_subject_kind(&principal, &subject, kind, after.as_ref(), limit)
+                .map_err(|error| format!("ERR_AUDIT_HISTORY: {error}"))?;
+            (audit_kind_name(kind), page)
+        }
+        None => {
+            let page = memory
+                .audit_history(&principal, &subject, after.as_ref(), limit)
+                .map_err(|error| format!("ERR_AUDIT_HISTORY: {error}"))?;
+            ("all".to_string(), page)
+        }
+    };
+
+    Ok(render_audit_page(&subject, &kind_label, &page, verbose))
+}
+
+fn duration_seconds(duration: Duration) -> u64 {
+    duration.as_secs()
+}
+
+fn writable_memory<E: Embedder>(
+    memory: &Memory<E>,
+    raw_id: &str,
+    raw_viewer: &str,
+    teams: Vec<String>,
+) -> Result<WritableMemory, String> {
+    let id = parse_id(raw_id, "MEMORY_ID")?;
+    let principal = parse_principal(raw_viewer, teams)?;
+    let candidate = memory
+        .store()
+        .memory_by_id(&id, &MCP_MEMORY_LABELS)
+        .map_err(|error| format!("ERR_LOOKUP: {error}"))?;
+    let Some(candidate) = candidate else {
+        return Err("ERR_NOT_FOUND: memory_id not found or not authorized".to_string());
+    };
+    if memory
+        .authorizer()
+        .authorize_write(&principal, &candidate.identity.namespace)
+        .is_err()
+    {
+        return Err("ERR_NOT_FOUND: memory_id not found or not authorized".to_string());
+    }
+    Ok(WritableMemory {
+        id,
+        label: candidate.label,
+        namespace: candidate.identity.namespace,
+    })
+}
+
+fn parse_principal(raw_viewer: &str, teams: Vec<String>) -> Result<Principal, String> {
+    let viewer: Namespace = raw_viewer
+        .parse()
+        .map_err(|_| "ERR_INVALID_VIEWER: viewer must be agent:<id>".to_string())?;
+    let Namespace::Agent(agent_id) = viewer else {
+        return Err("ERR_INVALID_VIEWER: a reader must be an agent (agent:<id>)".to_string());
+    };
+    let agent = Id::parse(&agent_id)
+        .map_err(|_| "ERR_INVALID_VIEWER: viewer agent id must be a UUID".to_string())?;
+    Ok(Principal::new(agent, teams))
+}
+
+fn parse_id(raw: &str, field: &str) -> Result<Id, String> {
+    Id::parse(raw).map_err(|_| format!("ERR_INVALID_{field}: {field} must be a UUID"))
+}
+
+fn parse_audit_cursor(cursor: AuditCursorToolParam) -> Result<AuditCursor, String> {
+    let occurred_at = cursor
+        .occurred_at
+        .parse::<Timestamp>()
+        .map_err(|_| "ERR_INVALID_AUDIT_CURSOR: occurred_at must be a timestamp".to_string())?;
+    let id = parse_id(&cursor.id, "AUDIT_CURSOR_ID")?;
+    Ok(AuditCursor { occurred_at, id })
+}
+
+fn parse_audit_kind(raw: &str) -> Result<AuditKind, String> {
+    serde_json::from_value(serde_json::Value::String(raw.to_string())).map_err(|_| {
+        format!("ERR_INVALID_AUDIT_KIND: unknown kind '{raw}' (use snake_case audit kind)")
+    })
+}
+
+fn render_audit_page(subject: &Id, kind_label: &str, page: &AuditPage, verbose: bool) -> String {
+    let mut out = format!(
+        "[audit] subject={} kind={} count={} next={}",
+        subject,
+        kind_label,
+        page.records.len(),
+        render_audit_cursor(page.next.as_ref())
+    );
+    for record in &page.records {
+        out.push('\n');
+        out.push_str(&render_audit_record(record, verbose));
+    }
+    out
+}
+
+fn render_audit_record(record: &AuditRecord, verbose: bool) -> String {
+    let event = &record.event;
+    let mut out = format!(
+        "- id={} kind={} at={} actor={} ns={} verification={}",
+        event.identity.id,
+        audit_kind_name(event.kind),
+        event.occurred_at,
+        event.actor_id,
+        event.identity.namespace,
+        verification_name(&record.verification)
+    );
+    if verbose {
+        out.push_str(" payload=");
+        out.push_str(&preview_json(&event.payload));
+    }
+    out
+}
+
+fn render_audit_cursor(cursor: Option<&AuditCursor>) -> String {
+    cursor
+        .map(|cursor| serde_json::to_string(cursor).expect("audit cursor serializes"))
+        .unwrap_or_else(|| "none".to_string())
+}
+
+fn point_forget_outcome(outcome: PointForget) -> String {
+    match outcome {
+        PointForget::Forgotten => "forgotten".to_string(),
+        PointForget::AlreadyForgotten => "already_forgotten".to_string(),
+        PointForget::NotFound => "not_found".to_string(),
+        PointForget::Protected(reason) => format!("protected({reason:?})"),
+        PointForget::Disabled => "disabled".to_string(),
+    }
+}
+
+fn point_unforget_outcome(outcome: PointUnforget) -> String {
+    match outcome {
+        PointUnforget::Restored => "restored".to_string(),
+        PointUnforget::NotForgotten => "not_forgotten".to_string(),
+        PointUnforget::NotFound => "not_found".to_string(),
+        PointUnforget::Protected(reason) => format!("protected({reason:?})"),
+        PointUnforget::Disabled => "disabled".to_string(),
+    }
+}
+
+fn audit_kind_name(kind: AuditKind) -> String {
+    match serde_json::to_value(kind).expect("audit kind serializes") {
+        serde_json::Value::String(kind) => kind,
+        _ => "unknown".to_string(),
+    }
+}
+
+fn verification_name(verification: &AuditVerification) -> &'static str {
+    match verification {
+        AuditVerification::NotEnabled => "not_enabled",
+        AuditVerification::Checked(status) => match status {
+            aionforge_engine::AuditStatus::Valid => "valid",
+            aionforge_engine::AuditStatus::Unsigned => "unsigned",
+            aionforge_engine::AuditStatus::Downgraded => "downgraded",
+            aionforge_engine::AuditStatus::Invalid => "invalid",
+            aionforge_engine::AuditStatus::Untrusted => "untrusted",
+        },
+    }
+}
+
+fn preview_json(value: &serde_json::Value) -> String {
+    let raw = serde_json::to_string(value).expect("JSON value serializes");
+    truncate_chars(&raw, PAYLOAD_PREVIEW_CHARS)
+}
+
+fn truncate_chars(value: &str, max_chars: usize) -> String {
+    if value.chars().count() <= max_chars {
+        return value.to_string();
+    }
+    let mut out: String = value.chars().take(max_chars).collect();
+    out.push_str("...");
+    out
+}

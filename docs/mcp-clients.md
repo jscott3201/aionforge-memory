@@ -44,10 +44,15 @@ enabled = true
 For tight tool policy, start with only the read path approved:
 
 ```toml
-enabled_tools = ["search"]
+[mcp_servers.aionforge_memory]
+enabled_tools = ["search", "consolidation_status", "audit_history"]
 [mcp_servers.aionforge_memory.tools.search]
 approval_mode = "approve"
 [mcp_servers.aionforge_memory.tools.capture]
+approval_mode = "prompt"
+[mcp_servers.aionforge_memory.tools.forget]
+approval_mode = "prompt"
+[mcp_servers.aionforge_memory.tools.unforget]
 approval_mode = "prompt"
 ```
 
@@ -99,7 +104,8 @@ for Streamable HTTP and send the bearer token as a static header.
 ```
 
 OpenCode can enable MCP tools globally or per agent. Keep mutating tools such as
-`capture` behind approval until the host's policy is settled.
+`capture`, `forget`, and `unforget` behind approval until the host's policy is
+settled.
 
 ## Cursor
 
@@ -123,6 +129,14 @@ secrets.
 For sensitive data, prefer a local loopback server, keep the token in the
 environment, and review Cursor's MCP logs when debugging connection or auth
 failures.
+
+## Tool approval posture
+
+Read-like tools are `search`, `consolidation_status`, and `audit_history`.
+Mutating tools are `capture`, `forget`, and `unforget`; configure clients to ask
+before running them unless the host has a stronger local policy. `forget` and
+`unforget` require a `viewer` and enforce the viewer's writable namespace set at
+the server boundary.
 
 ## Deferred
 
