@@ -58,7 +58,7 @@ handled:
   rather than refused. An untrusted caller doesn't get to place memory in a shared space on
   its say-so, but its write still lands where it unambiguously belongs — its own.
 
-## Refusals are audited
+## Refusals and extraction attempts are audited
 
 A refused write writes no memory, but it does not vanish. The substrate commits a single
 `namespace_denied` audit event in its own transaction:
@@ -72,6 +72,13 @@ No `AUDIT` edge is wired from it, because a rejected write produces no memory no
 edge to point at — the subject is the agent itself. The event is found instead through the
 scalar `kind` and `subject_id` indexes, so an agent's denied attempts can be listed by
 subject.
+
+Recall is not refused just because hostile text names another namespace: it still runs under
+the normal visible-set filter. But an explicit `agent:<id>` or `team:<id>` token that names a
+namespace outside the reader's visible set is recorded as a `namespace_denied` audit before the
+search runs. The payload carries the requested namespace, the acting agent, `surface: "recall"`,
+and a crafted-query reason; it deliberately does **not** store the query text, which may contain
+private material supplied by an attacker.
 
 ## Reads
 
