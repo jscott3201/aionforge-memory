@@ -23,17 +23,18 @@
 
 use std::collections::BTreeSet;
 
-use aionforge_domain::edges::{DerivedFrom, HasProvenance};
+use aionforge_domain::edges::{Audit, DerivedFrom, HasProvenance};
 use aionforge_domain::ids::Id;
 use aionforge_domain::nodes::agent::Agent;
 use aionforge_domain::nodes::associative::Note;
 use aionforge_domain::nodes::episodic::{Episode, Origin};
-use aionforge_domain::nodes::forensic::AuditKind;
+use aionforge_domain::nodes::forensic::{AuditEvent, AuditKind};
 use aionforge_domain::nodes::semantic::Fact;
 use selene_core::db_string;
 use selene_graph::SeleneGraph;
 
 use crate::NodeId;
+use crate::audit;
 use crate::audit_read::MAX_AUDIT_PAGE;
 use crate::convert::{as_id, as_str, json_from_value, node_by_id};
 use crate::error::StoreError;
@@ -270,11 +271,44 @@ impl Store {
     /// The models recorded against a note's `Distill` audit events, ascending by
     /// `(occurred_at, id)` — empty for a rule summary, normally one entry for a
     /// distilled note (the event id is content-addressed, so replays dedup).
+    ///
+    /// Two linkage shapes are unioned, because the distiller's event names the
+    /// **cluster subject** (an `Entity`) as its `subject_id` while pointing at the
+    /// note through the `AuditEvent -AUDIT-> Note` edge: (a) the incoming `AUDIT`
+    /// edge walk (the real distiller's shape), and (b) the `(subject_id, kind)`
+    /// index for any event whose subject IS the note. A point read over one node's
+    /// edges — the by-index spine caveat in `audit_read` concerns history scans,
+    /// not this single-hop linkage that is written atomically with the note.
     fn distill_models_for(&self, note_id: &Id) -> Result<Vec<ConsolidatingModel>, StoreError> {
+        let mut events: Vec<AuditEvent> = Vec::new();
+        {
+            let snapshot = self.graph().read();
+            if let Some(note_node) = node_by_id(&snapshot, Note::LABEL, note_id)? {
+                let audit_edge = db_string(Audit::LABEL)?;
+                if let Some(adjacency) = snapshot.incoming_edges(note_node) {
+                    for edge in adjacency.iter_label(&audit_edge) {
+                        let Some(props) = snapshot.node_properties(edge.neighbor) else {
+                            continue;
+                        };
+                        let event = audit::from_properties(props)?;
+                        if event.kind == AuditKind::Distill {
+                            events.push(event);
+                        }
+                    }
+                }
+            }
+        }
         let history =
             self.audit_by_subject_kind(note_id, AuditKind::Distill, None, MAX_AUDIT_PAGE)?;
+        for event in history.events {
+            if !events.iter().any(|e| e.identity.id == event.identity.id) {
+                events.push(event);
+            }
+        }
+        events
+            .sort_by(|a, b| (&a.occurred_at, a.identity.id).cmp(&(&b.occurred_at, b.identity.id)));
         let mut models = Vec::new();
-        for event in &history.events {
+        for event in &events {
             let family = event.payload.get(MODEL_FAMILY).and_then(|v| v.as_str());
             let version = event
                 .payload
