@@ -138,8 +138,9 @@ Read-like tools are `search`, `consolidation_status`, and `audit_history`.
 Mutating tools are `capture`, `consolidate`, `forget`, and `unforget`; configure
 clients to ask before running them unless the host has a stronger local policy.
 `consolidate` runs bounded foreground ticks with server-owned deterministic
-rules only. `forget` and `unforget` require a `viewer` and enforce the viewer's
-writable namespace set at the server boundary.
+rules only and returns `ERR_CONSOLIDATE_BUSY` if another foreground run is active.
+`forget` and `unforget` require a `viewer` and enforce the viewer's writable
+namespace set at the server boundary.
 
 ## Deferred
 

@@ -131,7 +131,11 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
         &self,
         params: Parameters<ConsolidationRunToolParams>,
     ) -> Result<String, String> {
-        let _guard = self.consolidation_lock.lock().await;
+        let Ok(_guard) = self.consolidation_lock.try_lock() else {
+            return Err(
+                "ERR_CONSOLIDATE_BUSY: another foreground consolidation run is active".to_string(),
+            );
+        };
         consolidate_tool(&self.memory, params.0).await
     }
 
