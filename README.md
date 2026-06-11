@@ -187,7 +187,7 @@ or a symlink, is refused. For Docker bind mounts, make the host directory owned
 by UID/GID `10001:10001` and mode `0700` before starting the container.
 
 See [Operations and recovery](docs/operations-recovery.md) for config layering,
-production signing posture, and the WAL-backed recovery runbook.
+production signing posture, backup, volume migration, and WAL-backed recovery.
 
 ## Use the Rust library
 
