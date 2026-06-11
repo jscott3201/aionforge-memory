@@ -58,9 +58,10 @@ use rmcp::handler::server::router::prompt::{PromptRoute, PromptRouter};
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{
-    GetPromptRequestParams, GetPromptResult, ListPromptsResult, ListResourceTemplatesResult,
-    ListResourcesResult, PaginatedRequestParams, Prompt, PromptMessage, PromptMessageRole,
-    ReadResourceRequestParams, ReadResourceResult, ServerCapabilities, ServerInfo,
+    GetPromptRequestParams, GetPromptResult, Implementation, ListPromptsResult,
+    ListResourceTemplatesResult, ListResourcesResult, PaginatedRequestParams, Prompt,
+    PromptMessage, PromptMessageRole, ReadResourceRequestParams, ReadResourceResult,
+    ServerCapabilities, ServerInfo,
 };
 use rmcp::service::RequestContext;
 use rmcp::{ServerHandler, ServiceExt, prompt_handler, tool, tool_handler, tool_router};
@@ -287,6 +288,12 @@ impl<E: Embedder + 'static> ServerHandler for AionforgeMcp<E> {
                 .enable_resources()
                 .build(),
         )
+        // ServerInfo::new defaults server_info to rmcp's own build env; identify as
+        // the Aionforge server, matching the manifest resource and server_status.
+        .with_server_info(Implementation::new(
+            surface::SERVER_NAME,
+            env!("CARGO_PKG_VERSION"),
+        ))
         .with_instructions(SERVER_INSTRUCTIONS.to_string())
     }
 

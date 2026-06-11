@@ -112,6 +112,11 @@ async fn mcp_transport_advertises_and_serves_prompts_and_resources() -> TestResu
         info.capabilities.resources.is_some(),
         "resources advertised"
     );
+    assert_eq!(
+        info.server_info.name, "aionforge-memory",
+        "handshake identifies the Aionforge server, not the rmcp build env"
+    );
+    assert_eq!(info.server_info.version, env!("CARGO_PKG_VERSION"));
     assert!(
         info.instructions
             .as_deref()
