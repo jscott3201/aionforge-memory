@@ -338,11 +338,16 @@ const DEFAULT_REDACTIONS: &[(&str, &str, &str, Option<MatchValidator>)] = &[
 /// honest-scope framing.
 const DEFAULT_MARKERS: &[(&str, &str)] = &[
     // Override the prior context: "ignore the above", "forget all previous tasks",
-    // "disregard prior instructions". Requires an override verb + a previous/above scope;
-    // the bare verb ("you can ignore the error") never fires.
+    // "disregard prior instructions", "ignore your previous instructions". Requires an
+    // override verb + a previous/above scope; the determiner slot accepts the article,
+    // possessives, and demonstratives ("the/your/these/those") so the very common possessive
+    // phrasing fires, but the scope adjective stays the override-flavored set (previous/prior/
+    // earlier/above/...) — deliberately NOT "last", whose optional-noun shape ("ignore the
+    // last warning") is a benign-traffic false-positive surface the corpus does not contain.
+    // The bare verb ("you can ignore the error") never fires.
     (
         "ignore_or_forget_context",
-        r"(?i)\b(?:ignore|disregard|forget)\s+(?:all\s+|everything\s+|any\s+|about\s+)?(?:the\s+)?(?:previous|prior|earlier|above|preceding|foregoing)(?:\s+(?:instructions?|prompts?|tasks?|orders?|rules?|messages?|commands?|conversations?|context|directions?))?\b",
+        r"(?i)\b(?:ignore|disregard|forget)\s+(?:all\s+|everything\s+|any\s+|about\s+)?(?:the\s+|your\s+|these\s+|those\s+)?(?:previous|prior|earlier|above|preceding|foregoing)(?:\s+(?:instructions?|prompts?|tasks?|orders?|rules?|messages?|commands?|conversations?|context|directions?))?\b",
     ),
     // "forget everything we discussed / I told you / above / before" — the same override
     // intent phrased without a previous/above adjective.

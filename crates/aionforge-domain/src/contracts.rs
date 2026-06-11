@@ -226,8 +226,10 @@ pub struct FilterOutcome {
     /// Per-marker applied-hit counts for tuning (M6.T03): `(marker_id, count)` in marker
     /// declaration order, one entry per marker that fired at least once. Unlike
     /// [`injection_flags`](Self::injection_flags) (which de-duplicates to one id per marker),
-    /// this records how many times each marker actually fired in this content, so corpus
-    /// measurement can attribute block-rate to individual patterns.
+    /// this records how many times each marker was applied in this content, so corpus
+    /// measurement can attribute block-rate to individual patterns. (A marker whose match is
+    /// fully covered by an earlier-declared overlapping marker is dropped by the fail-closed
+    /// edit walk and not counted — the count is applied edits, not raw regex firings.)
     ///
     /// This is observability metadata only: it is deliberately **not** folded into the
     /// content hash or `Episode.origin` (which record `cleaned`/`redactions`/`injection_flags`),
