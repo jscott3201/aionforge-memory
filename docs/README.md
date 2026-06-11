@@ -104,7 +104,7 @@ This is reference and guides, not planning or changelogs.
   per-row verification verdicts on the read surface, and the operator runbook.
 - [Red-team suite](red-team.md) — the CI-gated security probes and their structured reports:
   M6.T04's query-only injection, poisoned-RAG recall, and malicious-skill promotion probes,
-  with the full-denominator reporting convention later M6/M8 gates reuse.
+  plus M6.T05's subliminal-trait effect-size probe and pre-registered noise floor.
 
 ## Substrate
 
