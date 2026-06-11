@@ -32,7 +32,7 @@ aionforge serve http --listen 127.0.0.1:3918 \
 
 ## Install Notes
 
-Codex can discover this repo plugin through `.agents/plugins/marketplace.json`. The Codex manifest is at `.codex-plugin/plugin.json` and points to `.mcp.json`, which uses the `aionforge_memory` server id and Codex's `bearer_token_env_var` auth field.
+Codex can discover this repo plugin through `.agents/plugins/marketplace.json`. The Codex manifest is at `.codex-plugin/plugin.json` and points to `.mcp.json`, which uses the `aionforge_memory` server id and Codex's `bearer_token_env_var` auth field. The package root `plugin.json` points at the same Codex-native MCP file so Codex does not pick up a second header-style server.
 
 After installing the plugin, use `codex plugin list` to confirm the marketplace-qualified plugin id. The repo marketplace id is `aionforge-memory@aionforge-plugins`. For a safer default tool posture, copy the policy shape from `codex.plugin-policy.example.toml` into `~/.codex/config.toml`: read-like tools are approved, and mutating tools stay prompted.
 
@@ -46,7 +46,7 @@ The Claude manifest points to `claude.mcp.json`, which keeps Claude's static-hea
 
 When the plugin is enabled in Claude Code, `settings.json` selects the `aionforge-memory-steward` agent by default. Run `/reload-plugins` after local edits, then check `/agents` and `/help` to confirm the agent and commands are loaded.
 
-Cursor can load it as a local plugin by symlinking or copying this directory into `~/.cursor/plugins/local/aionforge-memory`. Cursor reads `.cursor-plugin/plugin.json` and `mcp.json`.
+Cursor can load it as a local plugin by symlinking or copying this directory into `~/.cursor/plugins/local/aionforge-memory`. Cursor reads `.cursor-plugin/plugin.json` and `cursor.mcp.json`.
 
 GitHub Copilot CLI can install from the plugin path:
 

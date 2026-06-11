@@ -55,6 +55,11 @@ Codex can discover the plugin from the repo-scoped
 marketplace-qualified plugin id. For the repo marketplace, the id is
 `aionforge-memory@aionforge-plugins`.
 
+The package root `plugin.json` also points at `.mcp.json`. That keeps Codex on
+one server id, `aionforge_memory`, with `bearer_token_env_var` auth instead of
+also loading a second unauthenticated or header-style entry from a generic MCP
+manifest.
+
 Use `plugins/aionforge-memory/codex.plugin-policy.example.toml` as the Codex
 config shape when you want plugin-scoped MCP policy. It keeps read-like tools
 approved and mutating tools prompted under
@@ -73,7 +78,7 @@ Code work starts with the memory loop available.
 
 Cursor can load the package as a local plugin from
 `~/.cursor/plugins/local/aionforge-memory`; it reads `.cursor-plugin/plugin.json`
-and `mcp.json`.
+and `cursor.mcp.json`.
 
 GitHub Copilot CLI can install the package from the local path:
 

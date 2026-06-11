@@ -309,9 +309,11 @@ rules for this server:
 
 ## Cursor
 
-Cursor uses `mcp.json` and supports both stdio and remote MCP servers. Use the
-HTTP server for a shared Aionforge process, and use environment interpolation for
-secrets.
+Cursor uses the `mcp.json` shape and supports both stdio and remote MCP
+servers. Use the HTTP server for a shared Aionforge process, and use
+environment interpolation for secrets. The repository plugin stores this Cursor
+template as `cursor.mcp.json` so Codex does not ingest it as a second MCP
+server.
 
 ```json
 {

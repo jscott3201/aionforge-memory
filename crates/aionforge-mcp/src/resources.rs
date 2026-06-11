@@ -158,6 +158,7 @@ Local test paths:
 - Cursor: symlink the directory into ~/.cursor/plugins/local/aionforge-memory.
 - Copilot CLI: copilot plugin install ./plugins/aionforge-memory
 - Codex: use .agents/plugins/marketplace.json from the repo root.
+- Codex root manifest: plugin.json also points at .mcp.json, so Codex gets one authenticated aionforge_memory server.
 - Codex plugin policy: copy plugins/aionforge-memory/codex.plugin-policy.example.toml into config.toml if you want read-like tools approved and mutating tools prompted under plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory.
 
 Recall safety:
