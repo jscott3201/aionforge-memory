@@ -9,10 +9,10 @@ use aionforge_domain::embedding::{EmbedderModel, Embedding};
 use aionforge_domain::time::Timestamp;
 use aionforge_engine::{Memory, MemoryConfig};
 use aionforge_mcp::{
-    AionforgeMcp, CLAUDE_CODE_CONFIG_RESOURCE_URI, CODEX_CONFIG_RESOURCE_URI,
-    CURSOR_CONFIG_RESOURCE_URI, MCP_SURFACE_GUIDE_RESOURCE_URI, OPENCODE_CONFIG_RESOURCE_URI,
-    RECALL_UNTRUSTED_DATA_PROMPT_RESOURCE_URI, TOOL_APPROVAL_POLICY_RESOURCE_URI,
-    TOOL_MANIFEST_RESOURCE_URI,
+    AionforgeMcp, CLAUDE_CODE_CONFIG_RESOURCE_URI, CLIENT_OAUTH_GUIDE_RESOURCE_URI,
+    CODEX_CONFIG_RESOURCE_URI, CURSOR_CONFIG_RESOURCE_URI, MCP_SURFACE_GUIDE_RESOURCE_URI,
+    OPENCODE_CONFIG_RESOURCE_URI, RECALL_UNTRUSTED_DATA_PROMPT_RESOURCE_URI,
+    TOOL_APPROVAL_POLICY_RESOURCE_URI, TOOL_MANIFEST_RESOURCE_URI,
 };
 use rmcp::ServiceExt;
 use rmcp::model::ReadResourceRequestParams;
@@ -112,6 +112,7 @@ async fn mcp_transport_lists_client_policy_resources() -> TestResult {
         RECALL_UNTRUSTED_DATA_PROMPT_RESOURCE_URI,
         MCP_SURFACE_GUIDE_RESOURCE_URI,
         TOOL_APPROVAL_POLICY_RESOURCE_URI,
+        CLIENT_OAUTH_GUIDE_RESOURCE_URI,
         CODEX_CONFIG_RESOURCE_URI,
         CLAUDE_CODE_CONFIG_RESOURCE_URI,
         OPENCODE_CONFIG_RESOURCE_URI,
@@ -222,6 +223,11 @@ async fn mcp_transport_lists_client_policy_resources() -> TestResult {
     assert!(policy.contains("server_status"));
     assert!(policy.contains("Prompt-gated mutating tools"));
     assert!(policy.contains("ERR_CONSOLIDATE_BUSY"));
+
+    let oauth = read_text_resource(&client, CLIENT_OAUTH_GUIDE_RESOURCE_URI).await?;
+    assert!(oauth.contains("resource_metadata"));
+    assert!(oauth.contains("codex mcp login aionforge_memory"));
+    assert!(oauth.contains("oauth=false"));
 
     client.cancel().await?;
     server_handle.await??;

@@ -25,6 +25,9 @@ pub const MCP_SURFACE_GUIDE_RESOURCE_URI: &str = "aionforge://guide/mcp-surface"
 /// Recommended approval posture for tools exposed by this server.
 pub const TOOL_APPROVAL_POLICY_RESOURCE_URI: &str = "aionforge://policy/tool-approval";
 
+/// OAuth deployment guidance for HTTP MCP clients and resource servers.
+pub const CLIENT_OAUTH_GUIDE_RESOURCE_URI: &str = "aionforge://client/oauth-guide";
+
 /// Codex CLI / IDE extension configuration template.
 pub const CODEX_CONFIG_RESOURCE_URI: &str = "aionforge://client/codex/config.toml";
 
@@ -62,6 +65,7 @@ Token discipline:
 Useful resources:
 - aionforge://manifest/tools.json
 - aionforge://policy/tool-approval
+- aionforge://client/oauth-guide
 - aionforge://client/codex/config.toml
 - aionforge://client/claude-code/mcp.json
 - aionforge://client/opencode/opencode.jsonc
@@ -95,6 +99,33 @@ Error markers worth preserving in summaries:
 - ERR_NOT_FOUND: lifecycle target was absent or not authorized for the viewer.
 - ERR_INVALID_VIEWER / ERR_INVALID_AGENT_ID: caller passed an invalid principal id.
 - ERR_INVALID_AUDIT_QUERY: audit_history needs either subject_id or kind.
+"#;
+
+const CLIENT_OAUTH_GUIDE: &str = r#"Aionforge MCP OAuth Guide
+
+Use this when the HTTP MCP endpoint is remote or shared.
+
+Server posture:
+- The built-in bearer wrapper is a local/private guard, not a full OAuth verifier.
+- Put an OAuth resource-server verifier in front of /mcp for multi-user deployments.
+- Validate issuer, expiry, audience/resource, and scopes before requests reach MCP.
+- Never pass inbound MCP access tokens through to downstream services.
+- Use the public MCP URL as the resource value, e.g. https://memory.example.com/mcp.
+
+Aionforge serve flags:
+- --public-url https://memory.example.com/mcp
+- --oauth-issuer https://auth.example.com
+- --oauth-scope memory.read --oauth-scope memory.write
+- With --bearer-token-env, 401 responses include resource_metadata and scope.
+- Metadata is served at /.well-known/oauth-protected-resource/mcp.
+
+Client modes:
+- Static bearer: use the per-client config resource and keep auth in env vars.
+- OAuth: omit static Authorization headers and let the client authenticate.
+- Codex: run `codex mcp login aionforge_memory`; optional top-level callback settings are mcp_oauth_callback_port and mcp_oauth_callback_url.
+- Claude Code: configure the HTTP URL without Authorization and authenticate from /mcp; only use headers for static bearer.
+- OpenCode: omit headers for automatic OAuth, use an oauth object for preregistered clients, or oauth=false for static bearer.
+- Cursor: use remote url entries; static OAuth credentials belong in auth.CLIENT_ID, auth.CLIENT_SECRET, and auth.scopes.
 "#;
 
 const CODEX_CONFIG: &str = r#"# ~/.codex/config.toml or .codex/config.toml in a trusted project
@@ -133,6 +164,11 @@ approval_mode = "prompt"
 approval_mode = "prompt"
 [mcp_servers.aionforge_memory.tools.unforget]
 approval_mode = "prompt"
+
+# OAuth mode for remote deployments:
+# - remove bearer_token_env_var
+# - run: codex mcp login aionforge_memory
+# - optionally set top-level mcp_oauth_callback_port / mcp_oauth_callback_url
 "#;
 
 const CLAUDE_CODE_CONFIG: &str = r#"{
@@ -156,6 +192,7 @@ const OPENCODE_CONFIG: &str = r#"{
       "type": "remote",
       "url": "http://127.0.0.1:3918/mcp",
       "enabled": true,
+      "oauth": false,
       "headers": {
         "Authorization": "Bearer {env:AIONFORGE_MCP_TOKEN}"
       },
@@ -243,6 +280,14 @@ static RESOURCES: &[StaticResource] = &[
         description: "Read-like versus mutating tool posture with error markers to preserve.",
         mime_type: TEXT,
         body: ResourceBody::Static(TOOL_APPROVAL_POLICY),
+    },
+    StaticResource {
+        uri: CLIENT_OAUTH_GUIDE_RESOURCE_URI,
+        name: "client_oauth_guide",
+        title: "Aionforge MCP OAuth Guide",
+        description: "Compact OAuth resource-server and client authentication posture.",
+        mime_type: TEXT,
+        body: ResourceBody::Static(CLIENT_OAUTH_GUIDE),
     },
     StaticResource {
         uri: CODEX_CONFIG_RESOURCE_URI,
@@ -343,6 +388,7 @@ struct ResourceManifest {
     tool_manifest: &'static str,
     surface_guide: &'static str,
     approval_policy: &'static str,
+    oauth_guide: &'static str,
     safety_prompt: &'static str,
     codex_config: &'static str,
     claude_code_config: &'static str,
@@ -386,6 +432,7 @@ fn tool_manifest_json() -> String {
             tool_manifest: TOOL_MANIFEST_RESOURCE_URI,
             surface_guide: MCP_SURFACE_GUIDE_RESOURCE_URI,
             approval_policy: TOOL_APPROVAL_POLICY_RESOURCE_URI,
+            oauth_guide: CLIENT_OAUTH_GUIDE_RESOURCE_URI,
             safety_prompt: RECALL_UNTRUSTED_DATA_PROMPT_RESOURCE_URI,
             codex_config: CODEX_CONFIG_RESOURCE_URI,
             claude_code_config: CLAUDE_CODE_CONFIG_RESOURCE_URI,
@@ -458,6 +505,10 @@ mod tests {
             manifest["resources"]["tool_manifest"],
             TOOL_MANIFEST_RESOURCE_URI
         );
+        assert_eq!(
+            manifest["resources"]["oauth_guide"],
+            CLIENT_OAUTH_GUIDE_RESOURCE_URI
+        );
         assert_eq!(manifest["policy"]["mutating_approval"], "ask_user");
         assert!(
             manifest["tools"]
@@ -480,5 +531,78 @@ mod tests {
                     && tool["idempotent_hint"] == true
                     && tool["open_world_hint"] == false)
         );
+    }
+
+    #[test]
+    fn client_config_resources_pin_native_shapes() {
+        let ResourceContents::TextResourceContents { text: codex, .. } =
+            read_static_resource(CODEX_CONFIG_RESOURCE_URI).expect("codex config")
+        else {
+            panic!("codex config resource should be text");
+        };
+        assert!(codex.contains("[mcp_servers.aionforge_memory]"));
+        assert!(codex.contains("bearer_token_env_var = \"AIONFORGE_MCP_TOKEN\""));
+        assert!(codex.contains("default_tools_approval_mode = \"prompt\""));
+        assert!(codex.contains("approval_mode = \"approve\""));
+        assert!(codex.contains("codex mcp login aionforge_memory"));
+        assert!(codex.contains("mcp_oauth_callback_port"));
+
+        let claude = read_json_resource(CLAUDE_CODE_CONFIG_RESOURCE_URI);
+        let claude_server = &claude["mcpServers"]["aionforge-memory"];
+        assert_eq!(claude_server["type"], "http");
+        assert_eq!(
+            claude_server["url"],
+            "${AIONFORGE_MCP_URL:-http://127.0.0.1:3918/mcp}"
+        );
+        assert_eq!(
+            claude_server["headers"]["Authorization"],
+            "Bearer ${AIONFORGE_MCP_TOKEN}"
+        );
+        assert_eq!(claude_server["timeout"].as_u64(), Some(60_000));
+
+        let opencode = read_json_resource(OPENCODE_CONFIG_RESOURCE_URI);
+        let opencode_server = &opencode["mcp"]["aionforge-memory"];
+        assert_eq!(opencode_server["type"], "remote");
+        assert_eq!(opencode_server["oauth"], false);
+        assert_eq!(
+            opencode_server["headers"]["Authorization"],
+            "Bearer {env:AIONFORGE_MCP_TOKEN}"
+        );
+        assert_eq!(opencode["permission"]["aionforge-memory_search"], "allow");
+        assert_eq!(opencode["permission"]["aionforge-memory_capture"], "ask");
+
+        let cursor = read_json_resource(CURSOR_CONFIG_RESOURCE_URI);
+        let cursor_server = &cursor["mcpServers"]["aionforge-memory"];
+        assert_eq!(cursor_server["url"], "http://127.0.0.1:3918/mcp");
+        assert_eq!(
+            cursor_server["headers"]["Authorization"],
+            "Bearer ${env:AIONFORGE_MCP_TOKEN}"
+        );
+    }
+
+    #[test]
+    fn oauth_guide_pins_discovery_and_client_auth_modes() {
+        let ResourceContents::TextResourceContents { text, .. } =
+            read_static_resource(CLIENT_OAUTH_GUIDE_RESOURCE_URI).expect("oauth guide")
+        else {
+            panic!("oauth guide resource should be text");
+        };
+        assert!(text.contains("resource_metadata"));
+        assert!(text.contains("/.well-known/oauth-protected-resource/mcp"));
+        assert!(text.contains("audience/resource"));
+        assert!(text.contains("Never pass inbound MCP access tokens through"));
+        assert!(text.contains("Codex"));
+        assert!(text.contains("Claude Code"));
+        assert!(text.contains("OpenCode"));
+        assert!(text.contains("Cursor"));
+    }
+
+    fn read_json_resource(uri: &str) -> serde_json::Value {
+        let ResourceContents::TextResourceContents { text, .. } =
+            read_static_resource(uri).unwrap_or_else(|| panic!("{uri} resource"))
+        else {
+            panic!("{uri} resource should be text");
+        };
+        serde_json::from_str(&text).unwrap_or_else(|error| panic!("{uri} valid JSON: {error}"))
     }
 }

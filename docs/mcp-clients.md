@@ -17,6 +17,7 @@ discover the recommended posture without loading this whole document:
 - `aionforge://manifest/tools.json`
 - `aionforge://guide/mcp-surface`
 - `aionforge://policy/tool-approval`
+- `aionforge://client/oauth-guide`
 - `aionforge://client/codex/config.toml`
 - `aionforge://client/claude-code/mcp.json`
 - `aionforge://client/opencode/opencode.jsonc`
@@ -100,6 +101,21 @@ the 401 `WWW-Authenticate` challenge. Token validation is still the job of the
 upstream OAuth verifier; the built-in bearer wrapper only checks the bearer value
 that reaches the MCP service.
 
+Static bearer and OAuth modes should not be mixed in client config. A static
+`Authorization` header is appropriate for loopback/private deployments. For
+OAuth deployments, omit static authorization headers so the client can discover
+the protected-resource metadata, run its authorization flow, and request tokens
+for the MCP endpoint resource.
+
+This guidance tracks the public MCP authorization spec and the current client
+docs for Codex, Claude Code, OpenCode, and Cursor:
+
+- https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization
+- https://developers.openai.com/codex/mcp
+- https://code.claude.com/docs/en/mcp
+- https://opencode.ai/docs/mcp-servers/
+- https://cursor.com/docs/mcp.md
+
 ## Codex CLI
 
 Codex reads MCP servers from `config.toml`. HTTP entries use `url`, and static
@@ -114,6 +130,17 @@ tool_timeout_sec = 60
 default_tools_approval_mode = "prompt"
 enabled = true
 ```
+
+For OAuth deployments, remove `bearer_token_env_var` and run:
+
+```bash
+codex mcp login aionforge_memory
+```
+
+If the authorization server requires a fixed redirect URI, set Codex's top-level
+`mcp_oauth_callback_port` and, when needed, `mcp_oauth_callback_url`. Codex uses
+server-advertised `scopes_supported` when available, so keep
+`--oauth-scope` values tight and stable.
 
 For full surface support, approve read-like tools and keep mutating tools behind
 prompts:
@@ -151,7 +178,8 @@ approval_mode = "prompt"
 ## Claude Code
 
 Claude Code supports HTTP MCP servers through `claude mcp add` or JSON
-configuration. HTTP is the preferred remote transport; SSE is deprecated.
+configuration. HTTP is the preferred remote transport; SSE is deprecated. The
+JSON `type` may be `http` or the MCP transport name `streamable-http`.
 
 ```json
 {
@@ -173,10 +201,19 @@ like `/mcp__aionforge_memory__recall_untrusted_data`, depending on the server
 name normalization. It can also reference the server resources above when the
 agent needs client setup or tool policy details.
 
+Claude Code's tool search keeps MCP tool schemas out of the initial context by
+default and uses the server `instructions` field to decide when to discover
+tools, so Aionforge keeps instructions compact and front-loads the recall safety
+rule. For OAuth deployments, configure the HTTP URL without the `Authorization`
+header and authenticate from `/mcp`; if a static header is present and rejected,
+Claude Code treats the connection as failed instead of falling back to OAuth.
+
 ## OpenCode
 
 OpenCode configures MCP servers under the top-level `mcp` object. Use `remote`
-for Streamable HTTP and send the bearer token as a static header.
+for Streamable HTTP and send the bearer token as a static header. Set
+`oauth: false` for static bearer mode so OpenCode does not try OAuth discovery
+for a token-protected local endpoint.
 
 ```json
 {
@@ -186,6 +223,7 @@ for Streamable HTTP and send the bearer token as a static header.
       "type": "remote",
       "url": "http://127.0.0.1:3918/mcp",
       "enabled": true,
+      "oauth": false,
       "headers": {
         "Authorization": "Bearer {env:AIONFORGE_MCP_TOKEN}"
       },
@@ -194,6 +232,10 @@ for Streamable HTTP and send the bearer token as a static header.
   }
 }
 ```
+
+For OAuth deployments, omit `headers`; OpenCode will detect the 401 challenge
+and can use dynamic client registration. If the provider requires a
+pre-registered client, set `oauth.clientId`, `oauth.clientSecret`, and `oauth.scope`.
 
 OpenCode permissions default to permissive behavior. Prefer explicit permission
 rules for this server:
@@ -236,6 +278,13 @@ For sensitive data, prefer a local loopback server, keep the token in the
 environment, and review Cursor's MCP logs when debugging connection or auth
 failures. Use Cursor's tool approval and run-mode controls for `capture`,
 `consolidate`, `forget`, and `unforget`.
+
+For pre-registered OAuth clients, Cursor uses an `auth` object on remote URL
+entries with `CLIENT_ID`, optional `CLIENT_SECRET`, and optional `scopes`.
+Cursor's fixed MCP OAuth redirect URL is
+`cursor://anysphere.cursor-mcp/oauth/callback`; register it with providers that
+require redirect allow-listing. For dynamic OAuth discovery, omit the static
+bearer header.
 
 ## Tool approval posture
 
