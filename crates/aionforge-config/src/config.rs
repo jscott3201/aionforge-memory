@@ -11,6 +11,7 @@ use crate::core_block::CoreBlockConfig;
 use crate::drift::DriftConfig;
 use crate::error::ConfigError;
 use crate::forgetting::ForgettingConfig;
+use crate::guard::ConsolidationGuardConfig;
 
 /// The largest sane per-request embedder timeout (ten minutes). A larger value is almost
 /// certainly a units mistake (seconds typed as milliseconds), so it is rejected rather than
@@ -76,6 +77,10 @@ pub struct Config {
     /// bounds and warning threshold, and the cooling window for core-proximate
     /// facts. Off by default.
     pub drift: DriftConfig,
+    /// Cross-family consolidation-guard posture (07 §3): refuse-or-warn mode and
+    /// the declared consolidating family the startup single-family check reads.
+    /// Always-on policy, inert until an inference-backed consolidation rule runs.
+    pub consolidation_guard: ConsolidationGuardConfig,
 }
 
 /// On-disk state configuration.
@@ -735,6 +740,7 @@ impl Config {
         self.forgetting.validate()?;
         self.core_block.validate()?;
         self.drift.validate()?;
+        self.consolidation_guard.validate()?;
         Ok(())
     }
 }
