@@ -91,6 +91,14 @@ jobs:
       - uses: actions/checkout@v4
       - run: bash .github/scripts/check-no-secrets.sh
 
+  plugin-package:
+    name: plugin package
+    if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash .github/scripts/check-plugin-package.sh
+
   gql-binding-gate:
     name: GQL parameter-binding gate
     if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'

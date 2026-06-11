@@ -18,6 +18,7 @@ discover the recommended posture without loading this whole document:
 - `aionforge://guide/mcp-surface`
 - `aionforge://policy/tool-approval`
 - `aionforge://client/oauth-guide`
+- `aionforge://plugin/aionforge-memory`
 - `aionforge://client/codex/config.toml`
 - `aionforge://client/claude-code/mcp.json`
 - `aionforge://client/opencode/opencode.jsonc`
@@ -311,6 +312,11 @@ for `forget`; treat those as client-routing hints and keep the approval policy a
 the enforcement rule. The other compact resources intentionally mirror this
 section; keep them short because they are meant for agent context, not exhaustive
 documentation.
+
+The repo also ships an installable plugin package at
+[`plugins/aionforge-memory`](../plugins/aionforge-memory). The MCP resource
+`aionforge://plugin/aionforge-memory` gives connected clients the compact
+version of that setup path.
 
 ## Deferred
 

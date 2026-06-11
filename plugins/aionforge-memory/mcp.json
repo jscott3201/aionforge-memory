@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "aionforge-memory": {
+      "url": "http://127.0.0.1:3918/mcp",
+      "headers": {
+        "Authorization": "Bearer ${env:AIONFORGE_MCP_TOKEN}"
+      }
+    }
+  }
+}

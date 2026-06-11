@@ -75,7 +75,8 @@ instructions.
 
 The server also publishes client setup resources such as
 `aionforge://client/claude-code/mcp.json`, with equivalents for Codex, Cursor,
-and OpenCode.
+and OpenCode. Plugin setup guidance is available at
+`aionforge://plugin/aionforge-memory`.
 
 ## Architecture
 
@@ -216,6 +217,7 @@ Start with:
 - [Embedding and provider guide](docs/embedding-guide.md)
 - [Security model](docs/security-model.md)
 - [MCP client support](docs/mcp-clients.md)
+- [Agent plugin](docs/plugins.md)
 - [Honest scope and deferred work](docs/honest-scope.md)
 
 ## Contributing

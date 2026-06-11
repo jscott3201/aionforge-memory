@@ -11,8 +11,9 @@ use aionforge_engine::{Memory, MemoryConfig};
 use aionforge_mcp::{
     AionforgeMcp, CLAUDE_CODE_CONFIG_RESOURCE_URI, CLIENT_OAUTH_GUIDE_RESOURCE_URI,
     CODEX_CONFIG_RESOURCE_URI, CURSOR_CONFIG_RESOURCE_URI, MCP_SURFACE_GUIDE_RESOURCE_URI,
-    OPENCODE_CONFIG_RESOURCE_URI, RECALL_UNTRUSTED_DATA_PROMPT_RESOURCE_URI,
-    TOOL_APPROVAL_POLICY_RESOURCE_URI, TOOL_MANIFEST_RESOURCE_URI,
+    OPENCODE_CONFIG_RESOURCE_URI, PLUGIN_PACKAGE_GUIDE_RESOURCE_URI,
+    RECALL_UNTRUSTED_DATA_PROMPT_RESOURCE_URI, TOOL_APPROVAL_POLICY_RESOURCE_URI,
+    TOOL_MANIFEST_RESOURCE_URI,
 };
 use rmcp::ServiceExt;
 use rmcp::model::ReadResourceRequestParams;
@@ -20,7 +21,7 @@ use rmcp::model::ReadResourceRequestParams;
 type TestError = Box<dyn std::error::Error + Send + Sync>;
 type TestResult<T = ()> = Result<T, TestError>;
 
-const TOTAL_STATIC_RESOURCE_BUDGET_BYTES: usize = 12_000;
+const TOTAL_STATIC_RESOURCE_BUDGET_BYTES: usize = 14_000;
 
 const RESOURCE_BODY_BUDGETS: &[(&str, usize)] = &[
     (TOOL_MANIFEST_RESOURCE_URI, 4_096),
@@ -28,6 +29,7 @@ const RESOURCE_BODY_BUDGETS: &[(&str, usize)] = &[
     (MCP_SURFACE_GUIDE_RESOURCE_URI, 1_800),
     (TOOL_APPROVAL_POLICY_RESOURCE_URI, 1_600),
     (CLIENT_OAUTH_GUIDE_RESOURCE_URI, 2_000),
+    (PLUGIN_PACKAGE_GUIDE_RESOURCE_URI, 1_600),
     (CODEX_CONFIG_RESOURCE_URI, 2_000),
     (CLAUDE_CODE_CONFIG_RESOURCE_URI, 512),
     (OPENCODE_CONFIG_RESOURCE_URI, 1_024),
@@ -127,6 +129,7 @@ async fn mcp_transport_lists_client_policy_resources() -> TestResult {
         MCP_SURFACE_GUIDE_RESOURCE_URI,
         TOOL_APPROVAL_POLICY_RESOURCE_URI,
         CLIENT_OAUTH_GUIDE_RESOURCE_URI,
+        PLUGIN_PACKAGE_GUIDE_RESOURCE_URI,
         CODEX_CONFIG_RESOURCE_URI,
         CLAUDE_CODE_CONFIG_RESOURCE_URI,
         OPENCODE_CONFIG_RESOURCE_URI,
@@ -161,6 +164,10 @@ async fn mcp_transport_lists_client_policy_resources() -> TestResult {
     assert_eq!(
         manifest["policy"]["read_like_approval"],
         "allow_without_prompt"
+    );
+    assert_eq!(
+        manifest["resources"]["plugin_guide"],
+        PLUGIN_PACKAGE_GUIDE_RESOURCE_URI
     );
     let manifest_tools: BTreeSet<String> = manifest["tools"]
         .as_array()
@@ -258,6 +265,11 @@ async fn mcp_transport_lists_client_policy_resources() -> TestResult {
     assert!(oauth.contains("resource_metadata"));
     assert!(oauth.contains("codex mcp login aionforge_memory"));
     assert!(oauth.contains("oauth=false"));
+
+    let plugin = read_text_resource(&client, PLUGIN_PACKAGE_GUIDE_RESOURCE_URI).await?;
+    assert!(plugin.contains("plugins/aionforge-memory"));
+    assert!(plugin.contains("memory-recall"));
+    assert!(plugin.contains("memory-capture"));
 
     client.cancel().await?;
     server_handle.await??;
