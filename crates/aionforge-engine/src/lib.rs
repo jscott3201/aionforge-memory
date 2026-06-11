@@ -18,10 +18,12 @@ use aionforge_capture::{Capturer, ProvenanceGate};
 use aionforge_consolidate::{
     Consolidator, Distiller, FactExtractionPass, LinkEvolvePass, SkillInductionPass,
 };
+use aionforge_domain::blocks::Identity;
 use aionforge_domain::contracts::{
     Capture, Embedder, FactExtractor, LinkEvolver, Retriever, SkillInducer, Summarizer,
 };
 use aionforge_domain::namespace::Namespace;
+use aionforge_domain::nodes::forensic::{AuditEvent, AuditKind};
 use aionforge_domain::time::Timestamp;
 use aionforge_forget::{DriftDetector, Eraser, Forgetter};
 use aionforge_retrieval::HybridRetriever;
@@ -526,9 +528,32 @@ impl<E: Embedder> Memory<E> {
     /// Run a retrieval, returning a deterministic recall bundle (03 §6).
     ///
     /// # Errors
-    /// Returns [`EngineError::Retrieval`] if a search fails or the deadline is exceeded.
+    /// Returns [`EngineError::Store`] if an explicit cross-namespace recall attempt cannot be
+    /// audited, or [`EngineError::Retrieval`] if a search fails or the deadline is exceeded.
     pub async fn search(&self, query: RecallQuery) -> Result<RecallBundle, EngineError> {
+        self.audit_explicit_namespace_denials(&query)?;
         Ok(self.retriever.recall(query).await?)
+    }
+
+    /// Record explicit non-visible namespace references in recall text without storing the
+    /// query itself. The retriever still scopes every candidate through the same visible set; this
+    /// is the read-side audit trail for crafted extraction probes (07 §T9, M6.T06).
+    fn audit_explicit_namespace_denials(&self, query: &RecallQuery) -> Result<(), EngineError> {
+        let mut visible = self.authorizer.visible_namespaces(&query.principal);
+        if query.options.include_system && self.authorizer.may_surface_system(&query.principal) {
+            visible = visible.with_system();
+        }
+
+        let mut audited = Vec::new();
+        for namespace in explicit_namespace_mentions(&query.text) {
+            if visible.contains(&namespace) || audited.iter().any(|seen| seen == &namespace) {
+                continue;
+            }
+            self.store
+                .commit_audit(&namespace_extraction_denied_audit(query, &namespace))?;
+            audited.push(namespace);
+        }
+        Ok(())
     }
 
     /// Conditions surfaced at construction for the host to log (07 §3, M6.T01) —
@@ -917,6 +942,76 @@ fn validate_attestation_skew(tolerance_ms: u64) -> Result<(), EngineError> {
         ));
     }
     Ok(())
+}
+
+/// The `namespace_denied` audit for an explicit recall query that names a namespace outside the
+/// reader's visible set. The event stores the namespace and actor metadata only, never the query
+/// text, since the text may itself contain private material supplied by an attacker.
+fn namespace_extraction_denied_audit(query: &RecallQuery, target: &Namespace) -> AuditEvent {
+    let occurred_at = query.options.now.clone().unwrap_or_else(Timestamp::now);
+    AuditEvent {
+        identity: Identity {
+            id: Id::generate(),
+            ingested_at: occurred_at.clone(),
+            namespace: Namespace::System,
+            expired_at: None,
+        },
+        kind: AuditKind::NamespaceDenied,
+        subject_id: query.principal.agent_id,
+        actor_id: query.principal.agent_id,
+        payload: serde_json::json!({
+            "requested_namespace": target.to_string(),
+            "reason": "crafted_query_non_visible_namespace",
+            "agent": query.principal.agent_id.to_string(),
+            "surface": "recall",
+        }),
+        signature: String::new(),
+        occurred_at,
+    }
+}
+
+fn explicit_namespace_mentions(text: &str) -> Vec<Namespace> {
+    let mut mentions = Vec::new();
+    for prefix in ["agent:", "team:"] {
+        let mut offset = 0;
+        while let Some(relative_start) = text[offset..].find(prefix) {
+            let start = offset + relative_start;
+            let end = text[start..]
+                .find(namespace_token_delimiter)
+                .map_or(text.len(), |relative_end| start + relative_end);
+            let token = text[start..end].trim_end_matches(namespace_trailing_punctuation);
+            if let Some(namespace) = parse_explicit_namespace_token(token) {
+                mentions.push(namespace);
+            }
+            offset = start + prefix.len();
+        }
+    }
+    mentions
+}
+
+fn parse_explicit_namespace_token(token: &str) -> Option<Namespace> {
+    if let Some(agent_id) = token.strip_prefix("agent:") {
+        if Id::parse(agent_id).is_ok() {
+            return Some(Namespace::Agent(agent_id.to_string()));
+        }
+    } else if let Some(team_id) = token.strip_prefix("team:")
+        && !team_id.is_empty()
+    {
+        return Some(Namespace::Team(team_id.to_string()));
+    }
+    None
+}
+
+fn namespace_token_delimiter(ch: char) -> bool {
+    ch.is_ascii_whitespace()
+        || matches!(
+            ch,
+            '<' | '>' | '"' | '\'' | '`' | '(' | ')' | '[' | ']' | '{' | '}' | ','
+        )
+}
+
+fn namespace_trailing_punctuation(ch: char) -> bool {
+    matches!(ch, '.' | ';' | ':' | '!' | '?')
 }
 
 /// An error from the memory facade.

@@ -283,8 +283,10 @@ against the same graph return byte-identical rendered text.
 
 - There is no learned ranker and no learned query classifier yet; classification is the v1
   heuristic, and a wrong class degrades to a usable ordering rather than failing.
-- A recall never touches `last_access` or any access counter — the read path is strictly
-  read-only, and the decayed importance the re-rank computes is never written back.
+- A recall never touches `last_access` or any access counter, and the decayed importance
+  the re-rank computes is never written back. The only recall-side write is the forensic
+  `namespace_denied` audit for an explicit non-visible namespace token, covered in
+  [Namespace authorization](namespace-authorization.md).
 - Support expansion is a single `SUPPORTS` hop; transitive multi-hop expansion is future
   work.
 - Sensitivity is an explicit flag, not auto-detected.

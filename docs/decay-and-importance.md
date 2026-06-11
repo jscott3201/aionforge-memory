@@ -41,9 +41,11 @@ of drifting from it.
 state, so the decayed value is never written back: retrieval computes it at rank time,
 and the active-forgetting sweep (M5.T02) recomputes it at sweep time, through the same
 pure functions. Repeating a recall at the same instant is byte-identical — a clocked
-recall stays exactly as read-only as an unclocked one. Decay is therefore not audited
-either: it is rank-time arithmetic, not a lifecycle action. The audited action is the
-forgetting sweep that consumes it (M5.T02).
+recall writes no ranking or decay state back. Decay is therefore not audited either: it
+is rank-time arithmetic, not a lifecycle action. The audited action is the forgetting
+sweep that consumes it (M5.T02); the separate security audit for explicit
+cross-namespace extraction attempts records only the attempted namespace, not decay
+state.
 
 **Defensive short-circuits.** Four inputs return the stored value unchanged rather than
 minting a surprise: a pinned memory (below); an inert half-life (non-finite or

@@ -8,6 +8,8 @@ attack successes, naive-baseline successes, the binding ceiling, rates, and the
 pass/fail status for attack-rate probes. Effect-size probes use the same crate and
 record treatment/baseline denominators, hit rates, rate-difference effect size, the
 pre-registered threshold, and which side of that threshold is passing.
+Audit-coverage probes record the full attempt denominator, the attempts with the
+expected forensic event, the required coverage floor, and the observed coverage rate.
 
 M6.T04 establishes the convention with three structural probes:
 
@@ -36,5 +38,19 @@ path then runs the same writer and summarizer families in refuse mode; the guard
 refuse before the summarizer call, no marker may materialize, and the reported effect
 size must stay at or below the fixed noise floor.
 
-M6.T06 should add signature, clock-skew, and extraction probes, and M8.T06 should
-aggregate the reports into the single release gate.
+M6.T06 adds three probes over real engine behavior:
+
+- **Signature forgery** submits wrong-key, wrong-message, and foreign-writer signed
+  captures. Every attempt must return the coarse invalid-signature rejection, write no
+  episode, and leave an `invalid_signature` audit.
+- **Clock-skew replay** submits correctly signed past and future writes outside the
+  configured skew window. Every attempt must return the clock-skew rejection, write no
+  episode, and leave a `clock_skew_rejected` audit.
+- **Crafted cross-namespace recall** seeds victim-private memory, then queries as a
+  different principal with explicit `agent:<victim>` namespace tokens. Private content
+  must not surface, recall must not write memory, and every attempt must leave a
+  `namespace_denied` audit whose payload identifies the denied namespace without storing
+  the query text or private content.
+
+The M6.T06 attack-success ceiling is zero and the audit-coverage floor is `1.0`.
+M8.T06 should aggregate these reports into the single release gate.
