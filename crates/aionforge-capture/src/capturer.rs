@@ -112,6 +112,21 @@ where
             .filter(&request.content)
             .map_err(CaptureError::filter)?;
 
+        // 1a. Marker-tuning observability (M6.T03, 07 §5). Emit the filter's per-marker
+        //     applied-hit counts as a labeled counter so an operator can watch which injection
+        //     markers fire in production traffic and tune the set — the per-pattern hit log the
+        //     task calls for. This is the sole consumer of `outcome.marker_hits`; emitting it
+        //     here, before the dedup short-circuit, counts a marker that fired even when the
+        //     content turns out to be an exact duplicate (marker activity is a property of the
+        //     traffic, not of whether a fresh episode lands). The `metrics` facade is a no-op
+        //     when no recorder is installed, so this adds nothing on a deployment that does not
+        //     scrape it, and `aionforge-security` stays free of any metrics dependency — the
+        //     emission lives at the one consumer on the hot path.
+        for (marker, count) in &outcome.marker_hits {
+            metrics::counter!("capture_injection_marker_hits_total", "marker" => marker.clone())
+                .increment(u64::from(*count));
+        }
+
         // 2. Deduplication, exact half: the hash is over the *cleaned* content, so the
         //    redacted form is the dedup key and the embedder never sees secrets.
         let content_hash = ContentHash::of(outcome.cleaned.as_bytes());

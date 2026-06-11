@@ -214,7 +214,14 @@ pub struct SecurityConfig {
     /// switch) — so it is validated unconditionally, bounded to
     /// `MAX_CLOCK_SKEW_TOLERANCE_MS`.
     pub clock_skew_tolerance_ms: u64,
-    /// Whether capture-side redaction of configured patterns is on.
+    /// Whether capture-side redaction of configured patterns is on. **Reserved — not yet
+    /// consulted.** The engine builds the capture filter with `CaptureFilter::with_defaults`
+    /// unconditionally, so the conservative v1.0 redaction + injection-marker set always runs
+    /// and setting this `false` today does **not** disable it. The field is kept with a `true`
+    /// default so a future host-supplied filter toggle (or a diagnostic "filter off" mode) can
+    /// honor it without forcing a config migration. The injection-marker hardening and its
+    /// per-marker hit metrics (`capture_injection_marker_hits_total`, M6.T03) ride on that same
+    /// always-on filter.
     pub redaction: bool,
     /// Whether the substrate signs the audit events it authors (06 §6). Off by default:
     /// doing nothing leaves every audit event unsigned, exactly as before, with zero setup.

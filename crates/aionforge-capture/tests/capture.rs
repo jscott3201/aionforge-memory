@@ -433,7 +433,7 @@ async fn injection_markers_are_flagged_and_stripped() {
     assert!(
         receipt
             .injection_flags
-            .contains(&"ignore_previous".to_string()),
+            .contains(&"ignore_or_forget_context".to_string()),
         "flags: {:?}",
         receipt.injection_flags,
     );
