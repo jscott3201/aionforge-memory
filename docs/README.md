@@ -58,6 +58,13 @@ This is reference and guides, not planning or changelogs.
   nothing fabricated, content-addressed anti-flap warnings through the audit outbox,
   and the off-cursor cooling window that rank-sinks core-proximate facts while the
   detector gets its look.
+- [Cross-family consolidation guard](cross-family-guard.md) — why a consolidating
+  model never condenses its own family's writing: the comparison-time family
+  normalization (boundary prefix, closed vendor roots, fail-closed on anything
+  unverifiable), the per-item enforcement inside distillation and link evolution
+  with the mode fixed at construction, the two-hop launder closed by unioning a
+  note's own authoring model into its writer set, the single-family startup
+  warning, and the one-call lineage read.
 
 ## Procedural and generative layers
 
