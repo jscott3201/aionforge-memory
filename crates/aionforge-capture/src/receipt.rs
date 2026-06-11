@@ -26,7 +26,7 @@ pub struct CaptureReceipt {
     pub redactions: Vec<Redaction>,
     /// Ids of prompt-injection markers flagged in the content.
     pub injection_flags: Vec<String>,
-    /// Whether the content was embedded, skipped, or not requested.
+    /// Whether the content was embedded or embedding was intentionally disabled.
     pub embedding: EmbeddingOutcome,
     /// The validated supersedes hint recorded in the episode's origin (04 §1 step 3),
     /// echoed so the writer can confirm the claim landed. `None` when no hint was sent
@@ -58,10 +58,6 @@ pub enum CaptureVerdict {
 pub enum EmbeddingOutcome {
     /// The content was embedded and the vector stored on the episode.
     Embedded,
-    /// Embedding was attempted but failed; the episode was written without a vector
-    /// and will be embedded during consolidation (§8.1 graceful degradation). The
-    /// string is the failure reason, kept for observability.
-    Skipped(String),
     /// Embedding on capture is disabled by configuration.
     NotRequested,
 }

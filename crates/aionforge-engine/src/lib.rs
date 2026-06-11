@@ -524,7 +524,7 @@ impl<E: Embedder> Memory<E> {
     /// Capture one event on the fast path (04 §1).
     ///
     /// # Errors
-    /// Returns [`EngineError::Capture`] if filtering or the commit fails.
+    /// Returns [`EngineError::Capture`] if filtering, embedding, authorization, or the commit fails.
     pub async fn capture(&self, request: CaptureRequest) -> Result<CaptureReceipt, EngineError> {
         let started = Instant::now();
         let result = self.capturer.capture(request).await;

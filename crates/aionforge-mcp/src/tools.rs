@@ -245,7 +245,6 @@ fn format_receipt(receipt: &CaptureReceipt) -> String {
     };
     let embedding = match &receipt.embedding {
         EmbeddingOutcome::Embedded => "embedded",
-        EmbeddingOutcome::Skipped(_) => "skipped",
         EmbeddingOutcome::NotRequested => "not_requested",
     };
     let supersedes = match &receipt.supersedes {

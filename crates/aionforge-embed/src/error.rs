@@ -4,14 +4,14 @@ use aionforge_domain::DomainError;
 
 /// An error from the embedding client.
 ///
-/// [`Unavailable`](EmbedError::Unavailable) is the graceful-degradation signal: the
-/// endpoint could not be reached or returned a server error, so a caller falls back to
-/// lexical and graph signals and defers embedding to consolidation (§8.1). Every other
-/// variant is a hard error the caller should surface.
+/// [`Unavailable`](EmbedError::Unavailable) means the endpoint could not be reached or
+/// returned a server error. Read paths may degrade to lexical and graph signals; write
+/// paths that require vectors can fail closed. Every other variant is a hard error the
+/// caller should surface.
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
 #[non_exhaustive]
 pub enum EmbedError {
-    /// The endpoint could not be reached, timed out, or returned a 5xx. Degrade.
+    /// The endpoint could not be reached, timed out, or returned a 5xx.
     #[error("embedding endpoint unavailable: {0}")]
     Unavailable(String),
 
@@ -54,8 +54,8 @@ pub enum EmbedError {
 }
 
 impl EmbedError {
-    /// Whether this error means the endpoint is unavailable, so a caller should degrade
-    /// rather than fail the operation (§8.1).
+    /// Whether this error means the endpoint is unavailable, so a caller with a
+    /// non-vector fallback may degrade rather than fail the operation (§8.1).
     #[must_use]
     pub fn is_unavailable(&self) -> bool {
         matches!(self, Self::Unavailable(_))

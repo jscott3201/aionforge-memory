@@ -1,7 +1,7 @@
 //! Integration tests for the fast capture path (04 §1).
 //!
 //! Hermetic: a deterministic fake embedder stands in for the network embedder, so
-//! every dedup, degradation, and namespace-enforcement branch is exercised without
+//! every dedup, embedder-failure, and namespace-enforcement branch is exercised without
 //! a live endpoint. The store runs in-memory at dimension 4 to match the fake.
 
 use std::future::Future;
@@ -24,13 +24,14 @@ use aionforge_store::{BoundQuery, QueryResult, Store, StoreConfig, Value};
 
 /// A fake embedder that maps known cleaned-content strings to fixed unit vectors and
 /// falls back to a default for anything else; `down` makes every call fail so the
-/// degradation path can be tested.
+/// fail-closed embedding path can be tested.
 #[derive(Clone)]
 struct FakeEmbedder {
     model: EmbedderModel,
     map: Vec<(String, Vec<f32>)>,
     default: Vec<f32>,
     down: bool,
+    empty: bool,
 }
 
 impl FakeEmbedder {
@@ -47,12 +48,19 @@ impl FakeEmbedder {
                 .collect(),
             default: vec![0.0, 0.0, 0.0, 1.0],
             down: false,
+            empty: false,
         }
     }
 
     fn down() -> Self {
         let mut embedder = Self::new(&[]);
         embedder.down = true;
+        embedder
+    }
+
+    fn empty() -> Self {
+        let mut embedder = Self::new(&[]);
+        embedder.empty = true;
         embedder
     }
 
@@ -85,6 +93,8 @@ impl Embedder for FakeEmbedder {
     ) -> impl Future<Output = Result<Vec<Embedding>, Self::Error>> + Send {
         let result = if self.down {
             Err(FakeEmbedError)
+        } else if self.empty {
+            Ok(Vec::new())
         } else {
             Ok(inputs
                 .iter()
@@ -683,7 +693,7 @@ async fn an_untrusted_write_requesting_a_team_is_confined_not_refused() {
 }
 
 #[tokio::test]
-async fn an_unavailable_embedder_degrades_to_a_vectorless_write() {
+async fn an_unavailable_embedder_refuses_the_write() {
     let store = store();
     let agent = Id::generate();
     let cap = capturer(
@@ -692,18 +702,36 @@ async fn an_unavailable_embedder_degrades_to_a_vectorless_write() {
         CaptureConfig::default(),
     );
 
-    let receipt = cap
+    let err = cap
         .capture(request("content while the embedder is down", &agent))
         .await
-        .expect("capture still succeeds");
+        .expect_err("capture fails closed");
 
+    assert!(matches!(err, aionforge_capture::CaptureError::Embedder(_)));
     assert_eq!(
-        receipt.verdict,
-        CaptureVerdict::New,
-        "no vector means no near-dup judgment"
+        episode_count(&store),
+        0,
+        "no vectorless episode is committed"
     );
-    assert!(matches!(receipt.embedding, EmbeddingOutcome::Skipped(_)));
-    assert_eq!(episode_count(&store), 1, "the episode is still committed");
+}
+
+#[tokio::test]
+async fn an_empty_embedder_response_refuses_the_write() {
+    let store = store();
+    let agent = Id::generate();
+    let cap = capturer(
+        store.clone(),
+        FakeEmbedder::empty(),
+        CaptureConfig::default(),
+    );
+
+    let err = cap
+        .capture(request("content with no returned vector", &agent))
+        .await
+        .expect_err("capture fails closed");
+
+    assert!(matches!(err, aionforge_capture::CaptureError::Embedder(_)));
+    assert_eq!(episode_count(&store), 0, "no episode is committed");
 }
 
 #[tokio::test]

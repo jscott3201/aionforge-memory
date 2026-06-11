@@ -5,9 +5,9 @@
 //! the [`PrivacyFilter`] and [`Embedder`] domain seams, so it names neither the
 //! concrete security filter nor the HTTP embedder — only the contracts.
 //!
-//! Failure shape (04 §1, §8.1): a filter or store failure aborts the capture (fail
-//! closed); an embedder failure does not — the episode is written without a vector
-//! and embedded later by consolidation, recorded as [`EmbeddingOutcome::Skipped`].
+//! Failure shape (04 §1, §8.1): a filter, embedder, or store failure aborts the capture
+//! (fail closed). Hosts that intentionally want vectorless writes disable
+//! `embed_on_capture`; a configured embedder must be healthy before a new episode lands.
 
 use std::future::Future;
 use std::sync::Arc;
@@ -232,15 +232,16 @@ where
             });
         }
 
-        // 4. Embedding. Degradable: a failure leaves the episode vector-less for
-        //    consolidation to embed later, never blocking capture (§8.1).
+        // 4. Embedding. When enabled, this is part of capture correctness: a failed
+        //    embedder refuses the write before any episode/provenance/audit state lands.
+        //    Hosts that explicitly want vectorless writes set `embed_on_capture = false`.
         let (embedding, embedding_outcome) = self
             .embed(&outcome.cleaned)
             .instrument(tracing::info_span!(
                 "aionforge.capture.stage",
                 stage = "embed"
             ))
-            .await;
+            .await?;
 
         // 2. Deduplication, near half. Without a vector we cannot judge similarity, so
         //    the verdict is `New`. Episodes are immutable, so a near-duplicate is still
@@ -359,21 +360,21 @@ where
         })
     }
 
-    /// Embed the cleaned content, degrading to a recorded skip on any failure.
-    async fn embed(&self, cleaned: &str) -> (Option<Embedding>, EmbeddingOutcome) {
+    /// Embed the cleaned content when configured. A configured embedder is fail-closed.
+    async fn embed(
+        &self,
+        cleaned: &str,
+    ) -> Result<(Option<Embedding>, EmbeddingOutcome), CaptureError> {
         if !self.config.embed_on_capture {
-            return (None, EmbeddingOutcome::NotRequested);
+            return Ok((None, EmbeddingOutcome::NotRequested));
         }
         let inputs = [cleaned.to_string()];
         match self.embedder.embed(&inputs).await {
             Ok(vectors) => match vectors.into_iter().next() {
-                Some(vector) => (Some(vector), EmbeddingOutcome::Embedded),
-                None => (
-                    None,
-                    EmbeddingOutcome::Skipped("the embedder returned no vector".to_string()),
-                ),
+                Some(vector) => Ok((Some(vector), EmbeddingOutcome::Embedded)),
+                None => Err(CaptureError::embedder("the embedder returned no vector")),
             },
-            Err(error) => (None, EmbeddingOutcome::Skipped(error.to_string())),
+            Err(error) => Err(CaptureError::embedder(error)),
         }
     }
 
@@ -551,7 +552,6 @@ fn capture_verdict_label(verdict: &CaptureVerdict) -> &'static str {
 fn embedding_label(outcome: &EmbeddingOutcome) -> &'static str {
     match outcome {
         EmbeddingOutcome::Embedded => "embedded",
-        EmbeddingOutcome::Skipped(_) => "skipped",
         EmbeddingOutcome::NotRequested => "not_requested",
     }
 }
@@ -561,6 +561,7 @@ fn capture_error_label(error: &CaptureError) -> &'static str {
         CaptureError::Filter(_) => "filter",
         CaptureError::Store(_) => "store",
         CaptureError::Unauthorized(_) => "unauthorized",
+        CaptureError::Embedder(_) => "embedder",
         CaptureError::InvalidSignature => "invalid_signature",
         CaptureError::ClockSkew { .. } => "clock_skew",
         CaptureError::ProvenanceUnavailable(_) => "provenance_unavailable",

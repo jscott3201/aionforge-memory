@@ -41,7 +41,7 @@ Validation is strict and oracle-free. The target must be a **live** episode (a s
 
 The **near** half runs after embedding. The episode's vector is checked against the nearest *active* episode (a small window of `NEAR_DUPLICATE_CANDIDATES`, eight, so it can skip a few soft-forgotten ones and still find the nearest live one without scanning deeply on the hot path). If the cosine similarity clears `near_duplicate_threshold` (0.95 by default), the verdict is `NearDuplicate`, carrying the id it resembles and the distance.
 
-A near-duplicate is **still written**. Episodes are immutable and append-only, so capture does not merge or drop it. The similarity is surfaced on the receipt and recorded in the audit so consolidation can cluster or summarize the pair later. Without a vector — when embedding is off or failed — similarity cannot be judged, so the verdict is `New`.
+A near-duplicate is **still written**. Episodes are immutable and append-only, so capture does not merge or drop it. The similarity is surfaced on the receipt and recorded in the audit so consolidation can cluster or summarize the pair later. Without a vector — only when embedding is explicitly disabled — similarity cannot be judged, so the verdict is `New`.
 
 ## The add / update / supersede decision
 
@@ -49,7 +49,7 @@ Capture's decision is intentionally lightweight: it is ADD or nothing. The three
 
 ## Embedding and provenance
 
-If `embed_on_capture` is set, the cleaned content is embedded and the vector is stored on the episode along with the model that produced it. Embedding is the one step that may fail without aborting the capture. An embedder error degrades to `EmbeddingOutcome::Skipped` with the reason kept for observability: the episode is committed **without a vector**, marked `ConsolidationState::Raw`, and consolidation embeds it later. Capture never blocks on the embedder. That split is deliberate — the filter and the store are correctness-critical and fail closed, but a slow or down embedder is an availability problem the path routes around rather than a reason to drop the turn.
+If `embed_on_capture` is set, the cleaned content is embedded and the vector is stored on the episode along with the model that produced it. Embedding is part of capture correctness: if the configured embedder fails, returns the wrong shape, or returns no vector, capture returns `CaptureError::Embedder` and writes nothing. Hosts that intentionally want vectorless writes must disable capture-time embedding; those receipts report `EmbeddingOutcome::NotRequested`, and near-duplicate detection is skipped because no vector exists.
 
 Every committed episode gets a `ProvenanceRecord` proving the write: the subject episode id, the writer agent, the writer's model family and version, and `trust_at_write` (the writer's trust, clamped to `[0, 1]`). On an unsigned deployment the signature is empty. On a [signed-write deployment](provenance-signing.md) the record carries the host signature the gate verified.
 
