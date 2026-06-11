@@ -29,20 +29,43 @@ fn run_with_config(
 ) -> Result<RecoverOutcome, CliError> {
     let now = Timestamp::now();
     let wal_path = config.data_dir().join(Store::WAL_FILE_NAME);
+    let persistence = doctor::PersistenceProbe::inspect(config.data_dir());
     if !wal_path.is_file() {
         return Err(CliError::RecoverMissingWal {
             data_dir: config.data_dir().to_path_buf(),
             wal_path,
         });
     }
-    let store = Arc::new(Store::recover(config.data_dir(), config.store_config())?);
+    let store = match Store::recover(config.data_dir(), config.store_config()) {
+        Ok(store) => Arc::new(store),
+        Err(error) => {
+            let rendered = doctor::render_unavailable(
+                "recover",
+                config_path,
+                config.data_dir(),
+                &persistence,
+                &error.to_string(),
+                args.json,
+            )?;
+            return Ok(RecoverOutcome {
+                ok: false,
+                rendered,
+            });
+        }
+    };
     let embedder = runtime_embedder(&config)?;
     let memory = Memory::new(store, embedder, memory_config(&config)?, &now)?;
     let report = memory.doctor_report()?;
     let rendered = if args.json {
-        doctor::render_json(config_path, config.data_dir(), &report)?
+        doctor::render_json(config_path, config.data_dir(), &persistence, &report)?
     } else {
-        doctor::render_human("recover", config_path, config.data_dir(), &report)?
+        doctor::render_human(
+            "recover",
+            config_path,
+            config.data_dir(),
+            &persistence,
+            &report,
+        )?
     };
     Ok(RecoverOutcome {
         ok: report.ok,
@@ -168,6 +191,39 @@ mod tests {
 
         assert!(outcome.ok);
         assert!(outcome.rendered.contains("aionforge recover: ok"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn json_recover_surfaces_corrupt_wal_without_losing_json() {
+        let dir = unique_dir("bad-wal-json");
+        std::fs::create_dir_all(&dir).expect("create data dir");
+        std::fs::write(dir.join(Store::WAL_FILE_NAME), b"not a selene wal").expect("write bad WAL");
+        let mut config = Config::default();
+        config.persistence.data_dir = dir.clone();
+        config.embedder.enabled = false;
+        config.embedder.model.clear();
+        config.embedder.endpoint.clear();
+
+        let outcome = run_with_config(
+            config,
+            Path::new("/tmp/aionforge.toml"),
+            RecoverArgs { json: true },
+        )
+        .expect("recover renders a structured failure");
+        let value: serde_json::Value = serde_json::from_str(&outcome.rendered).expect("json");
+
+        assert!(!outcome.ok);
+        assert_eq!(value["ok"], false);
+        assert_eq!(value["store_open"]["ok"], false);
+        assert_eq!(value["store_open"]["mode"], "recover");
+        assert_eq!(value["persistence"]["wal"]["present"], true);
+        assert!(value["store"].is_null());
+        let error = value["store_open"]["error"].as_str().expect("error string");
+        assert!(
+            error.to_ascii_lowercase().contains("wal"),
+            "error should preserve the WAL failure: {error}"
+        );
         let _ = std::fs::remove_dir_all(dir);
     }
 
