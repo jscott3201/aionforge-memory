@@ -93,6 +93,8 @@ cargo nextest run --workspace --locked --all-features
 Run the MCP server from the single binary:
 
 ```bash
+aionforge doctor
+aionforge recover --json   # validates an existing WAL-backed store; does not create one
 aionforge serve stdio
 AIONFORGE_MCP_TOKEN=change-me \
   aionforge serve http --listen 127.0.0.1:3918 \
@@ -115,6 +117,8 @@ Persistent stores require an owner-only data directory on Unix. A fresh director
 is created as `0700`; an existing directory with group/other access, or a symlink,
 is refused. For Docker bind mounts, make the host directory owned by UID/GID
 `10001:10001` and mode `0700` before starting the container.
+See [Operations and recovery](docs/operations-recovery.md) for config layering,
+production signing posture, and the WAL-backed recovery runbook.
 
 `Cargo.lock` pins the exact substrate commit, so builds are reproducible and CI runs
 `--locked`. To pull a newer `development` commit, run `cargo update -p selene-core` (and

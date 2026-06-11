@@ -114,8 +114,8 @@ header uses `subject=*` and each row includes its concrete subject id.
 - **Enable:** set `security.sign_audit_events = true` and a data directory. First start
   mints the seed (file mode), anchors the keyring, and signs from there on.
 - **Export the seed:** the load-only custody primitive (`load_audit_seed`) reads the seed
-  without ever minting — it is the backup path. A CLI wrapper (`audit key export`) ships
-  with the binary surface; until then it is a one-line library call for the host.
+  without ever minting — it is the backup path. A dedicated CLI wrapper is deferred; until
+  then it is a one-line library call for the host.
 - **Pin the anchor:** back up `audit_keyring.json` out of band. It holds only public keys —
   it is integrity-sensitive, not secret.
 - **Key loss:** past rows stay verifiable. Remove the seed deliberately and let the next
