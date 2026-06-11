@@ -43,9 +43,7 @@ async fn serve_http(
     args: ServeArgs,
 ) -> Result<(), CliError> {
     let oauth_metadata = oauth_metadata(&args)?;
-    let oauth_challenge = oauth_metadata
-        .as_ref()
-        .map(|metadata| oauth_challenge(metadata, &args.oauth_scopes));
+    let oauth_challenge = oauth_metadata.as_ref().map(oauth_challenge);
     let mut options = StreamableHttpOptions::default()
         .with_stateful_mode(!args.stateless)
         .with_json_response(args.json_response);
@@ -123,6 +121,7 @@ struct OAuthMetadataRoute {
     path: String,
     resource: String,
     body: Arc<str>,
+    scopes: Vec<String>,
 }
 
 impl HttpMcpRouter {
@@ -160,8 +159,10 @@ fn streamable_http_service_with_auth(
 }
 
 fn oauth_metadata(args: &ServeArgs) -> Result<Option<OAuthMetadataRoute>, CliError> {
-    if args.oauth_issuers.is_empty() {
-        if !args.oauth_scopes.is_empty() {
+    let oauth_issuers = oauth_issuers(&args.oauth_issuers)?;
+    let oauth_scopes = oauth_scopes(&args.oauth_scopes)?;
+    if oauth_issuers.is_empty() {
+        if !oauth_scopes.is_empty() {
             return Err(CliError::Serve(
                 "--oauth-scope requires at least one --oauth-issuer".to_string(),
             ));
@@ -176,22 +177,94 @@ fn oauth_metadata(args: &ServeArgs) -> Result<Option<OAuthMetadataRoute>, CliErr
     let endpoint_url = endpoint_url(args)?;
     let metadata_path = oauth_protected_resource_well_known_path(STREAMABLE_HTTP_ENDPOINT);
     let metadata_url = resource_metadata_url(&endpoint_url, &metadata_path)?;
-    let metadata = OAuthProtectedResourceMetadata::new(endpoint_url.as_str(), &args.oauth_issuers)
-        .with_scopes(&args.oauth_scopes);
+    let metadata = OAuthProtectedResourceMetadata::new(endpoint_url.as_str(), &oauth_issuers)
+        .with_scopes(&oauth_scopes);
     Ok(Some(OAuthMetadataRoute {
         path: metadata_path,
         resource: metadata_url,
         body: Arc::from(metadata.to_json()),
+        scopes: oauth_scopes,
     }))
 }
 
-fn oauth_challenge(metadata: &OAuthMetadataRoute, scopes: &[String]) -> BearerAuthChallenge {
+fn oauth_challenge(metadata: &OAuthMetadataRoute) -> BearerAuthChallenge {
     let mut challenge =
         BearerAuthChallenge::default().with_resource_metadata_url(metadata.resource.clone());
-    if !scopes.is_empty() {
-        challenge = challenge.with_scope(scopes.join(" "));
+    if !metadata.scopes.is_empty() {
+        challenge = challenge.with_scope(metadata.scopes.join(" "));
     }
     challenge
+}
+
+fn oauth_issuers(raw: &[String]) -> Result<Vec<String>, CliError> {
+    let issuers = normalized_non_blank("--oauth-issuer", raw)?;
+    for (index, issuer) in issuers.iter().enumerate() {
+        let url = Url::parse(issuer).map_err(|error| {
+            CliError::Serve(format!(
+                "--oauth-issuer[{index}] is not a valid URL: {error}"
+            ))
+        })?;
+        if url.query().is_some() || url.fragment().is_some() {
+            return Err(CliError::Serve(format!(
+                "--oauth-issuer[{index}] must not include a query string or fragment"
+            )));
+        }
+        if url.scheme() == "https" {
+            continue;
+        }
+        if url.scheme() == "http" && is_loopback_url(&url) {
+            continue;
+        }
+        return Err(CliError::Serve(format!(
+            "--oauth-issuer[{index}] must use https unless it is an http loopback URL"
+        )));
+    }
+    Ok(issuers)
+}
+
+fn oauth_scopes(raw: &[String]) -> Result<Vec<String>, CliError> {
+    let scopes = normalized_non_blank("--oauth-scope", raw)?;
+    for (index, scope) in scopes.iter().enumerate() {
+        if scope
+            .chars()
+            .any(|ch| ch.is_ascii_whitespace() || ch.is_ascii_control() || ch == '"' || ch == '\\')
+        {
+            return Err(CliError::Serve(format!(
+                "--oauth-scope[{index}] must be one scope token without whitespace, quotes, or backslashes"
+            )));
+        }
+    }
+    Ok(scopes)
+}
+
+fn normalized_non_blank(flag: &str, raw: &[String]) -> Result<Vec<String>, CliError> {
+    raw.iter()
+        .enumerate()
+        .map(|(index, value)| {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                return Err(CliError::Serve(format!("{flag}[{index}] cannot be blank")));
+            }
+            Ok(trimmed.to_string())
+        })
+        .collect()
+}
+
+fn is_loopback_url(url: &Url) -> bool {
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    if host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    let ip_host = host
+        .strip_prefix('[')
+        .and_then(|stripped| stripped.strip_suffix(']'))
+        .unwrap_or(host);
+    ip_host
+        .parse::<IpAddr>()
+        .map(|address| address.is_loopback())
+        .unwrap_or(false)
 }
 
 fn endpoint_url(args: &ServeArgs) -> Result<Url, CliError> {
@@ -314,6 +387,97 @@ mod tests {
                 .body
                 .contains("\"scopes_supported\":[\"memory.read\",\"memory.write\"]")
         );
+    }
+
+    #[test]
+    fn oauth_metadata_normalizes_inputs_for_metadata_and_challenge() {
+        let mut args = http_args();
+        args.public_url = Some("https://memory.example.com/mcp".to_string());
+        args.oauth_issuers = vec![" https://auth.example.com/issuer ".to_string()];
+        args.oauth_scopes = vec![" memory.read ".to_string()];
+
+        let route = oauth_metadata(&args)
+            .expect("metadata builds")
+            .expect("metadata enabled");
+
+        assert!(
+            route
+                .body
+                .contains("\"authorization_servers\":[\"https://auth.example.com/issuer\"]")
+        );
+        assert!(
+            route
+                .body
+                .contains("\"scopes_supported\":[\"memory.read\"]")
+        );
+        assert_eq!(route.scopes, vec!["memory.read"]);
+        assert!(
+            oauth_challenge(&route)
+                .header_value()
+                .contains(r#"scope="memory.read""#)
+        );
+    }
+
+    #[test]
+    fn oauth_issuer_allows_loopback_http_for_local_development() {
+        let mut args = http_args();
+        args.oauth_issuers = vec![
+            "http://localhost:3000/issuer".to_string(),
+            "http://127.0.0.1:3000/issuer".to_string(),
+            "http://[::1]:3000/issuer".to_string(),
+        ];
+
+        let route = oauth_metadata(&args)
+            .expect("metadata builds")
+            .expect("metadata enabled");
+
+        assert!(route.body.contains("\"http://localhost:3000/issuer\""));
+        assert!(route.body.contains("\"http://127.0.0.1:3000/issuer\""));
+        assert!(route.body.contains("\"http://[::1]:3000/issuer\""));
+    }
+
+    #[test]
+    fn oauth_issuer_rejects_blank_or_insecure_remote_values() {
+        for (issuer, message) in [
+            (" ", "--oauth-issuer[0] cannot be blank"),
+            ("not a url", "--oauth-issuer[0] is not a valid URL"),
+            (
+                "http://auth.example.com",
+                "--oauth-issuer[0] must use https unless it is an http loopback URL",
+            ),
+            (
+                "https://auth.example.com?tenant=bad",
+                "--oauth-issuer[0] must not include a query string or fragment",
+            ),
+        ] {
+            let mut args = http_args();
+            args.oauth_issuers = vec![issuer.to_string()];
+
+            let error = oauth_metadata(&args).expect_err("issuer rejected");
+
+            assert!(error.to_string().contains(message), "{error}");
+        }
+    }
+
+    #[test]
+    fn oauth_scope_rejects_blank_or_multi_token_values() {
+        for (scope, message) in [
+            (" ", "--oauth-scope[0] cannot be blank"),
+            (
+                "memory.read memory.write",
+                "--oauth-scope[0] must be one scope token",
+            ),
+            ("memory\"read", "--oauth-scope[0] must be one scope token"),
+            ("memory\\read", "--oauth-scope[0] must be one scope token"),
+        ] {
+            let mut args = http_args();
+            args.oauth_issuers = vec!["https://auth.example.com".to_string()];
+            args.oauth_scopes = vec![scope.to_string()];
+
+            let error = oauth_metadata(&args).expect_err("scope rejected");
+
+            assert!(error.to_string().contains(message), "{error}");
+        }
     }
 
     #[test]
