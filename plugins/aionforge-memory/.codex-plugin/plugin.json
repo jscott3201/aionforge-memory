@@ -23,8 +23,8 @@
     "privacyPolicyURL": "https://github.com/Aionforge-Labs/aionforge-memory/blob/development/docs/security-model.md",
     "termsOfServiceURL": "https://github.com/Aionforge-Labs/aionforge-memory/blob/development/LICENSE-MIT",
     "defaultPrompt": [
-      "Search Aionforge Memory for prior decisions before planning this change.",
-      "Capture the final decision and validation result in Aionforge Memory."
+      "Use Aionforge Memory as the working substrate for this task.",
+      "Search memory before planning, then capture durable decisions and validation results."
     ]
   }
 }

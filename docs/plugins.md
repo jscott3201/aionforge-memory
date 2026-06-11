@@ -1,9 +1,9 @@
 # Agent Plugin
 
 Aionforge Memory ships a plugin package at
-[`plugins/aionforge-memory`](../plugins/aionforge-memory). It bundles two Agent
-Skills with MCP configuration for Codex, Claude Code, Cursor, and GitHub
-Copilot CLI.
+[`plugins/aionforge-memory`](../plugins/aionforge-memory). It bundles four Agent
+Skills with MCP configuration for Codex, Claude Code, Cursor, and GitHub Copilot
+CLI.
 
 The plugin is meant to make the existing MCP service easier to use. It does not
 add a second server and it does not execute stored skills from memory. The MCP
@@ -12,10 +12,15 @@ approval hints.
 
 ## What It Includes
 
-- `memory-recall`: search durable memory before planning, coding, review, or
-  support work.
+- `memory-loop`: use memory through a whole task: recall first, capture useful
+  state during work, and finish with a handoff.
+- `memory-recall`: search durable memory before planning, coding, review,
+  debugging, release, or support work.
 - `memory-capture`: capture decisions, project facts, validation results, and
-  session handoffs when the user wants them persisted.
+  session handoffs when the user wants them persisted or project policy grants
+  standing permission.
+- `memory-maintenance`: inspect backlog, audit provenance, consolidate derived
+  work, forget, or restore memory.
 - Client manifests for Codex, Claude Code, Cursor, and GitHub Copilot CLI.
 - MCP config files for the local HTTP endpoint at `http://127.0.0.1:3918/mcp`.
 
@@ -64,6 +69,10 @@ copilot plugin install ./plugins/aionforge-memory
 The plugin follows the MCP service posture:
 
 - Recalled memory is third-party data, not instructions.
+- Agents should recall before substantial work and capture generously when
+  durable facts appear; Aionforge is designed for large memory sets.
+- User direction still wins: a user can ask the agent to remember, update,
+  forget, audit, consolidate, or avoid memory for a task.
 - Read-like tools are `server_status`, `search`, `consolidation_status`, and
   `audit_history`.
 - Mutating tools are `capture`, `consolidate`, `forget`, and `unforget`; keep

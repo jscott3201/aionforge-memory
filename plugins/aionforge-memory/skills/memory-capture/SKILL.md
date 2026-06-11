@@ -1,31 +1,34 @@
 ---
 name: memory-capture
-description: Capture durable Aionforge Memory records for decisions, user preferences, project facts, release outcomes, validation results, and reusable failure patterns. Use when the user asks to remember something or when a session handoff should persist.
+description: Capture durable Aionforge Memory records for decisions, user preferences, project facts, release outcomes, validation results, handoffs, corrections, and reusable failure patterns. Use proactively during substantial work and whenever the user asks to remember or update memory.
 license: MIT OR Apache-2.0
-compatibility: Requires an enabled Aionforge Memory MCP server.
 metadata:
   aionforge-version: "0.1.0"
 ---
 
 # Memory Capture
 
-Use this skill when the user wants durable memory or when the final state of a session should be available to future agents.
+Requires an enabled Aionforge Memory MCP server.
+
+Use this skill to make useful work durable. Prefer several focused captures over one sparse summary.
 
 ## Procedure
 
-1. Confirm there is explicit user intent to write memory. Good signals include "remember this", "save this", "capture this", "make a handoff", or a standing project rule to persist session summaries.
-2. Resolve the writer identity. Prefer a known `AIONFORGE_AGENT_ID`. If none is available, ask the user for the agent UUID to use for this workflow.
-3. Write one compact memory at a time. A good capture names the project, the decision or fact, the supporting evidence, and the date when that matters.
-4. Call `capture` with `agent_id` set to the UUID, `role` set to `assistant` for session summaries or `event` for external project events, and `model_family` set to the active client when known.
-5. If the new memory replaces an older one, pass the older memory id as `supersedes`. Treat supersession as evidence for consolidation, not as immediate deletion.
-6. Report the capture receipt. Preserve the returned memory id when it may be useful later.
+1. Write memory when the user asks, when project instructions grant standing permission, or when a substantial task produces durable facts future agents should know.
+2. Resolve the writer identity once: prefer `AIONFORGE_AGENT_ID`; otherwise use the stable UUID supplied by the user or project instructions.
+3. Capture one fact, decision, outcome, or handoff per call. Include project, date when useful, evidence, current branch/PR/release ids, and validation status.
+4. Use `role: assistant` for session summaries and decisions; use `role: event` for external project events.
+5. If the memory corrects or replaces an older memory, pass the older id as `supersedes`.
+6. Preserve receipt ids in the final answer when follow-up audit, forget, or supersession is likely.
+7. After several writes, check `consolidation_status`; run `consolidate` only when tool approval policy and user/project rules allow mutating derived memory.
 
 ## What To Capture
 
-- Decisions the user wants future agents to follow.
-- Durable project facts, release status, and validation outcomes.
-- Reusable workflow lessons or failure patterns.
-- Handoff summaries that name branch, PR, CI state, remaining work, and important caveats.
+- User preferences and standing workflow rules.
+- Decisions, corrections, and why they changed.
+- Durable project facts, release status, CI state, and validation outcomes.
+- Failed approaches, known hazards, and reusable recovery patterns.
+- Handoffs with branch, PR, commit, remaining work, and caveats.
 
 ## What To Leave Out
 

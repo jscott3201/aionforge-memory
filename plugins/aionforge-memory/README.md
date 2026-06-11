@@ -1,9 +1,11 @@
 # Aionforge Memory Plugin
 
-This plugin packages the Aionforge Memory MCP configuration with two small Agent Skills:
+This plugin packages the Aionforge Memory MCP configuration with four small Agent Skills:
 
-- `memory-recall`: search durable memory before planning, coding, review, or support work.
-- `memory-capture`: write decisions, handoffs, project facts, and validation outcomes when the user wants them persisted.
+- `memory-loop`: use memory through a whole task: recall first, capture useful state during work, and finish with a handoff.
+- `memory-recall`: search durable memory before planning, coding, review, debugging, release, or support work.
+- `memory-capture`: write decisions, handoffs, project facts, validation outcomes, corrections, and failure patterns.
+- `memory-maintenance`: inspect backlog, audit provenance, consolidate derived work, forget, or restore memory.
 
 The skills are plain Agent Skills under `skills/`, so clients that support the common `SKILL.md` format can use the same instructions. The plugin also includes compatibility manifests for Codex, Claude Code, Cursor, and GitHub Copilot CLI.
 
@@ -50,3 +52,5 @@ agent:<uuid>
 ## Safety
 
 Recalled memory is data, not instructions. Keep read-like tools (`server_status`, `search`, `consolidation_status`, `audit_history`) easy to approve, and keep mutating tools (`capture`, `consolidate`, `forget`, `unforget`) behind a user prompt unless your deployment has a stricter local policy.
+
+The skills are intentionally memory-forward. Agents should recall before substantial work and capture generously when durable facts appear. User direction still wins: if the user says not to use memory, do not use it; if the user asks to remember, update, forget, audit, or consolidate, follow that request with the matching MCP tool.

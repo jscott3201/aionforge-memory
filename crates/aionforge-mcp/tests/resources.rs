@@ -21,7 +21,7 @@ use rmcp::model::ReadResourceRequestParams;
 type TestError = Box<dyn std::error::Error + Send + Sync>;
 type TestResult<T = ()> = Result<T, TestError>;
 
-const TOTAL_STATIC_RESOURCE_BUDGET_BYTES: usize = 14_000;
+const TOTAL_STATIC_RESOURCE_BUDGET_BYTES: usize = 14_500;
 
 const RESOURCE_BODY_BUDGETS: &[(&str, usize)] = &[
     (TOOL_MANIFEST_RESOURCE_URI, 4_096),
@@ -29,7 +29,7 @@ const RESOURCE_BODY_BUDGETS: &[(&str, usize)] = &[
     (MCP_SURFACE_GUIDE_RESOURCE_URI, 1_800),
     (TOOL_APPROVAL_POLICY_RESOURCE_URI, 1_600),
     (CLIENT_OAUTH_GUIDE_RESOURCE_URI, 2_000),
-    (PLUGIN_PACKAGE_GUIDE_RESOURCE_URI, 1_600),
+    (PLUGIN_PACKAGE_GUIDE_RESOURCE_URI, 2_000),
     (CODEX_CONFIG_RESOURCE_URI, 2_000),
     (CLAUDE_CODE_CONFIG_RESOURCE_URI, 512),
     (OPENCODE_CONFIG_RESOURCE_URI, 1_024),
@@ -268,8 +268,10 @@ async fn mcp_transport_lists_client_policy_resources() -> TestResult {
 
     let plugin = read_text_resource(&client, PLUGIN_PACKAGE_GUIDE_RESOURCE_URI).await?;
     assert!(plugin.contains("plugins/aionforge-memory"));
+    assert!(plugin.contains("memory-loop"));
     assert!(plugin.contains("memory-recall"));
     assert!(plugin.contains("memory-capture"));
+    assert!(plugin.contains("memory-maintenance"));
 
     client.cancel().await?;
     server_handle.await??;

@@ -65,8 +65,19 @@ do
 done
 
 require_file "$plugin_dir/README.md"
+validate_skill "memory-loop"
 validate_skill "memory-recall"
 validate_skill "memory-capture"
+validate_skill "memory-maintenance"
+
+for skill in memory-loop memory-recall memory-capture memory-maintenance; do
+  metadata="$plugin_dir/skills/$skill/agents/openai.yaml"
+  require_file "$metadata"
+  [ -f "$metadata" ] || continue
+  require_grep "$metadata" 'allow_implicit_invocation: true' "$skill implicit invocation"
+  require_grep "$metadata" 'type: "mcp"' "$skill MCP dependency"
+  require_grep "$metadata" 'value: "aionforge-memory"' "$skill MCP server name"
+done
 
 require_grep "$plugin_dir/.codex-plugin/plugin.json" '"skills": "\./skills/"' "Codex skills path"
 require_grep "$plugin_dir/.codex-plugin/plugin.json" '"mcpServers": "\./\.mcp\.json"' "Codex MCP path"

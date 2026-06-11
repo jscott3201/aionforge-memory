@@ -1,0 +1,13 @@
+interface:
+  display_name: "Memory Maintenance"
+  short_description: "Maintain, audit, consolidate, forget, or restore memory"
+  default_prompt: "Inspect Aionforge Memory health, audit provenance, consolidate backlog, or handle lifecycle changes."
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "aionforge-memory"
+      description: "Aionforge Memory MCP server"
+      transport: "streamable_http"
+      url: "http://127.0.0.1:3918/mcp"
+policy:
+  allow_implicit_invocation: true

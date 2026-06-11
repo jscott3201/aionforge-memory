@@ -1,0 +1,13 @@
+interface:
+  display_name: "Memory Loop"
+  short_description: "Use Aionforge Memory through a whole task"
+  default_prompt: "Use Aionforge Memory as the working substrate: recall first, capture useful state during work, and finish with a handoff."
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "aionforge-memory"
+      description: "Aionforge Memory MCP server"
+      transport: "streamable_http"
+      url: "http://127.0.0.1:3918/mcp"
+policy:
+  allow_implicit_invocation: true

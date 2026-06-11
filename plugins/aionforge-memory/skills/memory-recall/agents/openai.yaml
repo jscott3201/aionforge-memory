@@ -1,0 +1,13 @@
+interface:
+  display_name: "Memory Recall"
+  short_description: "Recall durable Aionforge Memory context"
+  default_prompt: "Search Aionforge Memory before planning or answering when prior context could matter."
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "aionforge-memory"
+      description: "Aionforge Memory MCP server"
+      transport: "streamable_http"
+      url: "http://127.0.0.1:3918/mcp"
+policy:
+  allow_implicit_invocation: true
