@@ -17,7 +17,7 @@ operation names and bounded fields only:
 | `aionforge.capture.stage` | `stage` | Fixed capture stages: `filter`, `embed`, and `commit`. |
 | `aionforge.recall` | `class`, `temporal`, `sensitive`, `include_expired`, `include_system`, `mode_override`, `deadline`, `fanout`, `limit`, `outcome`, `embedder`, `error`, `returned`, `candidates_considered`, `signals_run` | One recall request. The query text and principal id are never fields. |
 | `aionforge.recall.stage` | `stage` | Fixed recall stages, currently `classify` and `assemble`. |
-| `aionforge.recall.signal` | `signal`, `fanout` | Signal-level work for `query_embed`, `lexical`, `dense`, `support`, `graph`, `trust`, `importance`, and `recency`. |
+| `aionforge.recall.signal` | `signal`, `fanout` | Signal-level work for `query_embed`, `lexical`, `lexical_anchor`, `dense`, `support`, `graph`, `trust`, `importance`, and `recency`. |
 | `aionforge.consolidation.tick` | `batch_size`, `outcome`, `error`, `consolidated`, `retried`, `failed`, `pending_after` | One foreground or background consolidation tick. |
 | `aionforge.consolidation.episode` | `role`, `namespace`, `state`, `outcome`, `error` | One episode processed inside a tick. The episode id and content are never fields. |
 | `aionforge.consolidation.pass` | `pass`, `version`, `outcome`, `error` | One enabled consolidation pass applied to one episode. Pass names are stable rule identifiers from the registered pass set. |

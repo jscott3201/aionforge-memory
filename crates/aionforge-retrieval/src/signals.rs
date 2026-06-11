@@ -22,13 +22,17 @@ use crate::error::RetrievalError;
 /// implements lexical and dense; graph, recency, importance, and trust land with
 /// their tasks' re-rank builders.
 ///
-/// The declared order (lexical, dense, …) is the canonical order fusion sums
+/// The declared order (lexical, lexical anchor, dense, …) is the canonical order fusion sums
 /// contributions in, so a fused result is independent of the order signals are
 /// supplied (03 §2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Signal {
     /// Native BM25 over a maintained text index.
     Lexical,
+    /// Factual-query boost for the highest lexical hits. This is derived from the BM25
+    /// rankings and exists so an exact operational memory does not sink under several
+    /// weak quality re-ranks from adjacent memories.
+    LexicalAnchor,
     /// Native vector search, optionally exact-reranked.
     Dense,
     /// Graph-guided dense scoring over a query entity's supporting evidence (03 §1, §4,

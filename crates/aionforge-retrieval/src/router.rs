@@ -41,6 +41,9 @@ pub enum QueryClass {
 pub struct SignalWeights {
     /// Lexical (BM25) weight.
     pub lexical: f64,
+    /// Lexical-anchor weight. This is a factual-query guard over the highest BM25 hits,
+    /// not a separate search path.
+    pub lexical_anchor: f64,
     /// Dense (vector) weight.
     pub dense: f64,
     /// Support-expansion weight (03 §4, M3.T02): the graph-guided dense scoring over a
@@ -63,6 +66,7 @@ impl SignalWeights {
     pub fn weight(&self, signal: Signal) -> f64 {
         match signal {
             Signal::Lexical => self.lexical,
+            Signal::LexicalAnchor => self.lexical_anchor,
             Signal::Dense => self.dense,
             Signal::Support => self.support,
             Signal::Graph => self.graph,
@@ -105,11 +109,13 @@ const OFF: f64 = 0.0;
 #[must_use]
 pub fn profile_for(class: QueryClass) -> RetrievalProfile {
     match class {
-        // factual: heavy lexical + dense, light graph, heavy trust, light recency.
+        // factual: heavy lexical + lexical anchor + dense, light graph, heavy trust,
+        // light recency.
         QueryClass::SingleHopFactual => RetrievalProfile {
             class,
             weights: SignalWeights {
                 lexical: HEAVY,
+                lexical_anchor: HEAVY,
                 dense: HEAVY,
                 support: OFF,
                 graph: LIGHT,
@@ -128,6 +134,7 @@ pub fn profile_for(class: QueryClass) -> RetrievalProfile {
             class,
             weights: SignalWeights {
                 lexical: LIGHT,
+                lexical_anchor: OFF,
                 dense: HEAVY,
                 support: MODERATE,
                 graph: HEAVY,
@@ -146,6 +153,7 @@ pub fn profile_for(class: QueryClass) -> RetrievalProfile {
             class,
             weights: SignalWeights {
                 lexical: MODERATE,
+                lexical_anchor: OFF,
                 dense: HEAVY,
                 support: OFF,
                 graph: OFF,
@@ -164,6 +172,7 @@ pub fn profile_for(class: QueryClass) -> RetrievalProfile {
             class,
             weights: SignalWeights {
                 lexical: MODERATE,
+                lexical_anchor: OFF,
                 dense: MODERATE,
                 support: MODERATE,
                 graph: HEAVY,
@@ -182,6 +191,7 @@ pub fn profile_for(class: QueryClass) -> RetrievalProfile {
             class,
             weights: SignalWeights {
                 lexical: HEAVY,
+                lexical_anchor: OFF,
                 dense: OFF,
                 support: OFF,
                 graph: OFF,

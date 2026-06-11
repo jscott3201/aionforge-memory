@@ -13,7 +13,8 @@
 Aionforge Memory is a Rust memory layer for agent systems. It stores episodes,
 facts, notes, skills, bad patterns, core memory, and audit events in
 [`selene-db`](https://github.com/Aionforge-Labs/selene-db), then retrieves
-relevant context with lexical, vector, graph, recency, and trust signals.
+relevant context with lexical anchors, vector search, graph traversal, recency,
+importance, and trust signals.
 
 Use it when an agent or a group of agents needs memory that survives across
 sessions, keeps provenance, and can be searched without treating recalled text as
@@ -25,8 +26,8 @@ new instructions.
   memory records.
 - Extracts facts and entities in the background while keeping the capture path
   fast.
-- Searches with BM25, dense vectors, graph expansion, recency, importance, and
-  trust-aware ranking.
+- Searches with BM25 lexical anchors, dense vectors, graph expansion, recency,
+  importance, and trust-aware ranking.
 - Preserves event time and transaction time, so corrections supersede older
   facts instead of overwriting history.
 - Keeps namespace boundaries explicit: agent-private, team, global, and system
@@ -88,8 +89,9 @@ and OpenCode. Plugin setup guidance is available at
 - **Consolidation:** background passes extract facts, resolve entities,
   supersede stale facts, quarantine contradictions, distill notes, and optionally
   induce reusable skills.
-- **Retrieval:** query routing chooses the relevant mix of lexical, dense, graph,
-  recency, importance, and trust signals, then rank-fuses the results.
+- **Retrieval:** query routing chooses the relevant mix of lexical,
+  lexical-anchor, dense, graph, recency, importance, and trust signals, then
+  rank-fuses the results.
 - **Security:** namespace authorization, signed writes, audit signing, system
   memory exclusion, untrusted recall envelopes, cross-family guards, and red-team
   probes are part of the main build and CI gates.

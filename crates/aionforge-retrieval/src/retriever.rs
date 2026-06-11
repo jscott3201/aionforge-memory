@@ -7,10 +7,11 @@
 //! signal drops out and retrieval degrades to the rest, flagged in the explanation
 //! (03 §6, §8.1).
 //!
-//! All seven signals run: lexical, dense, support-expansion, and associative-graph search
-//! the graph (the support and graph signals gated to the classes the router enables
-//! expansion for, 03 §3); trust, importance, and recency re-rank the surfaced set, the
-//! latter two only when the caller supplies a clock (05 §2).
+//! The retriever composes eight signal types: lexical, lexical-anchor, dense,
+//! support-expansion, and associative-graph search the graph (the support and graph
+//! signals gated to the classes the router enables expansion for, 03 §3); trust,
+//! importance, and recency re-rank the surfaced set, the latter two only when the
+//! caller supplies a clock (05 §2).
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::future::Future;
@@ -43,8 +44,8 @@ use crate::query::{RecallQuery, TemporalMode};
 use crate::rerank;
 use crate::router::{profile_for, route};
 use crate::signals::{
-    Signal, SignalRanking, dense_ranking_for, embed_query, graph_ranking_for, lexical_ranking,
-    ranking_from_hits,
+    RankedCandidate, Signal, SignalRanking, dense_ranking_for, embed_query, graph_ranking_for,
+    lexical_ranking, ranking_from_hits,
 };
 use crate::temporal::{fact_passes_temporal, fact_serialization_id};
 use crate::trace;
@@ -59,6 +60,11 @@ const CORE_KIND_TAG: &str = "core";
 /// of the M3.T02 depth/fan-out knob. v1 expands a single `SUPPORTS` hop; deeper transitive
 /// expansion is a future extension, and the knob already carries the requested depth.
 const MAX_EXPANSION_DEPTH: usize = 1;
+
+/// The number of lexical ranks that receive the factual-query anchor. Keeping the
+/// window small protects precise surface matches without making every BM25 hit count
+/// twice.
+const LEXICAL_ANCHOR_WINDOW: usize = 3;
 
 /// Tuning for the retriever that is not per-query.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -212,10 +218,21 @@ impl<E: Embedder> HybridRetriever<E> {
             let _signal_span = trace::signal_span(Signal::Lexical, fanout).entered();
             let episodes = lexical_ranking(&self.store, SearchKind::Episode, &query.text, fanout)?;
             let facts = self.fact_lexical_ranking(&query, current_facts.as_deref(), fanout)?;
+            let lexical_anchor = if profile.weights.lexical_anchor > 0.0 {
+                let _anchor_span =
+                    trace::signal_span(Signal::LexicalAnchor, LEXICAL_ANCHOR_WINDOW).entered();
+                lexical_anchor_ranking(&[&episodes, &facts])
+            } else {
+                None
+            };
             fact_nodes.extend(facts.candidates.iter().map(|c| c.node));
             rankings.push(WeightedRanking::new(profile.weights.lexical, episodes));
             rankings.push(WeightedRanking::new(profile.weights.lexical, facts));
             signals_run.push(Signal::Lexical);
+            if let Some(anchor) = lexical_anchor {
+                rankings.push(WeightedRanking::new(profile.weights.lexical_anchor, anchor));
+                signals_run.push(Signal::LexicalAnchor);
+            }
         }
         bail_if_past(deadline)?;
 
@@ -811,6 +828,47 @@ impl<E: Embedder> Retriever for HybridRetriever<E> {
 struct Selection {
     entries: Vec<StructuredEntry>,
     considered: usize,
+}
+
+/// Build the factual lexical-anchor ranking from the highest lexical hits.
+///
+/// The anchor is intentionally not a new search: it reuses the already-computed BM25
+/// episode and fact rankings, keeps only their top few ranks, and preserves those
+/// ranks for fusion. If an exact operational memory was a top lexical hit, fusion can
+/// now explain that it stayed high because of both `lexical` and `lexical_anchor`.
+fn lexical_anchor_ranking(rankings: &[&SignalRanking]) -> Option<SignalRanking> {
+    let mut by_node: HashMap<NodeId, RankedCandidate> = HashMap::new();
+    for ranking in rankings {
+        for candidate in ranking
+            .candidates
+            .iter()
+            .copied()
+            .filter(|candidate| candidate.rank < LEXICAL_ANCHOR_WINDOW)
+        {
+            by_node
+                .entry(candidate.node)
+                .and_modify(|existing| {
+                    if candidate.rank < existing.rank
+                        || (candidate.rank == existing.rank
+                            && candidate.score.total_cmp(&existing.score).is_gt())
+                    {
+                        *existing = candidate;
+                    }
+                })
+                .or_insert(candidate);
+        }
+    }
+
+    if by_node.is_empty() {
+        return None;
+    }
+
+    let mut candidates: Vec<RankedCandidate> = by_node.into_values().collect();
+    candidates.sort_by(|a, b| a.rank.cmp(&b.rank).then(a.node.cmp(&b.node)));
+    Some(SignalRanking {
+        signal: Signal::LexicalAnchor,
+        candidates,
+    })
 }
 
 /// True once `deadline` has passed.

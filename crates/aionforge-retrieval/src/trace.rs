@@ -98,6 +98,7 @@ fn query_class_label(class: QueryClass) -> &'static str {
 fn signal_label(signal: Signal) -> &'static str {
     match signal {
         Signal::Lexical => "lexical",
+        Signal::LexicalAnchor => "lexical_anchor",
         Signal::Dense => "dense",
         Signal::Support => "support",
         Signal::Graph => "graph",

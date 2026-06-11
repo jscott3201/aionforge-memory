@@ -391,6 +391,7 @@ fn class_tag(class: QueryClass) -> &'static str {
 fn signal_tag(signal: Signal) -> &'static str {
     match signal {
         Signal::Lexical => "lexical",
+        Signal::LexicalAnchor => "lexical_anchor",
         Signal::Dense => "dense",
         Signal::Support => "support",
         Signal::Graph => "graph",
@@ -566,6 +567,7 @@ mod tests {
                 class: QueryClass::SingleHopFactual,
                 weights: SignalWeights {
                     lexical: 1.0,
+                    lexical_anchor: 1.0,
                     dense: 1.0,
                     support: 0.0,
                     graph: 0.3,

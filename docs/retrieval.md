@@ -1,22 +1,27 @@
 # Retrieval
 
-Retrieval is how a recall turns a query into a ranked set of memories. It runs lexical
-BM25 and dense vector search over the same graph engine, fuses the two by rank, routes
-the query to a profile that decides how hard each signal pulls, and hands back a bundle
-that is the same every time the graph state is. Everything here goes through selene-db.
-There is no second search engine, no external vector store, and no index the substrate
-keeps on the side — the BM25 text indexes, the HNSW vector indexes, and the maintained
-candidate-state sets all live in the one engine, and retrieval composes native `CALL`
-procedures over them.
+Retrieval is how a recall turns a query into a ranked set of memories. It runs BM25
+lexical search, a factual lexical anchor, dense vector search, graph-aware search, and
+quality re-ranks over the same graph engine. The query routes to a profile that decides
+how hard each signal pulls, then the retriever fuses the ranked lists by rank and hands
+back a bundle that is the same every time the graph state is. Everything here goes through
+selene-db. There is no second search engine, no external vector store, and no index the
+substrate keeps on the side — the BM25 text indexes, the HNSW vector indexes, and the
+maintained candidate-state sets all live in the one engine, and retrieval composes native
+`CALL` procedures over them.
 
-## The two native signals
+## Search signals and re-ranks
 
-A signal turns a query into a best-first ranked list of candidate nodes. Two are
-implemented:
+A signal turns a query into a best-first ranked list of candidate nodes. The search side
+starts with:
 
 - **Lexical** is native BM25 over a maintained text index (`Episode.content`,
   `Fact.statement`, `Entity.canonical_name`). The score is BM25 relevance, higher is
   better.
+- **Lexical anchor** is a factual-query guard over the top few BM25 hits. It does not run
+  another search or widen recall. It gives exact surface matches a visible contribution
+  so broad operational queries do not bury a precise memory under several weak quality
+  re-ranks from adjacent memories.
 - **Dense** is native vector search. The query is embedded once, an approximate
   nearest-neighbor pass runs over the HNSW index, and when the profile asks for it the
   retrieved set is **exact-reranked** with full-precision scoring — the
@@ -25,7 +30,7 @@ implemented:
 
 ```rust
 pub enum Signal {
-    Lexical, Dense, Support, Graph, Recency, Trust,
+    Lexical, LexicalAnchor, Dense, Support, Graph, Recency, Importance, Trust,
 }
 ```
 
@@ -35,16 +40,16 @@ but fusion reads only the rank. Candidates ride through the pipeline as the stor
 `NodeId` handle — the currency the engine's candidate-set algebra and the fusion stage
 both work in — and resolve to a stable domain id only at the bundle boundary.
 
-All seven signals ship. `Support` and `Graph` are the additive search signals below;
-`Trust`, `Importance`, and `Recency` are *re-ranks* — they order only the candidates the
-search signals already surfaced (trust by the reliability-folded stored trust, importance
-by the effective decayed importance — see [Decay and importance
-scoring](decay-and-importance.md) — recency by the ingestion instant) and can never widen
-a recall. The importance and recency re-ranks run only when the caller supplies a clock on
+All eight signals ship. `Support` and `Graph` are the additive graph-aware search signals
+below. `Trust`, `Importance`, and `Recency` are *re-ranks* — they order only the
+candidates the search signals already surfaced (trust by the reliability-folded stored
+trust, importance by the effective decayed importance — see [Decay and importance
+scoring](decay-and-importance.md) — recency by the ingestion instant) and can never widen a
+recall. The importance and recency re-ranks run only when the caller supplies a clock on
 the query's options; there is no ambient clock in the retrieval path. The MCP server is
-such a caller: its `search` handler stamps the host's wall clock onto every recall, exactly
-as `capture` stamps `captured_at` — the clock is always supplied, and each query class
-still decides whether it weights those re-ranks (the quote class keeps them off).
+such a caller: its `search` handler stamps the host's wall clock onto every recall,
+exactly as `capture` stamps `captured_at` — the clock is always supplied, and each query
+class still decides whether it weights those re-ranks (the quote class keeps them off).
 
 A fact inside its cooling window (see [Drift detection](drift.md)) ranks in the trust
 re-rank by its *effective* trust — the stored scalar times the configured cooling
@@ -103,9 +108,9 @@ Each class maps to a `RetrievalProfile`: the per-signal weights plus the behavio
 the rest of the pipeline reads — `graph_expansion`, `bitemporal_filter`, `exact_rerank`,
 `quote_phrase`, and `restrict_to_fact_kinds`. The weights are built from four levels
 (`HEAVY` 1.0, `MODERATE` 0.6, `LIGHT` 0.3, `OFF` 0.0). The factual profile, for instance,
-runs heavy lexical and dense over current facts with exact rerank, light graph, and graph
-expansion off; the quote profile runs lexical only. A caller that already knows the intent
-can force a class through `RecallOptions::mode_override`.
+runs heavy lexical, lexical anchor, and dense over current facts with exact rerank, light
+graph, and graph expansion off; the quote profile runs lexical only. A caller that already
+knows the intent can force a class through `RecallOptions::mode_override`.
 
 The classifier is heuristic in v1. It can get a query wrong — `Climate Change` reads like
 an entity, a two-word title-cased common phrase is the residual ambiguity — and that is a

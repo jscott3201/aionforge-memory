@@ -130,7 +130,7 @@ fn single_hop_factual_suppresses_graph_and_exact_reranks() {
         "factual uses the high-precision rerank (03 §4)"
     );
     assert!(p.restrict_to_fact_kinds);
-    assert!(p.weights.lexical > 0.0 && p.weights.dense > 0.0);
+    assert!(p.weights.lexical > 0.0 && p.weights.lexical_anchor > 0.0 && p.weights.dense > 0.0);
 }
 
 #[test]
@@ -160,6 +160,7 @@ fn quote_is_lexical_only() {
     assert!(p.quote_phrase);
     assert!(p.weights.lexical > 0.0);
     assert_eq!(p.weights.dense, 0.0, "quote suppresses dense");
+    assert_eq!(p.weights.lexical_anchor, 0.0, "quote has no factual anchor");
     assert_eq!(p.weights.graph, 0.0, "quote suppresses graph");
     assert_eq!(p.weights.recency, 0.0);
     assert_eq!(p.weights.trust, 0.0);
@@ -180,9 +181,14 @@ fn entity_seeds_graph_and_drops_recency() {
 fn signal_weights_accessor_maps_each_signal() {
     let p = profile_for(QueryClass::MultiHop);
     assert_eq!(p.weights.weight(Signal::Lexical), p.weights.lexical);
+    assert_eq!(
+        p.weights.weight(Signal::LexicalAnchor),
+        p.weights.lexical_anchor
+    );
     assert_eq!(p.weights.weight(Signal::Dense), p.weights.dense);
     assert_eq!(p.weights.weight(Signal::Support), p.weights.support);
     assert_eq!(p.weights.weight(Signal::Graph), p.weights.graph);
     assert_eq!(p.weights.weight(Signal::Recency), p.weights.recency);
+    assert_eq!(p.weights.weight(Signal::Importance), p.weights.importance);
     assert_eq!(p.weights.weight(Signal::Trust), p.weights.trust);
 }
