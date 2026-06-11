@@ -1,0 +1,56 @@
+# Production-oriented Aionforge Memory config template.
+#
+# Replace paths, model ids, endpoints, and environment variable names for your
+# deployment. Do not put secret values in this file.
+
+[persistence]
+data_dir = "/var/lib/aionforge-memory"
+
+[embedder]
+enabled = true
+endpoint = "https://api.example.com/v1"
+model = "embedding-model-id"
+dimension = 1536
+api_key_env = "AIONFORGE_EMBEDDER_API_KEY"
+timeout_ms = 30000
+
+[completer]
+enabled = false
+provider = "openai_chat"
+endpoint = "https://api.example.com/v1"
+model = ""
+api_key_env = "AIONFORGE_COMPLETER_API_KEY"
+timeout_ms = 60000
+max_tokens = 4096
+
+[retrieval]
+default_k = 12
+fusion_constant = 60
+default_mode = "hybrid"
+
+[security]
+signed_writes = true
+sign_audit_events = true
+clock_skew_tolerance_ms = 60000
+audit_key_env = "AIONFORGE_AUDIT_SIGNING_SEED"
+
+[promotion]
+enabled = false
+default_k = 3
+default_threshold = 0.80
+
+[reliability]
+enabled = false
+
+[decay]
+enabled = false
+
+[forgetting]
+enabled = false
+
+[drift]
+enabled = false
+
+[consolidation_guard]
+mode = "refuse"
+declared_consolidator_family = "production-consolidator"

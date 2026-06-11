@@ -137,7 +137,11 @@ bash scripts/install-hooks.sh
 ## Documentation
 
 System documentation — subsystem guides and API reference — lives in [`docs/`](docs/).
-It grows alongside the build, one subsystem at a time.
+Start with [Getting started](docs/getting-started.md), then use the
+[Embedding and provider guide](docs/embedding-guide.md),
+[Security model](docs/security-model.md), [MCP client support](docs/mcp-clients.md),
+and [Honest scope and deferred work](docs/honest-scope.md) for the public v1
+surface.
 
 ## License
 

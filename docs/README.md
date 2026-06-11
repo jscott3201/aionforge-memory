@@ -3,6 +3,17 @@
 System documentation for Aionforge Memory — how the pieces work and how to use them.
 This is reference and guides, not planning or changelogs.
 
+## Start here
+
+- [Getting started](getting-started.md) - build, configure, validate, and run the
+  single binary or Rust library.
+- [Embedding and provider guide](embedding-guide.md) - embedder/completer config,
+  dimension binding, secret handling, and disabled/local modes.
+- [Security model](security-model.md) - namespace authorization, untrusted recall,
+  signed writes, audit signing, MCP transport posture, and red-team gates.
+- [Honest scope and deferred work](honest-scope.md) - what v1 claims, what is
+  experimental, and what is intentionally deferred.
+
 ## Reading and writing
 
 - [Capture](capture.md) — the fast write path: the privacy/injection filter and the origin
