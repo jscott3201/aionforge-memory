@@ -163,6 +163,12 @@ fn bearer_token_set_with_env(
                 "--bearer-token-agent-env[{index}] agent env name cannot be blank"
             )));
         }
+        let token_env = raw_token_env.trim();
+        if token_env.is_empty() {
+            return Err(CliError::Serve(format!(
+                "--bearer-token-agent-env[{index}] token env name cannot be blank"
+            )));
+        }
         let raw_agent_id = env(agent_env).map_err(|_| {
             CliError::Serve(format!(
                 "agent id environment variable {agent_env} is not set"
@@ -173,12 +179,6 @@ fn bearer_token_set_with_env(
                 "agent id environment variable {agent_env} must contain a UUID"
             ))
         })?;
-        let token_env = raw_token_env.trim();
-        if token_env.is_empty() {
-            return Err(CliError::Serve(format!(
-                "--bearer-token-agent-env[{index}] token env name cannot be blank"
-            )));
-        }
         let token = env(token_env).map_err(|_| {
             CliError::Serve(format!(
                 "bearer token environment variable {token_env} is not set"
