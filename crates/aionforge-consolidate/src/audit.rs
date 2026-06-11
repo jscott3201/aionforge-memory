@@ -543,6 +543,12 @@ pub(crate) struct GuardFinding<'a> {
 /// **not** on the instant — so a re-run over unchanged ground dedups to a no-op
 /// instead of flooding the audit subgraph, while a genuinely different finding (the
 /// mode flipped, the writer set changed) records its own row.
+///
+/// Family strings are host free text, so the id key **length-prefixes** each one:
+/// a raw `join(",")` would conflate the writer set `{"a,b"}` with `{"a", "b"}`
+/// (or let a `|` inside a family shift the part boundaries) and silently drop the
+/// second finding's row at the dedup-by-id write (the M6.T01 review's confirmed
+/// audit-completeness gap).
 pub(crate) fn guard_audit(
     actor_id: &Id,
     subject_id: &Id,
@@ -551,7 +557,15 @@ pub(crate) fn guard_audit(
     now: &Timestamp,
 ) -> AuditEvent {
     let subject_str = subject_id.to_string();
-    let families_key = finding.writer_families.join(",");
+    let families_key: String = finding
+        .writer_families
+        .iter()
+        .map(|f| format!("{}:{f}", f.len()))
+        .collect::<Vec<_>>()
+        .join(",");
+    let consolidator_key = finding
+        .consolidator_family
+        .map_or_else(String::new, |f| format!("{}:{f}", f.len()));
     let id = audit_id(
         "subliminal_guard",
         namespace,
@@ -561,7 +575,7 @@ pub(crate) fn guard_audit(
             finding.rule_version,
             finding.action,
             finding.reason,
-            finding.consolidator_family.unwrap_or(""),
+            &consolidator_key,
             &families_key,
         ],
     );
@@ -601,7 +615,7 @@ pub(crate) fn guard_reason_parts(reason: &GuardReason) -> (&'static str, Option<
 
 #[cfg(test)]
 mod tests {
-    use super::quarantine_audit;
+    use super::{GuardFinding, guard_audit, quarantine_audit};
     use aionforge_domain::ids::Id;
     use aionforge_domain::namespace::Namespace;
     use aionforge_domain::time::Timestamp;
@@ -609,6 +623,50 @@ mod tests {
 
     fn at(s: &str) -> Timestamp {
         s.parse().expect("valid zoned datetime")
+    }
+
+    /// The review's confirmed audit-completeness gap: family strings are host free
+    /// text, so the guard-audit id key must not let `{"a,b"}` and `{"a", "b"}` (or a
+    /// family containing the part delimiter) collapse to one content-addressed id —
+    /// the dedup-by-id write would silently drop the second finding's row.
+    #[test]
+    fn distinct_guard_findings_never_share_an_audit_id() {
+        let ns = Namespace::Agent("alice".to_string());
+        let actor = Id::from_content_hash(b"guard-actor");
+        let subject = Id::from_content_hash(b"subject");
+        let now = at("2026-06-10T12:00:00-05:00[America/Chicago]");
+        let with_families = |families: &[&str]| {
+            guard_audit(
+                &actor,
+                &subject,
+                &GuardFinding {
+                    rule: "distill",
+                    rule_version: "v1",
+                    action: "refused",
+                    consolidator_family: Some("claude"),
+                    writer_families: &families.iter().map(|f| f.to_string()).collect::<Vec<_>>(),
+                    reason: "same_family",
+                    matched_writer_family: None,
+                },
+                &ns,
+                &now,
+            )
+        };
+        assert_ne!(
+            with_families(&["a,b"]).identity.id,
+            with_families(&["a", "b"]).identity.id,
+            "a comma inside a family must not read as a set boundary"
+        );
+        assert_ne!(
+            with_families(&["x|y"]).identity.id,
+            with_families(&["x"]).identity.id,
+            "a part delimiter inside a family must not shift the key boundaries"
+        );
+        assert_eq!(
+            with_families(&["a", "b"]).identity.id,
+            with_families(&["a", "b"]).identity.id,
+            "the same finding still dedups to one id"
+        );
     }
 
     /// The load-bearing M4.T06 asymmetry: a consolidation audit id is content-only and ignores the

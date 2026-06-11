@@ -39,6 +39,22 @@ fn a_boundary_prefix_is_the_same_family_in_either_direction() {
 fn the_vendor_root_table_catches_same_vendor_ids_with_no_prefix_relation() {
     assert_eq!(family_verdict("gpt-5", "o3-mini"), FamilyVerdict::Same);
     assert_eq!(family_verdict("o1", "gpt-4o"), FamilyVerdict::Same);
+    // The review's confirmed bypass: a published vendor ALIAS with a different
+    // leading token must still resolve to the vendor root, or a real
+    // same-base-model pair compares as cross-family (fails open).
+    assert_eq!(
+        family_verdict("gpt-4o", "chatgpt-4o-latest"),
+        FamilyVerdict::Same
+    );
+    assert_eq!(
+        family_verdict("codex-mini-latest", "gpt-5"),
+        FamilyVerdict::Same
+    );
+    assert_eq!(
+        family_verdict("ministral-8b", "mistral-large"),
+        FamilyVerdict::Same
+    );
+    assert_eq!(family_verdict("qwq-32b", "qwen-3"), FamilyVerdict::Same);
     assert_eq!(
         family_verdict("codestral-embed", "mistral-large"),
         FamilyVerdict::Same

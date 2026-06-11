@@ -28,9 +28,17 @@ use aionforge_store::WriterFamilySet;
 /// Closed by design and amended under the same discipline as a closed enum (the
 /// M6.T01 design synthesis, Q1): an unmapped vendor falls back to leading-token
 /// equality, which is softer but still catches a shared lineage prefix.
+///
+/// The table must enumerate every *published alias token* of a multi-token vendor,
+/// because an unknown alias of a known vendor fails OPEN to `Differ` (the M6.T01
+/// review's confirmed bypass: `chatgpt-4o-latest` vs `gpt-4o` compared as
+/// different families until `chatgpt` joined the table). Amendments are factual —
+/// tokens a vendor actually ships — never speculative.
 const VENDOR_ROOTS: &[(&str, &str)] = &[
     ("claude", "anthropic"),
     ("gpt", "openai"),
+    ("chatgpt", "openai"),
+    ("codex", "openai"),
     ("o1", "openai"),
     ("o3", "openai"),
     ("o4", "openai"),
@@ -39,6 +47,12 @@ const VENDOR_ROOTS: &[(&str, &str)] = &[
     ("llama", "meta"),
     ("mistral", "mistral"),
     ("codestral", "mistral"),
+    ("ministral", "mistral"),
+    ("magistral", "mistral"),
+    ("devstral", "mistral"),
+    ("pixtral", "mistral"),
+    ("qwen", "alibaba"),
+    ("qwq", "alibaba"),
 ];
 
 /// How two family strings compare (07 §3).
