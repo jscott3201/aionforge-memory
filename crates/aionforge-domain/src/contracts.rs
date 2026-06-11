@@ -241,7 +241,7 @@ pub struct FilterOutcome {
 /// fewer alphanumeric characters than this (and lost most of its substance to excision) is
 /// refused. Calibrated on the 2026-06-11 live probe (14 remaining of 64) with headroom for
 /// short real notes — a flagged capture keeping 24+ word characters always stores.
-const RESIDUE_SUBSTANCE_FLOOR: usize = 24;
+pub const RESIDUE_SUBSTANCE_FLOOR: usize = 24;
 
 impl FilterOutcome {
     /// True when injection-marker excision removed the substance of the content, leaving a
