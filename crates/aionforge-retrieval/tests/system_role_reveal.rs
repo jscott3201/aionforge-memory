@@ -207,6 +207,24 @@ async fn the_admin_capability_surfaces_system_namespace_content() {
 }
 
 #[tokio::test]
+async fn the_capability_is_inert_without_the_request_flag() {
+    let store = store();
+    seed(&store, "a system directive turn", alice_ns(), Role::System);
+
+    // The admin HOLDS the capability but does not ASK (include_system=false). The reveal is
+    // an AND of both conjuncts, so the request flag is required: granting may_surface_system
+    // alone must not surface system content. This pins the other half of the gate — a
+    // regression that keyed the reveal on the capability alone would pass every other test
+    // but leak to every admin by default.
+    let admin = Arc::new(AdminAuthorizer { admin: alice_id() });
+    let contents = recall_with(store, admin, false).await;
+    assert!(
+        !contents.contains(&"a system directive turn".to_string()),
+        "the capability alone, without the request, surfaces nothing: {contents:?}"
+    );
+}
+
+#[tokio::test]
 async fn the_request_flag_is_inert_without_the_capability() {
     let store = store();
     seed(&store, "a system directive turn", alice_ns(), Role::System);

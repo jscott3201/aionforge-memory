@@ -36,6 +36,7 @@ pub mod gate;
 pub mod ids;
 pub mod namespace;
 pub mod nodes;
+pub mod recall_frame;
 pub mod signing;
 pub mod time;
 pub mod trust;
@@ -58,6 +59,7 @@ pub use error::DomainError;
 pub use gate::{GateError, GateRejection, ProvenanceGate, WallClock};
 pub use ids::{ContentHash, Id, SerializationId};
 pub use namespace::Namespace;
+pub use recall_frame::{RECALLED_MEMORY_CONTEXT_CLOSE, RECALLED_MEMORY_CONTEXT_OPEN};
 pub use time::{BiTemporal, Timestamp};
 pub use value::{ObjectKind, ObjectValue};
 pub use verify::{

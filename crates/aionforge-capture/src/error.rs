@@ -50,12 +50,14 @@ pub enum CaptureError {
     #[error("the provenance gate is unavailable: {0}")]
     ProvenanceUnavailable(String),
 
-    /// An untrusted writer attempted a `system`-role write (07 §4, M6.T02). The system role is
-    /// reserved for substrate-internal content excluded from default recall, so admitting it from
-    /// an untrusted caller would let that caller pre-stage content an admin reveal later surfaces
-    /// as authentic. Recorded as a `namespace_denied` audit (reason `untrusted_system_role`)
+    /// A `system`-role write reached the capture funnel (07 §4, M6.T02). The system role is
+    /// reserved for substrate-internal content excluded from default recall, so the funnel refuses
+    /// it from EVERY caller, trusted or not: an untrusted caller must not pre-stage content an admin
+    /// reveal later surfaces as authentic, and a trusted caller cannot route it into the `system`
+    /// namespace this way either, because `system` is never directly writable and `trusted` is
+    /// host-asserted. Recorded as a `namespace_denied` audit (reason `system_role_not_capturable`)
     /// before this error is returned; no memory is written.
-    #[error("an untrusted writer may not capture a system-role memory")]
+    #[error("a system-role memory cannot be written through the capture funnel")]
     SystemRoleNotWritable,
 }
 

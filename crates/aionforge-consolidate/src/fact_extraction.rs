@@ -293,8 +293,11 @@ where
         // directive would be excluded by neither the recall-side role gate (facts have no
         // role) nor the namespace gate (if the episode sat in a visible namespace) — it
         // would launder the directive into default recall. Mirrors the skill-induction
-        // role gate. A capture-path system-role write is already refused (M6.T02 PR-2);
-        // this also covers a substrate-internal or historical system episode.
+        // role gate. A capture-path system-role write is already refused (M6.T02 PR-2), and
+        // a substrate-internal system episode that has not yet been consolidated is skipped
+        // here too. This gate prevents NEW extraction only: facts already extracted from a
+        // system-role episode on a pre-gate build are not retracted — a one-time backfill
+        // that quarantines them is an owner gap (07 §4).
         if episode.role == Role::System {
             return Ok(PassOutput::default());
         }
