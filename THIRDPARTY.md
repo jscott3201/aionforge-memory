@@ -4587,6 +4587,7 @@ Used by:
 - aionforge-forget v0.1.0 — https://github.com/Aionforge-Labs/aionforge-memory
 - aionforge-mcp v0.1.0 — https://github.com/Aionforge-Labs/aionforge-memory
 - aionforge-procedural v0.1.0 — https://github.com/Aionforge-Labs/aionforge-memory
+- aionforge-redteam v0.1.0 — https://github.com/Aionforge-Labs/aionforge-memory
 - aionforge-retrieval v0.1.0 — https://github.com/Aionforge-Labs/aionforge-memory
 - aionforge-security v0.1.0 — https://github.com/Aionforge-Labs/aionforge-memory
 - aionforge-store v0.1.0 — https://github.com/Aionforge-Labs/aionforge-memory
