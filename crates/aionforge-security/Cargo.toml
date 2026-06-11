@@ -16,5 +16,10 @@ regex = { workspace = true }
 thiserror = { workspace = true }
 miette = { workspace = true }
 
+[dev-dependencies]
+# Parses the vendored injection/benign corpus fixtures in tests/corpus (M6.T03).
+# Dev-only: the shipped library stays free of a JSON dependency.
+serde_json = { workspace = true }
+
 [lints]
 workspace = true

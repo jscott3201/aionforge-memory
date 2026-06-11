@@ -210,6 +210,7 @@ dependencies = [
  "aionforge-store",
  "miette",
  "regex",
+ "serde_json",
  "thiserror",
 ]
 
