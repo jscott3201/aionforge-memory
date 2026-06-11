@@ -248,3 +248,40 @@ fn an_invalid_pattern_is_a_typed_error() {
     let err = RedactionPattern::new("bad", "bad", r"(unclosed").expect_err("must reject");
     assert!(matches!(err, SecurityError::InvalidPattern { .. }));
 }
+
+#[test]
+fn marker_hits_count_each_firing_while_flags_dedupe() {
+    // The same marker fires twice. `injection_flags` is a set (one id), but `marker_hits`
+    // records the true firing count for corpus tuning (M6.T03) — the whole reason it is a
+    // separate field rather than a length over `injection_flags`.
+    let out = filter()
+        .filter("you are now X. also you are now Y.")
+        .expect("filter");
+    assert_eq!(
+        out.injection_flags
+            .iter()
+            .filter(|id| *id == "you_are_now")
+            .count(),
+        1,
+        "injection_flags de-duplicates to one id"
+    );
+    assert_eq!(
+        out.marker_hits,
+        vec![("you_are_now".to_string(), 2)],
+        "marker_hits records every firing, in marker-declaration order"
+    );
+}
+
+#[test]
+fn marker_hits_is_empty_and_inert_for_benign_content() {
+    // No marker fires, so `marker_hits` is empty; and the observability field never
+    // perturbs the canonical cleaned bytes (it is deliberately not folded into the
+    // content hash or origin — see the field doc).
+    let benign = "Let's meet tomorrow to discuss the graph retrieval design.";
+    let out = filter().filter(benign).expect("filter");
+    assert!(out.marker_hits.is_empty(), "no markers fired");
+    assert_eq!(
+        out.cleaned, benign,
+        "cleaned bytes unchanged by the counts field"
+    );
+}
