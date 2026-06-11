@@ -438,6 +438,46 @@ async fn system_role_episodes_are_excluded() {
 }
 
 #[tokio::test]
+async fn system_namespace_episodes_are_excluded_by_the_co_defense() {
+    // The role gate (admit_episode) and the namespace gate (VisibleSet) are
+    // independent: this seeds the content into Namespace::System so the NAMESPACE
+    // gate is what must fire, complementing the role-gate test above which uses a
+    // visible namespace to exercise the role check.
+    let store = store();
+    seed(
+        &store,
+        "a normal user turn",
+        alice_ns(),
+        None,
+        Role::User,
+        [1.0, 0.0, 0.0, 0.0],
+        false,
+    );
+    seed(
+        &store,
+        "substrate-internal control content",
+        Namespace::System,
+        None,
+        Role::User,
+        [1.0, 0.0, 0.0, 0.0],
+        false,
+    );
+    let r = retriever(store, embedder_to("turn", [1.0, 0.0, 0.0, 0.0]));
+
+    let bundle = r
+        .recall(RecallQuery::new("turn", alice(), 10))
+        .await
+        .expect("recall");
+
+    let contents: Vec<&str> = bundle.structured.iter().map(|e| e.content()).collect();
+    assert!(contents.contains(&"a normal user turn"));
+    assert!(
+        !contents.contains(&"substrate-internal control content"),
+        "the system namespace is never agent-visible"
+    );
+}
+
+#[tokio::test]
 async fn expired_memories_are_excluded_by_default_and_included_on_history() {
     let store = store();
     seed(
