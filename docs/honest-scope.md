@@ -22,7 +22,8 @@ claim should exceed what the current code and gates prove.
 - Optional embeddings from one configured OpenAI-compatible endpoint.
 - Optional chat/completion use for non-canonical LLM distillation and link
   evolution, off by default.
-- Alpine Docker runtime image and tag-driven release artifact publishing.
+- Alpine Docker runtime image, tag-driven release artifact publishing, and
+  GHCR images for `linux/amd64` and `linux/arm64`.
 
 ## Out of scope for v1
 
@@ -61,7 +62,10 @@ OAuth validation, secret custody, and backups.
 
 ## Release posture
 
-The 1.0 release gate asserts the binding acceptance criteria that exist in code:
+The release gate asserts the binding acceptance criteria that exist in code:
 workspace tests, clippy, doctests, rustdoc link checks, dependency audit, license
 attribution, repository policy gates, Docker build, and explicit M6 red-team
-probes. It intentionally does not tag or publish a release until human sign-off.
+probes. The `0.1.0` release publishes GitHub Release artifacts, Linux and macOS
+native binaries, and GHCR runtime images for `linux/amd64` and `linux/arm64`.
+crates.io publishing is deferred until the selene-db 1.x crates are available
+from crates.io. Tagged releases are cut only after human sign-off.

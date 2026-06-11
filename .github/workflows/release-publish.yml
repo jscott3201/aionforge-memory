@@ -6,7 +6,11 @@
 # A release therefore can never ship code that has not passed the gate.
 #
 # The artifact payload includes linux-musl binaries built through the Alpine
-# Docker builder, macOS binaries, and the Alpine runtime image pushed to GHCR.
+# Docker builder, macOS binaries, and the Alpine runtime image pushed to GHCR
+# for linux/amd64 and linux/arm64.
+#
+# crates.io publishing is intentionally deferred until the selene-db 1.x crates
+# that Aionforge depends on are available from crates.io.
 #
 # workflow_dispatch runs the gate only (a dry run); publishing requires a tag push.
 #
@@ -135,6 +139,7 @@ jobs:
             tags+=(--tag "$image:latest")
           fi
           docker buildx build \
+            --platform linux/amd64,linux/arm64 \
             --push \
             --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
             --label "org.opencontainers.image.revision=$GITHUB_SHA" \

@@ -209,6 +209,7 @@ jobs:
       - uses: docker/build-push-action@v6
         with:
           context: .
+          platforms: linux/amd64,linux/arm64
           push: false
 
   # M7 benchmark gates are deferred with M7 and will be added when that milestone lands.

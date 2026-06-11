@@ -83,6 +83,10 @@ require_grep ".github/workflows/release-publish.yml" "macOS binary" \
   "macOS binary artifact publishing"
 require_grep ".github/workflows/release-publish.yml" "container image" \
   "container image publishing"
+require_grep ".github/workflows/release-publish.yml" "linux/amd64,linux/arm64" \
+  "multi-platform GHCR image publishing"
+require_grep ".github/workflows/release-publish.yml" "crates.io publishing is intentionally deferred" \
+  "crates.io deferral note"
 require_grep ".github/workflows/release-publish.yml" "gh release create" \
   "GitHub Release publishing"
 require_grep ".github/workflows/release-publish.yml" "--verify-tag" \
@@ -124,7 +128,7 @@ require_grep "docs/honest-scope.md" "Cost-first routing | Not supported" \
   "no cost-first routing claim"
 require_grep "docs/honest-scope.md" "Experiential hand-off | Not shipped" \
   "experiential hand-off deferral"
-require_grep "docs/honest-scope.md" "It intentionally does not tag or publish a release until human sign-off." \
+require_grep "docs/honest-scope.md" "Tagged releases are cut only after human sign-off." \
   "human sign-off release posture"
 
 if [ "$violations" -gt 0 ]; then

@@ -6,10 +6,9 @@
   Long-term memory for AI agents, built on selene-db.
 </p>
 
-> **Status: pre-release.** The Rust library, CLI, MCP server, read-only TUI,
-> Docker image, and red-team gates are in place. Retrieval-quality benchmarks
-> and a tagged release are still pending. Expect schema and API changes before
-> 1.0.
+> **Status: 0.1.0 public release.** The Rust library, CLI, MCP server,
+> read-only TUI, Docker image, and red-team gates are in place. Retrieval-quality
+> benchmarks remain deferred. Expect schema and API changes before 1.0.
 
 Aionforge Memory is a Rust memory layer for agent systems. It stores episodes,
 facts, notes, skills, bad patterns, core memory, and audit events in
@@ -157,6 +156,15 @@ Then point your MCP client at `http://127.0.0.1:3918/mcp`.
 
 ## Run in Docker
 
+Published images are available from GitHub Container Registry for
+`linux/amd64` and `linux/arm64`:
+
+```bash
+docker pull ghcr.io/aionforge-labs/aionforge-memory:0.1.0
+```
+
+Build a local image when working from source:
+
 ```bash
 docker build -t aionforge-memory:dev .
 docker run --rm \
@@ -212,8 +220,8 @@ Start with:
 
 ## Contributing
 
-This project is public and pre-release. Issues and pull requests are welcome,
-but please open an issue before large design changes.
+This project is public and pre-1.0. Issues and pull requests are welcome, but
+please open an issue before large design changes.
 
 Keep PR descriptions public-safe and focused on code, behavior, and validation.
 The repository PR template includes a public-repo check for that reason. Do not

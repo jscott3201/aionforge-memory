@@ -93,6 +93,13 @@ published by the server as compact `aionforge://client/...` resources.
 
 ## Run in Docker
 
+Published runtime images are available from GitHub Container Registry for
+`linux/amd64` and `linux/arm64`:
+
+```bash
+docker pull ghcr.io/aionforge-labs/aionforge-memory:0.1.0
+```
+
 The repository Dockerfile builds the binary with an Alpine builder and runs it
 as UID/GID `10001` in an Alpine runtime image:
 
