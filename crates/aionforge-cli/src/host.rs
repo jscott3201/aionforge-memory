@@ -16,6 +16,8 @@ use secrecy::SecretString;
 
 use crate::error::CliError;
 
+const STARTUP_EMBEDDER_PROBE: &str = "aionforge-memory startup embedder health check";
+
 #[derive(Debug, Clone)]
 pub(crate) struct HostOptions {
     pub(crate) config_path: PathBuf,
@@ -46,6 +48,96 @@ pub(crate) fn open_memory(config: &Config) -> Result<Arc<Memory<RuntimeEmbedder>
 pub(crate) enum RuntimeEmbedder {
     Http(HttpEmbedder),
     Disabled(DisabledEmbedder),
+}
+
+impl RuntimeEmbedder {
+    fn is_enabled(&self) -> bool {
+        matches!(self, Self::Http(_))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum StartupEmbedderStatus {
+    Ready {
+        model: EmbedderModel,
+        probe_dimension: usize,
+    },
+    Disabled {
+        model: EmbedderModel,
+    },
+}
+
+pub(crate) async fn check_startup_embedder(
+    memory: &Memory<RuntimeEmbedder>,
+) -> Result<StartupEmbedderStatus, CliError> {
+    let embedder = memory.embedder();
+    let model = embedder.model().clone();
+    if !embedder.is_enabled() {
+        return Ok(StartupEmbedderStatus::Disabled { model });
+    }
+
+    let probe = [STARTUP_EMBEDDER_PROBE.to_owned()];
+    let mut embeddings = embedder
+        .embed(&probe)
+        .await
+        .map_err(|error| startup_embedder_error(&model, error))?;
+    if embeddings.len() != 1 {
+        return Err(startup_embedder_error(
+            &model,
+            format!("expected one probe vector but got {}", embeddings.len()),
+        ));
+    }
+    let embedding = embeddings.pop().expect("length checked");
+    let probe_dimension = embedding.dimension();
+    if probe_dimension != model.dimension as usize {
+        return Err(startup_embedder_error(
+            &model,
+            format!(
+                "probe vector dimension {probe_dimension} does not match configured dimension {}",
+                model.dimension
+            ),
+        ));
+    }
+
+    Ok(StartupEmbedderStatus::Ready {
+        model,
+        probe_dimension,
+    })
+}
+
+pub(crate) fn render_startup_embedder_status(status: &StartupEmbedderStatus) -> String {
+    match status {
+        StartupEmbedderStatus::Ready {
+            model,
+            probe_dimension,
+        } => format!(
+            "embedder ready {} probe_dimension={} capture_embedding=on",
+            model_identity(model),
+            probe_dimension
+        ),
+        StartupEmbedderStatus::Disabled { model } => format!(
+            "embedder disabled {} capture_embedding=off",
+            model_identity(model)
+        ),
+    }
+}
+
+fn startup_embedder_error(model: &EmbedderModel, error: impl std::fmt::Display) -> CliError {
+    CliError::Serve(format!(
+        "embedder startup health check failed {}: {error}",
+        model_identity(model)
+    ))
+}
+
+fn model_identity(model: &EmbedderModel) -> String {
+    if model.version.trim().is_empty() {
+        format!("model={} dimension={}", model.family, model.dimension)
+    } else {
+        format!(
+            "model={} version={} dimension={}",
+            model.family, model.version, model.dimension
+        )
+    }
 }
 
 pub(crate) fn runtime_embedder(config: &Config) -> Result<RuntimeEmbedder, CliError> {
@@ -264,6 +356,9 @@ impl Embedder for DisabledEmbedder {
 mod tests {
     use super::*;
     use aionforge_config::{CategoryPromotionRule, CoreEditRuleConfig};
+    use serde_json::json;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[test]
     fn maps_layered_config_into_engine_policy() {
@@ -315,5 +410,113 @@ mod tests {
 
         assert!(!mapped.security.sign_audit_events);
         assert!(mapped.security.audit_seed.is_none());
+    }
+
+    #[tokio::test]
+    async fn startup_embedder_check_reports_disabled_without_probe() {
+        let dir = unique_dir("startup-disabled");
+        let mut config = Config::default();
+        config.persistence.data_dir = dir.clone();
+        config.embedder.enabled = false;
+        config.embedder.model.clear();
+        config.embedder.endpoint.clear();
+
+        let memory = open_memory(&config).expect("open memory");
+        let status = check_startup_embedder(memory.as_ref())
+            .await
+            .expect("disabled embedder is reportable");
+
+        assert_eq!(
+            status,
+            StartupEmbedderStatus::Disabled {
+                model: EmbedderModel {
+                    family: "disabled".to_owned(),
+                    version: String::new(),
+                    dimension: config.embedder.dimension,
+                },
+            }
+        );
+        assert_eq!(
+            render_startup_embedder_status(&status),
+            "embedder disabled model=disabled dimension=1536 capture_embedding=off"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn startup_embedder_check_probes_enabled_endpoint() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/embeddings"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "data": [
+                    { "index": 0, "embedding": [1.0, 0.0, 0.0, 0.0] },
+                ],
+                "model": "startup-test",
+            })))
+            .mount(&server)
+            .await;
+
+        let dir = unique_dir("startup-ready");
+        let mut config = Config::default();
+        config.persistence.data_dir = dir.clone();
+        config.embedder.endpoint = format!("{}/v1", server.uri());
+        config.embedder.model = "startup-test".to_owned();
+        config.embedder.dimension = 4;
+
+        let memory = open_memory(&config).expect("open memory");
+        let status = check_startup_embedder(memory.as_ref())
+            .await
+            .expect("startup probe succeeds");
+
+        assert_eq!(
+            render_startup_embedder_status(&status),
+            "embedder ready model=startup-test dimension=4 probe_dimension=4 capture_embedding=on"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn startup_embedder_check_refuses_dimension_mismatch() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/embeddings"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "data": [
+                    { "index": 0, "embedding": [1.0, 0.0] },
+                ],
+                "model": "startup-test",
+            })))
+            .mount(&server)
+            .await;
+
+        let dir = unique_dir("startup-mismatch");
+        let mut config = Config::default();
+        config.persistence.data_dir = dir.clone();
+        config.embedder.endpoint = format!("{}/v1", server.uri());
+        config.embedder.model = "startup-test".to_owned();
+        config.embedder.dimension = 4;
+
+        let memory = open_memory(&config).expect("open memory");
+        let error = check_startup_embedder(memory.as_ref())
+            .await
+            .expect_err("dimension mismatch refuses startup");
+        let message = error.to_string();
+
+        assert!(message.contains("embedder startup health check failed"));
+        assert!(message.contains("model=startup-test dimension=4"));
+        assert!(message.contains("embedding dimension 2 does not match the model dimension 4"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    fn unique_dir(label: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time after epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "aionforge-cli-host-{label}-{nanos}-{}",
+            std::process::id()
+        ))
     }
 }

@@ -86,6 +86,7 @@ dependencies = [
  "tokio",
  "tower-service",
  "url",
+ "wiremock",
 ]
 
 [[package]]

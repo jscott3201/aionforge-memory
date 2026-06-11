@@ -28,6 +28,11 @@ built for that dimension, and changing it after a store has data is a migration,
 not a tuning change. `doctor` and `recover` fail loudly when the configured
 dimension disagrees with the recovered store.
 
+`serve stdio` and `serve http` print the configured embedder identity to stderr
+before accepting MCP traffic. When embedding is enabled, startup sends one
+OpenAI-compatible `/embeddings` probe and refuses to serve if the endpoint is
+unavailable or returns a vector with the wrong dimension.
+
 ## Local and disabled modes
 
 For local development, a loopback OpenAI-compatible server can run without a

@@ -32,5 +32,8 @@ tokio = { workspace = true, features = ["net", "signal"] }
 tower-service = "0.3"
 url = "2"
 
+[dev-dependencies]
+wiremock = { workspace = true }
+
 [lints]
 workspace = true

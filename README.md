@@ -145,6 +145,10 @@ Run over stdio for a local client process:
 aionforge serve stdio
 ```
 
+`serve` reports the configured embedder identity to stderr at startup. When
+embedding is enabled, it sends one health probe and refuses to serve if the
+endpoint cannot return a vector with the configured dimension.
+
 Run over HTTP with a bearer token bound to one agent id:
 
 ```bash

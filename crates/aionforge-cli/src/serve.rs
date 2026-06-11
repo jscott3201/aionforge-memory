@@ -1,6 +1,7 @@
 //! MCP server command execution.
 
 use std::convert::Infallible;
+use std::io::Write;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 
@@ -24,7 +25,10 @@ use url::Url;
 
 use crate::cli::{ServeArgs, ServeTransport};
 use crate::error::CliError;
-use crate::host::{HostOptions, RuntimeEmbedder, load_config, open_memory};
+use crate::host::{
+    HostOptions, RuntimeEmbedder, StartupEmbedderStatus, check_startup_embedder, load_config,
+    open_memory, render_startup_embedder_status,
+};
 
 type HttpResponse = Response<BoxBody<Bytes, Infallible>>;
 
@@ -32,9 +36,13 @@ pub(crate) async fn run(options: &HostOptions, args: ServeArgs) -> Result<(), Cl
     let config = load_config(options)?;
     let memory = open_memory(&config)?;
     match args.transport {
-        ServeTransport::Stdio => serve_stdio(memory)
-            .await
-            .map_err(|error| CliError::Serve(error.to_string())),
+        ServeTransport::Stdio => {
+            let startup = check_startup_embedder(memory.as_ref()).await?;
+            report_startup_embedder(&startup);
+            serve_stdio(memory)
+                .await
+                .map_err(|error| CliError::Serve(error.to_string()))
+        }
         ServeTransport::Http => serve_http(memory, args).await,
     }
 }
@@ -59,6 +67,8 @@ async fn serve_http(
     }
 
     let token_set = bearer_token_set(&args.bearer_token_agent_env)?;
+    let startup = check_startup_embedder(memory.as_ref()).await?;
+    report_startup_embedder(&startup);
     let service = streamable_http_service_with_auth(memory, options, token_set, oauth_challenge)?;
     let service = HttpMcpRouter {
         inner: service,
@@ -89,6 +99,15 @@ async fn serve_http(
         }
     }
     Ok(())
+}
+
+fn report_startup_embedder(status: &StartupEmbedderStatus) {
+    let mut stderr = std::io::stderr().lock();
+    let _ = writeln!(
+        stderr,
+        "aionforge serve: {}",
+        render_startup_embedder_status(status),
+    );
 }
 
 #[derive(Clone)]
