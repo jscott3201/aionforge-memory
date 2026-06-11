@@ -102,6 +102,9 @@ This is reference and guides, not planning or changelogs.
   the single write funnel and its blank-to-signed signature latch, off-by-default substrate audit
   signing with file or env seed custody, the out-of-band keyring anchor and its genesis/heal protocol,
   per-row verification verdicts on the read surface, and the operator runbook.
+- [Red-team suite](red-team.md) — the CI-gated security probes and their structured reports:
+  M6.T04's query-only injection, poisoned-RAG recall, and malicious-skill promotion probes,
+  with the full-denominator reporting convention later M6/M8 gates reuse.
 
 ## Substrate
 
