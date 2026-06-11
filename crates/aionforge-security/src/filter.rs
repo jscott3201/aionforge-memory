@@ -6,11 +6,16 @@
 //! folds into `Episode.origin` (02 §6.1). It is local and synchronous, so it adds no
 //! network round-trip to capture.
 //!
-//! The filter is deliberately conservative in v1.0 — a small, low-false-positive
-//! default pattern set that "raises the bar" (07 §2). Hardening it against a
-//! published injection corpus and measuring block / false-positive rates is M6.T03;
-//! callers can supply their own pattern sets via [`CaptureFilter::new`] in the
-//! meantime.
+//! The default marker set is **precision-first** and hardened against a published
+//! corpus (M6.T03): each pattern is an anchored multi-token override / exfiltration /
+//! role-swap phrase, measured to fire on no benign trigger-word row (zero false positives
+//! on `leolee99/NotInject`) while clearing a block-rate floor on
+//! `deepset/prompt-injections` (`tests/injection_corpus.rs`). It deliberately matches only
+//! the imperative-override family a string filter can recognize; semantic / role-play
+//! injection that carries no marker phrase is out of scope here and is the job of the
+//! recall-side untrusted-data tagging and system-role exclusion (M6.T02) and the red-team
+//! probes (M6.T04). It "raises the bar" (07 §2) — not a complete injection defense.
+//! Callers can supply their own pattern sets via [`CaptureFilter::new`].
 //!
 //! Redaction spans are reported as byte offsets into the *original* content (the
 //! `Redaction.span` contract), and the matched text is replaced with a typed
@@ -319,25 +324,68 @@ const DEFAULT_REDACTIONS: &[(&str, &str, &str, Option<MatchValidator>)] = &[
     ("secret_key", "secret", r"\bsk-[A-Za-z0-9_-]{20,}\b", None),
 ];
 
-/// Default injection markers: `(id, regex)`. All case-insensitive. A starting set
-/// of well-known override phrases; M6.T03 hardens against a published corpus.
+/// Default injection markers: `(id, regex)`. All case-insensitive, all anchored on
+/// multi-token override/exfiltration/role-swap *phrases* rather than bare trigger words.
+///
+/// This set is hardened against a published corpus (M6.T03): every pattern was measured
+/// against the benign trigger-word corpus (`leolee99/NotInject`) to keep its benign
+/// false-positive contribution at zero, and the set as a whole is gated by the corpus
+/// harness (`tests/injection_corpus.rs`). The discipline is precision-first: a capture-time
+/// string filter only sees the imperative-override family, so markers that would also fire
+/// on benign task/role dialogue ("act as a translator", "your next task") are deliberately
+/// excluded — that semantic-injection surface is the recall-side layer's job (M6.T02) and
+/// the red-team probes' (M6.T04), not this filter's. See `docs/capture.md` for the
+/// honest-scope framing.
 const DEFAULT_MARKERS: &[(&str, &str)] = &[
+    // Override the prior context: "ignore the above", "forget all previous tasks",
+    // "disregard prior instructions". Requires an override verb + a previous/above scope;
+    // the bare verb ("you can ignore the error") never fires.
     (
-        "ignore_previous",
-        r"(?i)ignore\s+(?:all\s+)?(?:previous|prior|the\s+above|above)\s+(?:instructions?|prompts?)",
+        "ignore_or_forget_context",
+        r"(?i)\b(?:ignore|disregard|forget)\s+(?:all\s+|everything\s+|any\s+|about\s+)?(?:the\s+)?(?:previous|prior|earlier|above|preceding|foregoing)(?:\s+(?:instructions?|prompts?|tasks?|orders?|rules?|messages?|commands?|conversations?|context|directions?))?\b",
     ),
+    // "forget everything we discussed / I told you / above / before" — the same override
+    // intent phrased without a previous/above adjective.
     (
-        "disregard_above",
-        r"(?i)disregard\s+(?:all\s+)?(?:previous|prior|the\s+above|above)",
+        "forget_everything",
+        r"(?i)\b(?:forget|ignore)\s+everything\s+(?:we|i|you|that|above|before|said)\b",
     ),
-    ("system_prompt", r"(?i)system\s+prompt\s*:"),
+    // "override your instructions / system / prompt".
+    (
+        "override_instructions",
+        r"(?i)\boverride\s+(?:your\s+)?(?:previous\s+)?(?:instructions|system|prompt)",
+    ),
+    // A spoofed instruction header: "new instructions:", "updated instructions:".
     (
         "new_instructions",
         r"(?i)(?:new|updated)\s+instructions\s*:",
     ),
-    ("you_are_now", r"(?i)you\s+are\s+now\b"),
+    // A spoofed system-prompt header: "system prompt:".
+    ("system_prompt", r"(?i)system\s+prompt\s*:"),
+    // Exfiltration: "reveal/show/print your system prompt", "repeat the initial instructions".
+    // Requires an exfil verb head AND a prompt/instructions object, so benign "the system
+    // prompt is long" (no verb) and "show your work" (wrong object) do not fire.
     (
-        "override_instructions",
-        r"(?i)override\s+(?:your\s+)?(?:previous\s+)?(?:instructions|system|prompt)",
+        "reveal_system_prompt",
+        r"(?i)\b(?:reveal|show|print|repeat|output|display|tell|give)\s+(?:me\s+)?(?:all\s+)?(?:your|the)\s+(?:(?:system|initial|original|hidden|previous)\s+)?(?:prompts?|instructions?)\b",
+    ),
+    // Persona override toward a jailbreak identity: "you are now DAN", "act as an
+    // unrestricted ...", "developer mode". Gated on a jailbreak-persona object token so
+    // benign "you are now logged in" / "act as a translator" never fire.
+    (
+        "role_override_persona",
+        r"(?i)\b(?:you\s+are\s+now|from\s+now\s+on\s+you\s+(?:are|will\s+be|act)|act\s+as|behave\s+as|pretend\s+(?:to\s+be|you\s+are)|roleplay\s+as|stop\s+being)\s+(?:a\s+|an\s+|the\s+)?(?:dan|jailbroken|unrestricted|uncensored|developer\s+mode|admin|root|evil)\b",
+    ),
+    // The "do anything now" / developer-mode jailbreak signatures (DAN family).
+    (
+        "do_anything_now",
+        r"(?i)\bdo\s+anything\s+now\b|\bdeveloper\s+mode\s+(?:enabled|on|activated)\b|\b(?:enable|enter|activate)\s+developer\s+mode\b",
+    ),
+    // A spoofed prompt boundary used to smuggle "new" instructions: dash fences, fake
+    // </system> tags, or [INST]/[SYS] markers. Anchored on the structural delimiter, never
+    // on bare words like "system" or "end".
+    (
+        "prompt_boundary_spoof",
+        r"(?i)(?:-{2,}\s*end\s+of\s+(?:system\s+)?prompt\s*-{2,}|\bend\s+of\s+(?:instructions?|prompt)\b\s*[:.]|<\s*/?\s*(?:system|instructions?)\s*>|\[/?(?:INST|SYS)\])",
     ),
 ];
