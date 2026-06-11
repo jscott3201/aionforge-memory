@@ -76,6 +76,7 @@ mod core_block;
 mod drift_sweep;
 mod erase;
 mod forget_sweep;
+mod guard;
 mod lineage;
 mod pin;
 mod reliability_sweep;
@@ -84,6 +85,7 @@ pub use aionforge_store::{ConsolidatingModel, NoteLineage, WriterFamilySet};
 pub use audit::{AuditPage, AuditRecord, AuditVerification};
 pub use core_block::{CoreBlockCreate, CoreBlockDraft};
 pub use drift_sweep::BaselineComputation;
+pub use guard::{ConsolidationGuardPolicy, GuardMode};
 pub use reliability_sweep::D1SweepReport;
 
 /// How the facade configures the capture and retrieval paths.
@@ -136,6 +138,13 @@ pub struct MemoryConfig {
     /// (validated unconditionally for that reason), and the editor-provenance leg
     /// follows `security.signed_writes`.
     pub core_block: CoreEditPolicy,
+    /// Cross-family consolidation-guard posture (07 §3, M6.T01). **Always
+    /// enforced** on every inference-calling consolidation rule — like
+    /// `core_block`, only the strictness (refuse vs warn) is configurable; the
+    /// policy is inert until a host injects an LLM-backed summarizer or link
+    /// evolver. The host maps `aionforge-config`'s `ConsolidationGuardConfig`
+    /// into this [`ConsolidationGuardPolicy`] field-for-field.
+    pub consolidation_guard: ConsolidationGuardPolicy,
 }
 
 /// The engine's signed-write gating posture (06 §3, M4.T03).
@@ -291,6 +300,10 @@ impl<E: Embedder> Memory<E> {
         config.drift.validate().map_err(EngineError::Config)?;
         config.erasure.validate().map_err(EngineError::Config)?;
         config.core_block.validate().map_err(EngineError::Config)?;
+        config
+            .consolidation_guard
+            .validate()
+            .map_err(EngineError::Config)?;
         validate_attestation_skew(config.security.clock_skew_tolerance_ms)?;
         let embedder = Arc::new(embedder);
         let filter = CaptureFilter::with_defaults().map_err(EngineError::filter)?;

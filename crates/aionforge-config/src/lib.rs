@@ -53,6 +53,7 @@ mod core_block;
 mod drift;
 mod error;
 mod forgetting;
+mod guard;
 mod load;
 
 pub use config::{
@@ -64,4 +65,5 @@ pub use core_block::{CoreBlockConfig, CoreEditRuleConfig};
 pub use drift::DriftConfig;
 pub use error::ConfigError;
 pub use forgetting::ForgettingConfig;
+pub use guard::{ConsolidationGuardConfig, GuardMode};
 pub use load::default_config_path;
