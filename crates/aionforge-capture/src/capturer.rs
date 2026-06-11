@@ -19,7 +19,7 @@ use aionforge_domain::embedding::Embedding;
 use aionforge_domain::gate::{GateError, GateRejection, ProvenanceGate};
 use aionforge_domain::ids::{ContentHash, Id};
 use aionforge_domain::namespace::Namespace;
-use aionforge_domain::nodes::episodic::{ConsolidationState, Episode, Origin};
+use aionforge_domain::nodes::episodic::{ConsolidationState, Episode, Origin, Role};
 use aionforge_domain::nodes::forensic::{AuditEvent, AuditKind, ProvenanceRecord};
 use aionforge_store::Store;
 
@@ -89,6 +89,22 @@ where
 
     /// Run the capture path for one request.
     async fn run(&self, request: CaptureRequest) -> Result<CaptureReceipt, CaptureError> {
+        // 0. System-role write rule (07 §4, M6.T02). The `system` role marks
+        //    substrate-internal content that default recall excludes. The capture funnel is
+        //    the agent-facing write path, so it refuses a system-role write outright — from
+        //    any caller, trusted or not. An untrusted caller must not be able to plant
+        //    content an admin reveal later surfaces as authentic; and a trusted caller cannot
+        //    route it into the `system` namespace through here either, because `system` is
+        //    never directly writable (06 §1 — the only path across that boundary is a
+        //    substrate-internal write, not capture, and `trusted` is host-asserted, so
+        //    admitting it would be a capture-to-system hole). Fail-closed before any content
+        //    work; the attempt is recorded and nothing is written.
+        if request.role == Role::System {
+            self.store
+                .commit_audit(&system_role_denied_audit(&request))?;
+            return Err(CaptureError::SystemRoleNotWritable);
+        }
+
         // 1. Privacy and injection filtering. Fail closed: if the filter errors we do
         //    not fall back to writing the raw content.
         let outcome = self
@@ -397,6 +413,31 @@ fn enforce_namespace(request: &CaptureRequest) -> Namespace {
         request.namespace.clone().unwrap_or(private)
     } else {
         private
+    }
+}
+
+/// The `namespace_denied` audit for a refused system-role capture (07 §4, M6.T02), mirroring
+/// [`namespace_denied_audit`]'s write-then-return shape: the rejection produces no memory
+/// subject, so the subject and actor are the writing agent. The reserved `NamespaceDenied` kind
+/// is reused with a role-specific reason rather than amending the closed audit vocabulary.
+fn system_role_denied_audit(request: &CaptureRequest) -> AuditEvent {
+    AuditEvent {
+        identity: Identity {
+            id: Id::generate(),
+            ingested_at: request.captured_at.clone(),
+            namespace: Namespace::System,
+            expired_at: None,
+        },
+        kind: AuditKind::NamespaceDenied,
+        subject_id: request.agent_id,
+        actor_id: request.agent_id,
+        payload: serde_json::json!({
+            "reason": "system_role_not_capturable",
+            "role": "system",
+            "agent": request.agent_id.to_string(),
+        }),
+        signature: String::new(),
+        occurred_at: request.captured_at.clone(),
     }
 }
 

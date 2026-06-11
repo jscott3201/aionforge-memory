@@ -49,6 +49,14 @@ pub enum CaptureError {
     /// not attributed to an attacker.
     #[error("the provenance gate is unavailable: {0}")]
     ProvenanceUnavailable(String),
+
+    /// An untrusted writer attempted a `system`-role write (07 §4, M6.T02). The system role is
+    /// reserved for substrate-internal content excluded from default recall, so admitting it from
+    /// an untrusted caller would let that caller pre-stage content an admin reveal later surfaces
+    /// as authentic. Recorded as a `namespace_denied` audit (reason `untrusted_system_role`)
+    /// before this error is returned; no memory is written.
+    #[error("an untrusted writer may not capture a system-role memory")]
+    SystemRoleNotWritable,
 }
 
 impl CaptureError {
