@@ -102,6 +102,9 @@ rand_core = { version = "0.6.4", features = ["getrandom"] }
 # Wipes the audit-signing seed on drop. Already in the tree via ed25519-dalek's
 # default `zeroize` feature; this direct pin adds no new version.
 zeroize = "1.8"
+# CLI argument parsing for the single `aionforge` binary. Introduced at M8.T03 with
+# the doctor command; derive keeps the subcommand surface declarative and testable.
+clap = { version = "4.6.1", features = ["derive"] }
 
 # --- Test / dev dependencies (versions match selene-db). ---
 proptest = { version = "1.11", default-features = false, features = ["std"] }

@@ -1841,6 +1841,7 @@ DEALINGS IN THE SOFTWARE.
 ## MIT License (MIT)
 
 Used by:
+- heck v0.5.0 — https://github.com/withoutboats/heck
 - inlinable_string v0.1.15 — https://github.com/fitzgen/inlinable_string
 - unicode-normalization v0.1.25 — https://github.com/unicode-rs/unicode-normalization
 - unicode-width v0.1.14 — https://github.com/unicode-rs/unicode-width
@@ -2075,6 +2076,42 @@ Used by:
 
 ```
 Copyright (c) 2016 FullContact, Inc
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the &quot;Software&quot;), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+```
+
+---
+
+## MIT License (MIT)
+
+Used by:
+- utf8parse v0.2.2 — https://github.com/alacritty/vte
+
+```
+Copyright (c) 2016 Joe Wilm
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated
@@ -3827,6 +3864,18 @@ SOFTWARE.
 ## MIT License (MIT)
 
 Used by:
+- anstream v1.0.0 — https://github.com/rust-cli/anstyle.git
+- anstyle-parse v1.0.0 — https://github.com/rust-cli/anstyle.git
+- anstyle-query v1.1.5 — https://github.com/rust-cli/anstyle.git
+- anstyle-wincon v3.0.11 — https://github.com/rust-cli/anstyle.git
+- anstyle v1.0.14 — https://github.com/rust-cli/anstyle.git
+- clap v4.6.1 — https://github.com/clap-rs/clap
+- clap_builder v4.6.0 — https://github.com/clap-rs/clap
+- clap_derive v4.6.1 — https://github.com/clap-rs/clap
+- clap_lex v1.1.0 — https://github.com/clap-rs/clap
+- colorchoice v1.0.5 — https://github.com/rust-cli/anstyle.git
+- is_terminal_polyfill v1.70.2 — https://github.com/polyfill-rs/is_terminal_polyfill
+- once_cell_polyfill v1.70.2 — https://github.com/polyfill-rs/once_cell_polyfill
 - serde_spanned v0.6.9 — https://github.com/toml-rs/toml
 - toml v0.8.23 — https://github.com/toml-rs/toml
 - toml_datetime v0.6.11 — https://github.com/toml-rs/toml

@@ -15,8 +15,15 @@ path = "src/main.rs"
 
 [dependencies]
 aionforge = { path = "../aionforge", version = "0.1.0" }
+aionforge-config = { path = "../aionforge-config", version = "0.1.0" }
+aionforge-embed = { path = "../aionforge-embed", version = "0.1.0" }
 aionforge-mcp = { path = "../aionforge-mcp", version = "0.1.0" }
+aionforge-store = { path = "../aionforge-store", version = "0.1.0" }
 aionforge-tui = { path = "../aionforge-tui", version = "0.1.0" }
+clap = { workspace = true }
+secrecy = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
 
 [lints]
 workspace = true
