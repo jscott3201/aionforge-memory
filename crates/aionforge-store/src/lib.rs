@@ -24,6 +24,7 @@ mod core_block;
 mod core_block_write;
 mod dedup;
 mod distill;
+mod doctor;
 mod drift_read;
 mod entity;
 mod episode;
@@ -64,6 +65,11 @@ pub use consolidation::{ConsolidationCursor, ConsolidationWorkItem, LagSnapshot}
 pub use cooling::{CoolWrite, CoolingCandidate, CoolingCursor};
 pub use core_block_write::{CoreAttestation, CoreBlockReplacement, CoreEditWrite};
 pub use distill::DistilledNoteWrite;
+pub use doctor::{
+    CompositeIndexKey, IndexDoctorReport, IndexKey, InventoryCheck, ProviderDoctorReport,
+    SchemaDoctorReport, StoreCapacityReport, StoreDoctorReport, VectorDimensionMismatch,
+    VectorKindMismatch,
+};
 pub use drift_read::BehaviorVector;
 pub use error::StoreError;
 pub use forget_read::{FORGET_SCAN_LABELS, ForgetCandidate, ForgetCandidatePage, ForgetCursor};

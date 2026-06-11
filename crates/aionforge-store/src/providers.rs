@@ -14,10 +14,25 @@ use selene_core::{NodeId, db_string};
 use selene_graph::{
     CandidateStateSpec, GraphError, IndexProvider, MaintainedCandidateStateProvider,
 };
+use serde::{Deserialize, Serialize};
 
 use crate::error::StoreError;
 use crate::search::CandidateSet;
 use crate::store::Store;
+
+pub(crate) const CURRENT_SUPPORT_FACTS: &str = "current_support_facts";
+pub(crate) const PROVENANCE_CURRENT_SUPPORT_FACTS: &str = "provenance_current_support_facts";
+pub(crate) const SCOPE_MEMBERSHIP: &str = "scope_membership";
+pub(crate) const RECENCY_ACTIVE: &str = "recency_active";
+pub(crate) const UNRESOLVED_CURRENT: &str = "unresolved_current";
+
+pub(crate) const CANDIDATE_STATE_NAMES: &[&str] = &[
+    CURRENT_SUPPORT_FACTS,
+    PROVENANCE_CURRENT_SUPPORT_FACTS,
+    SCOPE_MEMBERSHIP,
+    RECENCY_ACTIVE,
+    UNRESOLVED_CURRENT,
+];
 
 /// The five candidate-state specs (data-model §9), built fresh each call.
 fn candidate_state_specs() -> Result<Vec<CandidateStateSpec>, StoreError> {
@@ -31,13 +46,13 @@ fn candidate_state_specs() -> Result<Vec<CandidateStateSpec>, StoreError> {
         // quarantined contradicting fact) per the domain edge docs, so both are
         // excluded outgoing. The `status = 'active'` half of §9 is a query-time filter
         // over this superset.
-        CandidateStateSpec::new(db_string("current_support_facts")?)
+        CandidateStateSpec::new(db_string(CURRENT_SUPPORT_FACTS)?)
             .require_label(fact.clone())
             .exclude_outgoing(superseded_by.clone())
             .exclude_outgoing(contradicts.clone()),
         // provenance_current_support_facts: the above, plus an incoming SUPPORTS and an
         // outgoing HAS_PROVENANCE grounding.
-        CandidateStateSpec::new(db_string("provenance_current_support_facts")?)
+        CandidateStateSpec::new(db_string(PROVENANCE_CURRENT_SUPPORT_FACTS)?)
             .require_label(fact.clone())
             .exclude_outgoing(superseded_by)
             .exclude_outgoing(contradicts.clone())
@@ -45,10 +60,10 @@ fn candidate_state_specs() -> Result<Vec<CandidateStateSpec>, StoreError> {
             .require_outgoing(db_string("HAS_PROVENANCE")?),
         // scope_membership: anything with a live IN_SCOPE edge. This is the coarse
         // "in some scope" set; per-scope selection is query-time candidate-set algebra.
-        CandidateStateSpec::new(db_string("scope_membership")?)
+        CandidateStateSpec::new(db_string(SCOPE_MEMBERSHIP)?)
             .require_outgoing(db_string("IN_SCOPE")?),
         // recency_active: anything with a live RECENT_IN edge (coarse, like scope).
-        CandidateStateSpec::new(db_string("recency_active")?)
+        CandidateStateSpec::new(db_string(RECENCY_ACTIVE)?)
             .require_outgoing(db_string("RECENT_IN")?),
         // unresolved_current: a Fact that nothing currently contradicts — no live
         // *incoming* CONTRADICTS. This is the deliberate dual of current_support_facts,
@@ -58,7 +73,7 @@ fn candidate_state_specs() -> Result<Vec<CandidateStateSpec>, StoreError> {
         // otherwise still current — the contested incumbents the §9 "quarantine
         // reasoning" use names — while the intersection is the clean active set. Excluding
         // outgoing here instead would re-derive current_support_facts and lose that.
-        CandidateStateSpec::new(db_string("unresolved_current")?)
+        CandidateStateSpec::new(db_string(UNRESOLVED_CURRENT)?)
             .require_label(fact)
             .exclude_incoming(contradicts),
     ])
@@ -72,7 +87,7 @@ pub(crate) fn candidate_state_provider() -> Result<Arc<dyn IndexProvider>, Store
 }
 
 /// A maintained candidate-state set and its current size.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CandidateStateInfo {
     /// The provider's stable set name.
     pub name: String,

@@ -27,6 +27,7 @@ use selene_core::{
     DbString, LabelDiff, LabelSet, NodeId, PropertyDiff, PropertyMap, Value, db_string,
 };
 use selene_graph::{RowIndex, SeleneGraph};
+use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
 use crate::convert::{
@@ -110,7 +111,7 @@ pub struct ConsolidationWorkItem {
 ///
 /// Carries the raw primary values; the lag *duration* is derived above this layer
 /// against an injected clock, since L0 keeps no ambient clock for stored time.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LagSnapshot {
     /// The `captured_at` of the oldest episode still needing consolidation, if any.
     pub oldest_pending_captured_at: Option<Timestamp>,

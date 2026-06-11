@@ -17,6 +17,7 @@
 
 use selene_core::db_string;
 use selene_graph::{HnswIndexConfig, TypedIndexKind, VectorIndexConfig, VectorIndexKind};
+use serde::{Deserialize, Serialize};
 
 use crate::catalog::NODE_TYPES;
 use crate::error::StoreError;
@@ -24,7 +25,7 @@ use crate::gql::BoundQuery;
 use crate::store::Store;
 
 /// `(label, property)` for each embedding vector index (§7). HNSW + cosine.
-const VECTOR_INDEXES: &[(&str, &str)] = &[
+pub(crate) const VECTOR_INDEXES: &[(&str, &str)] = &[
     ("Episode", "embedding_v1"),
     ("Fact", "embedding_v1"),
     ("Entity", "embedding_v1"),
@@ -35,7 +36,7 @@ const VECTOR_INDEXES: &[(&str, &str)] = &[
 ];
 
 /// `(label, property)` for each maintained BM25 text index (§8).
-const TEXT_INDEXES: &[(&str, &str)] = &[
+pub(crate) const TEXT_INDEXES: &[(&str, &str)] = &[
     ("Episode", "content"),
     ("Fact", "statement"),
     ("Entity", "canonical_name"),
@@ -47,7 +48,7 @@ const TEXT_INDEXES: &[(&str, &str)] = &[
 /// is indexed on every kind (§11) and added separately, so it is not repeated here.
 /// Each entry declares its own column type via [`TypedIndexKind`] (string, UUID, and —
 /// for `AuditEvent.occurred_at` — zoned datetime).
-const SCALAR_INDEXES: &[(&str, &str, TypedIndexKind)] = &[
+pub(crate) const SCALAR_INDEXES: &[(&str, &str, TypedIndexKind)] = &[
     ("Episode", "role", TypedIndexKind::String),
     ("Episode", "agent_id", TypedIndexKind::Uuid),
     ("Episode", "session_id", TypedIndexKind::Uuid),
@@ -125,7 +126,7 @@ const COMPOSITE_INDEXES: &[&str] = &[
 ];
 
 /// A registered vector index, for inventory and tests.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VectorIndexInfo {
     /// The indexed node label.
     pub label: String,
