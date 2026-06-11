@@ -8,13 +8,15 @@ use aionforge_domain::embedding::{EmbedderModel, Embedding};
 use aionforge_domain::time::Timestamp;
 use aionforge_engine::{Memory, MemoryConfig};
 use aionforge_mcp::{
-    BearerAuthChallenge, BearerToken, OAuthProtectedResourceMetadata, STREAMABLE_HTTP_ENDPOINT,
-    StreamableHttpConfigError, StreamableHttpOptions, oauth_protected_resource_well_known_path,
-    streamable_http_service, streamable_http_service_with_auth,
-    streamable_http_service_with_auth_challenge,
+    BearerAuthChallenge, BearerToken, DEFAULT_MAX_REQUEST_BODY_BYTES,
+    OAuthProtectedResourceMetadata, STREAMABLE_HTTP_ENDPOINT, StreamableHttpConfigError,
+    StreamableHttpOptions, oauth_protected_resource_well_known_path, streamable_http_service,
+    streamable_http_service_with_auth, streamable_http_service_with_auth_challenge,
 };
 use bytes::Bytes;
-use http::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HOST, ORIGIN, WWW_AUTHENTICATE};
+use http::header::{
+    ACCEPT, AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE, HOST, ORIGIN, WWW_AUTHENTICATE,
+};
 use http::{Method, Request, StatusCode};
 use http_body_util::{BodyExt, Full};
 use serde_json::json;
@@ -166,6 +168,42 @@ async fn streamable_http_rejects_disallowed_hosts_and_origins() -> TestResult {
 }
 
 #[tokio::test]
+async fn streamable_http_rejects_oversized_request_bodies() -> TestResult {
+    let service = streamable_http_service(
+        memory(),
+        json_options().with_max_request_body_bytes("{}".len()),
+    )?;
+
+    let response = service
+        .handle(initialize_request("localhost:3918", None))
+        .await;
+    assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    let body = response.into_body().collect().await?.to_bytes();
+    assert!(
+        std::str::from_utf8(&body)?.contains("request body exceeds"),
+        "{body:?}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn streamable_http_rejects_content_length_over_limit_before_reading() -> TestResult {
+    let service = streamable_http_service(
+        memory(),
+        json_options().with_max_request_body_bytes(DEFAULT_MAX_REQUEST_BODY_BYTES),
+    )?;
+    let mut request = initialize_request("localhost:3918", None);
+    request.headers_mut().insert(
+        CONTENT_LENGTH,
+        (DEFAULT_MAX_REQUEST_BODY_BYTES + 1).to_string().parse()?,
+    );
+
+    let response = service.handle(request).await;
+    assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    Ok(())
+}
+
+#[tokio::test]
 async fn bearer_auth_service_requires_authorization_header() -> TestResult {
     let token = BearerToken::new("test-secret")?;
     let mut service = streamable_http_service_with_auth(memory(), json_options(), token)?;
@@ -289,4 +327,13 @@ fn streamable_http_options_reject_host_validation_bypass() {
         .into_rmcp_config()
         .expect_err("empty hosts rejected");
     assert_eq!(err, StreamableHttpConfigError::EmptyAllowedHosts);
+}
+
+#[test]
+fn streamable_http_options_reject_zero_body_limit() {
+    let err = json_options()
+        .with_max_request_body_bytes(0)
+        .into_rmcp_config()
+        .expect_err("zero body limit rejected");
+    assert_eq!(err, StreamableHttpConfigError::ZeroMaxRequestBodyBytes);
 }

@@ -13,6 +13,7 @@
 //! [`search_tool`] so it can be tested without the transport; this module is the rmcp
 //! wiring on top.
 
+mod http_body_limit;
 mod http_transport;
 mod lifecycle;
 mod prompt;
@@ -21,6 +22,7 @@ mod status;
 mod surface;
 mod tools;
 
+pub use http_body_limit::{DEFAULT_MAX_REQUEST_BODY_BYTES, RequestBodyLimitService};
 pub use http_transport::{
     AionforgeAuthenticatedStreamableHttpService, AionforgeStreamableHttpService,
     BearerAuthChallenge, BearerAuthService, BearerToken,

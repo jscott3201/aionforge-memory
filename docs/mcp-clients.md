@@ -34,6 +34,9 @@ Default HTTP posture:
 - Allowed browser origins: loopback origins without a port. Requests without an
   `Origin` header work; browser origins with a port or non-loopback host must be
   added explicitly.
+- Request body limit: 1 MiB by default through
+  `StreamableHttpOptions::max_request_body_bytes`; oversized requests return
+  `413 Payload Too Large`.
 - Session mode: stateful, matching normal Streamable HTTP clients.
 - Auth: available through the bearer wrapper; required for shared or remote use.
 

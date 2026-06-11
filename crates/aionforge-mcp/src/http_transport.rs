@@ -19,6 +19,9 @@ use serde::Serialize;
 use tower_service::Service;
 
 use crate::AionforgeMcp;
+use crate::http_body_limit::{
+    DEFAULT_MAX_REQUEST_BODY_BYTES, RequestBodyLimitService, validate_max_request_body_bytes,
+};
 
 /// The path hosts should mount the Streamable HTTP service under.
 pub const STREAMABLE_HTTP_ENDPOINT: &str = "/mcp";
@@ -29,9 +32,12 @@ pub const OAUTH_PROTECTED_RESOURCE_WELL_KNOWN_PREFIX: &str =
 /// The boxed HTTP response body used by rmcp's Streamable HTTP service.
 pub type HttpResponse = Response<BoxBody<Bytes, Infallible>>;
 
+type AionforgeRawStreamableHttpService<E> =
+    StreamableHttpService<AionforgeMcp<E>, LocalSessionManager>;
+
 /// The rmcp Streamable HTTP service for Aionforge Memory.
 pub type AionforgeStreamableHttpService<E> =
-    StreamableHttpService<AionforgeMcp<E>, LocalSessionManager>;
+    RequestBodyLimitService<AionforgeRawStreamableHttpService<E>>;
 
 /// The bearer-authenticated Streamable HTTP service for Aionforge Memory.
 pub type AionforgeAuthenticatedStreamableHttpService<E> =
@@ -142,6 +148,8 @@ pub struct StreamableHttpOptions {
     pub stateful_mode: bool,
     /// Whether stateless request-response calls should use JSON instead of SSE framing.
     pub json_response: bool,
+    /// Maximum request body bytes accepted by the Streamable HTTP service.
+    pub max_request_body_bytes: usize,
 }
 
 impl Default for StreamableHttpOptions {
@@ -157,6 +165,7 @@ impl Default for StreamableHttpOptions {
                 .collect(),
             stateful_mode: true,
             json_response: false,
+            max_request_body_bytes: DEFAULT_MAX_REQUEST_BODY_BYTES,
         }
     }
 }
@@ -198,17 +207,25 @@ impl StreamableHttpOptions {
         self
     }
 
+    /// Set the maximum request body bytes accepted by Streamable HTTP.
+    #[must_use]
+    pub fn with_max_request_body_bytes(mut self, max_request_body_bytes: usize) -> Self {
+        self.max_request_body_bytes = max_request_body_bytes;
+        self
+    }
+
     /// Convert these options to rmcp's Streamable HTTP config.
     ///
     /// # Errors
     /// Returns [`StreamableHttpConfigError`] if a host/origin entry is blank or
-    /// if host validation would be disabled.
+    /// if host validation would be disabled, or if the request body limit is zero.
     pub fn into_rmcp_config(self) -> Result<StreamableHttpServerConfig, StreamableHttpConfigError> {
         validate_non_empty_entries(&self.allowed_hosts, EntryKind::Host)?;
         if self.allowed_hosts.is_empty() {
             return Err(StreamableHttpConfigError::EmptyAllowedHosts);
         }
         validate_non_empty_entries(&self.allowed_origins, EntryKind::Origin)?;
+        validate_max_request_body_bytes(self.max_request_body_bytes)?;
         Ok(StreamableHttpServerConfig::default()
             .with_allowed_hosts(self.allowed_hosts)
             .with_allowed_origins(self.allowed_origins)
@@ -234,6 +251,8 @@ pub enum StreamableHttpConfigError {
     },
     /// The configured bearer token is empty or whitespace.
     EmptyBearerToken,
+    /// The configured request body limit is zero.
+    ZeroMaxRequestBodyBytes,
 }
 
 impl std::fmt::Display for StreamableHttpConfigError {
@@ -250,6 +269,9 @@ impl std::fmt::Display for StreamableHttpConfigError {
                 )
             }
             Self::EmptyBearerToken => f.write_str("streamable HTTP bearer token cannot be empty"),
+            Self::ZeroMaxRequestBodyBytes => {
+                f.write_str("streamable HTTP max_request_body_bytes cannot be zero")
+            }
         }
     }
 }
@@ -455,12 +477,14 @@ pub fn streamable_http_service<E: Embedder + 'static>(
     memory: Arc<Memory<E>>,
     options: StreamableHttpOptions,
 ) -> Result<AionforgeStreamableHttpService<E>, StreamableHttpConfigError> {
+    let max_request_body_bytes = options.max_request_body_bytes;
     let config = streamable_http_config(options)?;
-    Ok(StreamableHttpService::new(
+    let service = StreamableHttpService::new(
         move || Ok(AionforgeMcp::new(Arc::clone(&memory))),
         Arc::new(LocalSessionManager::default()),
         config,
-    ))
+    );
+    RequestBodyLimitService::new(service, max_request_body_bytes)
 }
 
 /// Build a bearer-authenticated Streamable HTTP service.
