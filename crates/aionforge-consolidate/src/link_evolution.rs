@@ -35,7 +35,12 @@ use aionforge_domain::nodes::forensic::AuditEvent;
 use aionforge_domain::time::Timestamp;
 use aionforge_store::{EdgeId, LinkEdgeWrite, Store};
 
-use crate::audit::{LinkDecision, LinkEvolveProvenance, link_evolve_actor_id, link_evolve_audit};
+use aionforge_security::{CrossFamilyGuard, GuardDecision, GuardMode};
+
+use crate::audit::{
+    GuardFinding, LinkDecision, LinkEvolveProvenance, guard_audit, guard_reason_parts,
+    link_evolve_actor_id, link_evolve_audit,
+};
 
 /// The closed relationship vocabulary for `RELATES_TO` labels (M3.T09). A proposal whose label is
 /// not in this set is dropped: the label space is fixed (never model free text) so an injected or
@@ -119,6 +124,11 @@ pub struct LinkEvolveReport {
     pub links_revised: usize,
     /// Source-note calls the evolver declined or could not complete (degraded to the rule tier).
     pub declined: usize,
+    /// Source notes the cross-family guard refused before any model call (07 §3,
+    /// M6.T01): a same-family or unverifiable writer set under `GuardMode::Refuse`.
+    /// Each refusal writes a `subliminal_guard_warning` audit row; warn-mode
+    /// findings proceed and are visible in the audit trail only.
+    pub guard_refused: usize,
 }
 
 /// An error from a link-evolution run. The evolver itself never errors out of the run — an
@@ -136,13 +146,21 @@ pub enum LinkEvolveError {
 pub struct LinkEvolvePass<L> {
     evolver: L,
     config: LinkEvolveConfig,
+    guard_mode: GuardMode,
 }
 
 impl<L: LinkEvolver> LinkEvolvePass<L> {
-    /// Build a pass over an evolver and the link-evolution config.
+    /// Build a pass over an evolver, the link-evolution config, and the cross-family
+    /// guard mode. The mode is a separate parameter — not a `LinkEvolveConfig` field —
+    /// because it is substrate policy set once at engine construction (07 §3: "not
+    /// left to user code"), while the config is a per-call argument.
     #[must_use]
-    pub fn new(evolver: L, config: LinkEvolveConfig) -> Self {
-        Self { evolver, config }
+    pub fn new(evolver: L, config: LinkEvolveConfig, guard_mode: GuardMode) -> Self {
+        Self {
+            evolver,
+            config,
+            guard_mode,
+        }
     }
 
     /// Evolve the live notes of one namespace into non-canonical `RELATES_TO` edges, off the
@@ -170,6 +188,7 @@ impl<L: LinkEvolver> LinkEvolvePass<L> {
 
         let identity = self.evolver.identity().clone();
         let actor_id = link_evolve_actor_id(&identity);
+        let guard = CrossFamilyGuard::new(self.guard_mode, identity.model_family.clone());
         let provenance = LinkEvolveProvenance {
             identity: &identity,
             endpoint: self.config.endpoint.as_deref(),
@@ -196,6 +215,53 @@ impl<L: LinkEvolver> LinkEvolvePass<L> {
             let candidates = self.top_candidates(source, &pool);
             if candidates.is_empty() {
                 continue;
+            }
+
+            // The cross-family guard (07 §3, M6.T01), per source note BEFORE the
+            // model call: the source's writer set unions its underlying episode
+            // writers and, for a distilled note, the model that authored it — so a
+            // two-hop launder (distill with X, evolve with X) cannot pass.
+            let writers = store.writer_families_for_note(&source.identity.id)?;
+            match guard.evaluate(&writers) {
+                GuardDecision::NotInference | GuardDecision::Pass => {}
+                GuardDecision::Refused(reason) => {
+                    let (reason_str, matched) = guard_reason_parts(&reason);
+                    report.guard_refused += 1;
+                    audits.push(guard_audit(
+                        &actor_id,
+                        &source.identity.id,
+                        &GuardFinding {
+                            rule: "link_evolve",
+                            rule_version: &identity.rule_version,
+                            action: "refused",
+                            consolidator_family: identity.model_family.as_deref(),
+                            writer_families: &writers.families,
+                            reason: reason_str,
+                            matched_writer_family: matched,
+                        },
+                        namespace,
+                        now,
+                    ));
+                    continue;
+                }
+                GuardDecision::Warned(reason) => {
+                    let (reason_str, matched) = guard_reason_parts(&reason);
+                    audits.push(guard_audit(
+                        &actor_id,
+                        &source.identity.id,
+                        &GuardFinding {
+                            rule: "link_evolve",
+                            rule_version: &identity.rule_version,
+                            action: "warned",
+                            consolidator_family: identity.model_family.as_deref(),
+                            writer_families: &writers.families,
+                            reason: reason_str,
+                            matched_writer_family: matched,
+                        },
+                        namespace,
+                        now,
+                    ));
+                }
             }
 
             report.notes_seen += 1;

@@ -89,6 +89,7 @@ name = "aionforge-consolidate"
 version = "0.1.0"
 dependencies = [
  "aionforge-domain",
+ "aionforge-security",
  "aionforge-store",
  "async-trait",
  "metrics",

@@ -34,7 +34,12 @@ use aionforge_domain::time::Timestamp;
 use aionforge_domain::value::ObjectValue;
 use aionforge_store::{CandidateSet, DistilledNoteWrite, FactKey, MaterializedNote, Store};
 
-use crate::audit::{DistillProvenance, distill_actor_id, distill_audit};
+use aionforge_security::{CrossFamilyGuard, GuardDecision, GuardMode};
+
+use crate::audit::{
+    DistillProvenance, GuardFinding, distill_actor_id, distill_audit, guard_audit,
+    guard_reason_parts,
+};
 use crate::config::SummarizationConfig;
 use crate::summarize::{RetentionOutcome, build_clusters, check_detail_retention, note_id};
 
@@ -92,6 +97,11 @@ pub struct DistillationReport {
     pub rejected_lossy: usize,
     /// Calls the model declined or could not complete (unavailable, truncated, empty).
     pub declined: usize,
+    /// Clusters the cross-family guard refused before any model call (07 §3,
+    /// M6.T01): a same-family or unverifiable writer set under `GuardMode::Refuse`.
+    /// Each refusal writes a `subliminal_guard_warning` audit row; warn-mode
+    /// findings proceed and are visible in the audit trail only.
+    pub guard_refused: usize,
 }
 
 /// An error from a distillation run. The summarizer itself never errors out of the run — an
@@ -115,16 +125,27 @@ pub struct Distiller<S, E> {
     summarizer: S,
     embedder: Arc<E>,
     config: DistillationConfig,
+    guard_mode: GuardMode,
 }
 
 impl<S: Summarizer, E: Embedder> Distiller<S, E> {
-    /// Build a distiller over a summarizer, the shared embedder, and the distillation config.
+    /// Build a distiller over a summarizer, the shared embedder, the distillation
+    /// config, and the cross-family guard mode. The mode is a separate parameter —
+    /// not a `DistillationConfig` field — because it is substrate policy set once at
+    /// engine construction (07 §3: "not left to user code"), while the config is a
+    /// per-call argument the caller assembles.
     #[must_use]
-    pub fn new(summarizer: S, embedder: Arc<E>, config: DistillationConfig) -> Self {
+    pub fn new(
+        summarizer: S,
+        embedder: Arc<E>,
+        config: DistillationConfig,
+        guard_mode: GuardMode,
+    ) -> Self {
         Self {
             summarizer,
             embedder,
             config,
+            guard_mode,
         }
     }
 
@@ -174,7 +195,56 @@ impl<S: Summarizer, E: Embedder> Distiller<S, E> {
         let mut declined: Vec<AuditEvent> = Vec::new();
         let mut pending: Vec<Pending> = Vec::new();
 
+        // The cross-family guard (07 §3, M6.T01): one configured comparator for the
+        // run, applied per cluster BEFORE the model call — a refused cluster's
+        // content never reaches a same-family condenser at all.
+        let guard = CrossFamilyGuard::new(self.guard_mode, identity.model_family.clone());
+
         for cluster in clusters {
+            let fact_ids: Vec<Id> = cluster.facts.iter().map(|f| f.identity.id).collect();
+            let writers = store.writer_families_for_facts(&fact_ids)?;
+            match guard.evaluate(&writers) {
+                GuardDecision::NotInference | GuardDecision::Pass => {}
+                GuardDecision::Refused(reason) => {
+                    let (reason_str, matched) = guard_reason_parts(&reason);
+                    report.guard_refused += 1;
+                    declined.push(guard_audit(
+                        &actor_id,
+                        &cluster.subject_id,
+                        &GuardFinding {
+                            rule: "distill",
+                            rule_version: &rule_version,
+                            action: "refused",
+                            consolidator_family: identity.model_family.as_deref(),
+                            writer_families: &writers.families,
+                            reason: reason_str,
+                            matched_writer_family: matched,
+                        },
+                        namespace,
+                        now,
+                    ));
+                    continue;
+                }
+                GuardDecision::Warned(reason) => {
+                    let (reason_str, matched) = guard_reason_parts(&reason);
+                    declined.push(guard_audit(
+                        &actor_id,
+                        &cluster.subject_id,
+                        &GuardFinding {
+                            rule: "distill",
+                            rule_version: &rule_version,
+                            action: "warned",
+                            consolidator_family: identity.model_family.as_deref(),
+                            writer_families: &writers.families,
+                            reason: reason_str,
+                            matched_writer_family: matched,
+                        },
+                        namespace,
+                        now,
+                    ));
+                }
+            }
+
             let output = match self.summarizer.summarize(&cluster).await {
                 Ok(Some(output)) => output,
                 Ok(None) => {

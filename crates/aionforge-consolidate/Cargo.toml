@@ -11,6 +11,7 @@ description = "Asynchronous consolidation: a durable cursor and a bounded backgr
 
 [dependencies]
 aionforge-domain = { path = "../aionforge-domain", version = "0.1.0" }
+aionforge-security = { path = "../aionforge-security", version = "0.1.0" }
 aionforge-store = { path = "../aionforge-store", version = "0.1.0" }
 async-trait = { workspace = true }
 metrics = { workspace = true }

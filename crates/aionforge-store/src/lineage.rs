@@ -167,21 +167,30 @@ impl Store {
     /// pass: distill with family X, then evolve links with X against a note whose
     /// underlying writers were some other family.
     ///
+    /// A note with **no author evidence at all** — zero `DERIVED_FROM` sources and
+    /// zero `Distill` events — is unverifiable, not unauthored: an empty writer set
+    /// must never read as "differs from everyone".
+    ///
     /// # Errors
     /// Returns [`StoreError`] if a stored property or audit row cannot be decoded.
     pub fn writer_families_for_note(&self, note_id: &Id) -> Result<WriterFamilySet, StoreError> {
         let mut collector = FamilyCollector::default();
-        {
+        let sourced = {
             let snapshot = self.graph().read();
             let Some(note_node) = node_by_id(&snapshot, Note::LABEL, note_id)? else {
                 collector.unverifiable = true;
                 return Ok(collector.finish());
             };
-            collect_note_source_families(&snapshot, note_node, &mut collector)?;
-        }
+            let (facts, episodes) = collect_note_sources(&snapshot, note_node, &mut collector)?;
+            !facts.is_empty() || !episodes.is_empty()
+        };
         // The distilling model union reads the audit index, outside the snapshot scope.
-        for model in self.distill_models_for(note_id)? {
+        let models = self.distill_models_for(note_id)?;
+        for model in &models {
             collector.record(model.family.as_deref());
+        }
+        if !sourced && models.is_empty() {
+            collector.unverifiable = true;
         }
         Ok(collector.finish())
     }
@@ -311,17 +320,7 @@ fn collect_fact_writer_families(
     Ok(())
 }
 
-/// Collect writer families for a note's `DERIVED_FROM` sources: `Fact` neighbors
-/// recurse through the fact chain, direct `Episode` neighbors resolve in place.
-fn collect_note_source_families(
-    snapshot: &SeleneGraph,
-    note_node: NodeId,
-    collector: &mut FamilyCollector,
-) -> Result<(), StoreError> {
-    collect_note_sources(snapshot, note_node, collector).map(|_| ())
-}
-
-/// The walk behind [`collect_note_source_families`] and [`Store::note_lineage`]:
+/// The walk behind [`Store::writer_families_for_note`] and [`Store::note_lineage`]:
 /// returns the note's source fact and episode domain ids (each id-sorted, distinct)
 /// while feeding every resolved writer family into `collector`.
 fn collect_note_sources(

@@ -20,9 +20,10 @@ use aionforge_domain::contracts::{Completer, Embedder};
 use aionforge_domain::embedding::{EmbedderModel, Embedding};
 use aionforge_domain::ids::{ContentHash, Id};
 use aionforge_domain::namespace::Namespace;
-use aionforge_domain::nodes::episodic::{ConsolidationState, Episode, Role};
+use aionforge_domain::nodes::episodic::{ConsolidationState, Episode, Origin, Role};
 use aionforge_domain::time::Timestamp;
 use aionforge_domain::{ChatRole, CompleterModel, Completion, CompletionRequest};
+use aionforge_security::GuardMode;
 use aionforge_store::{BoundQuery, QueryResult, Store, StoreConfig, Value};
 
 const DIM: usize = 16;
@@ -220,7 +221,17 @@ fn insert_raw_episode(store: &Store, content: &str, namespace: &Namespace) {
         embedding: None,
         embedder_model: None,
         consolidation_state: ConsolidationState::Raw,
-        origin: None,
+        // A verifiable writer family, distinct from the mock completer's "claude",
+        // so the cross-family guard passes these fixtures (07 §3, M6.T01).
+        origin: Some(Origin {
+            model_family: Some("writer-fake".to_string()),
+            model_version: None,
+            transport: None,
+            request_id: None,
+            redactions: Vec::new(),
+            injection_flags: Vec::new(),
+            capture_latency_ms: None,
+        }),
     };
     store.insert_episode(&episode).expect("insert episode");
 }
@@ -346,6 +357,7 @@ async fn distillation_writes_a_note_with_lineage_and_audit_to_note_provenance() 
         mock(Behavior::Echo),
         Arc::new(AxisEmbedder::new()),
         enabled_config(),
+        GuardMode::default(),
     );
     let report = distiller
         .distill(&store, &namespace, &now())
@@ -383,6 +395,7 @@ async fn an_unavailable_model_degrades_to_the_canonical_tier() {
         mock(Behavior::Unavailable),
         Arc::new(AxisEmbedder::new()),
         enabled_config(),
+        GuardMode::default(),
     );
     let report = distiller
         .distill(&store, &namespace, &now())
@@ -423,6 +436,7 @@ async fn a_lossy_summary_is_rejected_by_the_detail_retention_guard() {
         mock(Behavior::Lossy),
         Arc::new(AxisEmbedder::new()),
         enabled_config(),
+        GuardMode::default(),
     );
     let report = distiller
         .distill(&store, &namespace, &now())
@@ -449,6 +463,7 @@ async fn a_truncated_completion_is_declined() {
         mock(Behavior::Truncated),
         Arc::new(AxisEmbedder::new()),
         enabled_config(),
+        GuardMode::default(),
     );
     let report = distiller
         .distill(&store, &namespace, &now())
@@ -473,7 +488,12 @@ async fn a_disabled_distiller_is_a_no_op() {
         enabled: false,
         ..enabled_config()
     };
-    let distiller = Distiller::new(mock(Behavior::Echo), Arc::new(AxisEmbedder::new()), config);
+    let distiller = Distiller::new(
+        mock(Behavior::Echo),
+        Arc::new(AxisEmbedder::new()),
+        config,
+        GuardMode::default(),
+    );
     let report = distiller
         .distill(&store, &namespace, &now())
         .await
@@ -497,6 +517,7 @@ async fn distillation_is_idempotent_on_replay() {
         mock(Behavior::Echo),
         Arc::new(AxisEmbedder::new()),
         enabled_config(),
+        GuardMode::default(),
     );
     distiller
         .distill(&store, &namespace, &now())
@@ -526,6 +547,7 @@ async fn the_provenance_audit_records_model_identity_endpoint_and_seed() {
         mock(Behavior::Echo),
         Arc::new(AxisEmbedder::new()),
         enabled_config(),
+        GuardMode::default(),
     );
     distiller
         .distill(&store, &namespace, &now())
@@ -577,6 +599,7 @@ async fn distilled_notes_coexist_with_cursor_rule_summaries_in_a_disjoint_id_spa
         mock(Behavior::Echo),
         Arc::new(AxisEmbedder::new()),
         enabled_config(),
+        GuardMode::default(),
     );
     distiller
         .distill(&store, &namespace, &now())
@@ -603,6 +626,7 @@ async fn a_multi_subject_batch_distills_each_subject_into_its_own_note() {
         mock(Behavior::Echo),
         Arc::new(AxisEmbedder::new()),
         enabled_config(),
+        GuardMode::default(),
     );
     let report = distiller
         .distill(&store, &namespace, &now())
@@ -637,6 +661,7 @@ async fn distillation_stays_within_its_namespace() {
         mock(Behavior::Echo),
         Arc::new(AxisEmbedder::new()),
         enabled_config(),
+        GuardMode::default(),
     );
     let report = distiller
         .distill(&store, &ns_a, &now())
@@ -664,6 +689,7 @@ async fn a_flapping_outcome_records_a_fresh_call_and_then_writes_the_note() {
         mock(Behavior::Unavailable),
         Arc::new(AxisEmbedder::new()),
         enabled_config(),
+        GuardMode::default(),
     );
     let first = down
         .distill(&store, &namespace, &now())
@@ -676,6 +702,7 @@ async fn a_flapping_outcome_records_a_fresh_call_and_then_writes_the_note() {
         mock(Behavior::Echo),
         Arc::new(AxisEmbedder::new()),
         enabled_config(),
+        GuardMode::default(),
     );
     let second = up
         .distill(&store, &namespace, &now())

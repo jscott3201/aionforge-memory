@@ -359,6 +359,18 @@ fn note_families_union_the_distilling_model() {
         .writer_families_for_note(&Id::from_content_hash(b"no-such-note"))
         .expect("note families");
     assert!(set.unverifiable);
+
+    // A note with no author evidence at all — zero DERIVED_FROM sources, zero
+    // Distill events — is unverifiable, never "differs from everyone".
+    let orphan = insert_note(&store, b"orphan-note", &[]);
+    let set = store
+        .writer_families_for_note(&orphan)
+        .expect("note families");
+    assert!(set.families.is_empty());
+    assert!(
+        set.unverifiable,
+        "an unauthored note cannot vouch for anyone"
+    );
 }
 
 #[test]

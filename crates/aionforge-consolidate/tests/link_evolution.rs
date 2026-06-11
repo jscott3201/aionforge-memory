@@ -20,6 +20,7 @@ use aionforge_domain::namespace::Namespace;
 use aionforge_domain::nodes::associative::Note;
 use aionforge_domain::nodes::forensic::{AuditEvent, AuditKind};
 use aionforge_domain::time::Timestamp;
+use aionforge_security::GuardMode;
 use aionforge_store::{
     BoundQuery, DistilledNoteWrite, MaterializedNote, QueryResult, Store, StoreConfig, Value,
 };
@@ -102,7 +103,9 @@ fn seed_note_opt(store: &Store, seed: &[u8], ns: &Namespace, embedding: Option<[
         kind: AuditKind::Distill,
         subject_id: id,
         actor_id: Id::from_content_hash(b"seed"),
-        payload: serde_json::json!({"outcome": "written"}),
+        // The recorded distilling model doubles as the note's writer family for the
+        // cross-family guard (07 §3); "writer-fake" differs from MockEvolver's "mock".
+        payload: serde_json::json!({"outcome": "written", "model_family": "writer-fake"}),
         signature: String::new(),
         occurred_at: now(),
     };
@@ -258,6 +261,7 @@ async fn disabled_is_a_no_op() {
     let pass = LinkEvolvePass::new(
         RuleLinkEvolver::with_default_rules(),
         LinkEvolveConfig::default(),
+        GuardMode::default(),
     );
     let report = pass.evolve_links(&store, &ns, &now()).await.expect("run");
     assert_eq!(report, aionforge_consolidate::LinkEvolveReport::default());
@@ -273,7 +277,11 @@ async fn the_rule_evolver_links_nearby_notes_and_never_touches_the_cursor() {
     seed_note(&store, b"b", &ns, [1.0, 0.0, 0.0, 0.0]);
     seed_note(&store, b"c", &ns, [0.0, 1.0, 0.0, 0.0]);
 
-    let pass = LinkEvolvePass::new(RuleLinkEvolver::with_default_rules(), enabled_config());
+    let pass = LinkEvolvePass::new(
+        RuleLinkEvolver::with_default_rules(),
+        enabled_config(),
+        GuardMode::default(),
+    );
     let report = pass.evolve_links(&store, &ns, &now()).await.expect("run");
 
     // a↔b are mutually nearest (each links to the other); c relates to neither above the floor.
@@ -299,7 +307,11 @@ async fn a_second_identical_run_creates_nothing_new() {
     let ns = agent("alice");
     seed_note(&store, b"a", &ns, [1.0, 0.0, 0.0, 0.0]);
     seed_note(&store, b"b", &ns, [1.0, 0.0, 0.0, 0.0]);
-    let pass = LinkEvolvePass::new(RuleLinkEvolver::with_default_rules(), enabled_config());
+    let pass = LinkEvolvePass::new(
+        RuleLinkEvolver::with_default_rules(),
+        enabled_config(),
+        GuardMode::default(),
+    );
     pass.evolve_links(&store, &ns, &now()).await.expect("run 1");
     let after_first = relates_to_edges(&store);
     let report = pass
@@ -318,8 +330,11 @@ async fn a_relabel_revises_the_live_link() {
     seed_note(&store, b"b", &ns, [0.9, 0.1, 0.0, 0.0]);
 
     // First call: create a→b related_to.
-    let create_pass =
-        LinkEvolvePass::new(MockEvolver::proposing("related_to", 0.9), enabled_config());
+    let create_pass = LinkEvolvePass::new(
+        MockEvolver::proposing("related_to", 0.9),
+        enabled_config(),
+        GuardMode::default(),
+    );
     let r1 = create_pass
         .evolve_links(&store, &ns, &now())
         .await
@@ -330,8 +345,11 @@ async fn a_relabel_revises_the_live_link() {
     );
 
     // Second call: the same pairs now propose `subsumes` — a relabel closes the old and opens new.
-    let revise_pass =
-        LinkEvolvePass::new(MockEvolver::proposing("subsumes", 0.9), enabled_config());
+    let revise_pass = LinkEvolvePass::new(
+        MockEvolver::proposing("subsumes", 0.9),
+        enabled_config(),
+        GuardMode::default(),
+    );
     let r2 = revise_pass
         .evolve_links(&store, &ns, &later())
         .await
@@ -358,7 +376,11 @@ async fn a_declined_call_writes_an_audit_and_no_edge() {
     let ns = agent("alice");
     seed_note(&store, b"a", &ns, [1.0, 0.0, 0.0, 0.0]);
     seed_note(&store, b"b", &ns, [1.0, 0.0, 0.0, 0.0]);
-    let pass = LinkEvolvePass::new(MockEvolver::declining(), enabled_config());
+    let pass = LinkEvolvePass::new(
+        MockEvolver::declining(),
+        enabled_config(),
+        GuardMode::default(),
+    );
     let report = pass.evolve_links(&store, &ns, &now()).await.expect("run");
     assert_eq!(report.links_created, 0);
     assert!(report.declined >= 1, "the declines are recorded");
@@ -372,7 +394,11 @@ async fn an_out_of_vocabulary_label_is_dropped() {
     let ns = agent("alice");
     seed_note(&store, b"a", &ns, [1.0, 0.0, 0.0, 0.0]);
     seed_note(&store, b"b", &ns, [1.0, 0.0, 0.0, 0.0]);
-    let pass = LinkEvolvePass::new(MockEvolver::proposing("owns", 0.9), enabled_config());
+    let pass = LinkEvolvePass::new(
+        MockEvolver::proposing("owns", 0.9),
+        enabled_config(),
+        GuardMode::default(),
+    );
     let report = pass.evolve_links(&store, &ns, &now()).await.expect("run");
     assert_eq!(report.links_created, 0, "a free-text label is refused");
     assert_eq!(relates_to_edges(&store), 0);
@@ -385,7 +411,11 @@ async fn a_low_confidence_proposal_is_dropped_by_the_floor() {
     seed_note(&store, b"a", &ns, [1.0, 0.0, 0.0, 0.0]);
     seed_note(&store, b"b", &ns, [1.0, 0.0, 0.0, 0.0]);
     // Below the floor (0.5) — dropped before any edge decision.
-    let pass = LinkEvolvePass::new(MockEvolver::proposing("related_to", 0.2), enabled_config());
+    let pass = LinkEvolvePass::new(
+        MockEvolver::proposing("related_to", 0.2),
+        enabled_config(),
+        GuardMode::default(),
+    );
     let report = pass.evolve_links(&store, &ns, &now()).await.expect("run");
     assert_eq!(report.links_created, 0, "sub-floor confidence is dropped");
     assert_eq!(relates_to_edges(&store), 0);
@@ -403,7 +433,11 @@ async fn the_per_run_create_cap_bounds_the_writes() {
         max_links_created_per_run: 1,
         ..enabled_config()
     };
-    let pass = LinkEvolvePass::new(MockEvolver::proposing("related_to", 0.9), config);
+    let pass = LinkEvolvePass::new(
+        MockEvolver::proposing("related_to", 0.9),
+        config,
+        GuardMode::default(),
+    );
     let report = pass.evolve_links(&store, &ns, &now()).await.expect("run");
     assert_eq!(report.links_created, 1, "the per-run cap holds");
     assert_eq!(relates_to_edges(&store), 1);
@@ -422,7 +456,11 @@ async fn the_per_pair_revision_cap_stops_churn() {
     };
     // related_to → subsumes (revision 1, allowed) → elaborates (revision 2, capped).
     for label in ["related_to", "subsumes", "elaborates"] {
-        let pass = LinkEvolvePass::new(MockEvolver::proposing(label, 0.9), config.clone());
+        let pass = LinkEvolvePass::new(
+            MockEvolver::proposing(label, 0.9),
+            config.clone(),
+            GuardMode::default(),
+        );
         pass.evolve_links(&store, &ns, &later()).await.expect("run");
     }
     // One revision allowed per pair: each direction (a→b and b→a) relabeled once, so two
@@ -453,7 +491,11 @@ async fn an_empty_proposal_set_draws_nothing_and_is_not_a_decline() {
     let ns = agent("alice");
     seed_note(&store, b"a", &ns, [1.0, 0.0, 0.0, 0.0]);
     seed_note(&store, b"b", &ns, [1.0, 0.0, 0.0, 0.0]);
-    let pass = LinkEvolvePass::new(MockEvolver::drawing_nothing(), enabled_config());
+    let pass = LinkEvolvePass::new(
+        MockEvolver::drawing_nothing(),
+        enabled_config(),
+        GuardMode::default(),
+    );
     let report = pass.evolve_links(&store, &ns, &now()).await.expect("run");
     // The evolver ran on both sources but drew no relationship — distinct from a decline.
     assert_eq!(report.notes_seen, 2, "both sources were consulted");
@@ -483,7 +525,7 @@ async fn the_highest_confidence_proposal_per_target_wins() {
         (Target::Nth(0), "related_to".to_string(), 0.55),
         (Target::Nth(0), "subsumes".to_string(), 0.95),
     ]));
-    let pass = LinkEvolvePass::new(evolver, enabled_config());
+    let pass = LinkEvolvePass::new(evolver, enabled_config(), GuardMode::default());
     pass.evolve_links(&store, &ns, &now()).await.expect("run");
     let live_subsumes = count(
         &store,
@@ -513,7 +555,7 @@ async fn a_proposal_for_a_non_offered_note_is_dropped() {
         "related_to".to_string(),
         0.99,
     )]));
-    let pass = LinkEvolvePass::new(evolver, enabled_config());
+    let pass = LinkEvolvePass::new(evolver, enabled_config(), GuardMode::default());
     let report = pass.evolve_links(&store, &ns, &now()).await.expect("run");
     assert_eq!(report.links_created, 0, "a non-offered target is refused");
     assert_eq!(
@@ -534,7 +576,11 @@ async fn link_evolution_is_namespace_scoped() {
     seed_note(&store, b"b2", &bob, [1.0, 0.0, 0.0, 0.0]);
 
     // Run only on alice's namespace.
-    let pass = LinkEvolvePass::new(RuleLinkEvolver::with_default_rules(), enabled_config());
+    let pass = LinkEvolvePass::new(
+        RuleLinkEvolver::with_default_rules(),
+        enabled_config(),
+        GuardMode::default(),
+    );
     pass.evolve_links(&store, &alice, &now())
         .await
         .expect("run");
@@ -566,7 +612,11 @@ async fn embeddingless_notes_are_excluded_from_the_pool() {
     seed_note(&store, b"b", &ns, [1.0, 0.0, 0.0, 0.0]);
     let c = seed_bare_note(&store, b"c", &ns); // no embedding
 
-    let pass = LinkEvolvePass::new(RuleLinkEvolver::with_default_rules(), enabled_config());
+    let pass = LinkEvolvePass::new(
+        RuleLinkEvolver::with_default_rules(),
+        enabled_config(),
+        GuardMode::default(),
+    );
     pass.evolve_links(&store, &ns, &now()).await.expect("run");
 
     assert_eq!(
@@ -587,7 +637,11 @@ async fn a_source_with_no_embedded_neighbors_is_skipped() {
     seed_note(&store, b"a", &ns, [1.0, 0.0, 0.0, 0.0]);
     seed_bare_note(&store, b"b", &ns); // the only other note has no embedding
 
-    let pass = LinkEvolvePass::new(RuleLinkEvolver::with_default_rules(), enabled_config());
+    let pass = LinkEvolvePass::new(
+        RuleLinkEvolver::with_default_rules(),
+        enabled_config(),
+        GuardMode::default(),
+    );
     let report = pass.evolve_links(&store, &ns, &now()).await.expect("run");
     // `a` has an embedding but no embedded neighbor to be offered, so it is never consulted.
     assert_eq!(report.notes_seen, 0, "no source had any candidate");
@@ -608,7 +662,11 @@ async fn candidate_tie_breaks_are_deterministic_by_id() {
         max_candidates_per_note: 1,
         ..enabled_config()
     };
-    let pass = LinkEvolvePass::new(RuleLinkEvolver::with_default_rules(), config);
+    let pass = LinkEvolvePass::new(
+        RuleLinkEvolver::with_default_rules(),
+        config,
+        GuardMode::default(),
+    );
     pass.evolve_links(&store, &ns, &now()).await.expect("run");
     let s_links = store.relates_to_links(&s).expect("s links");
     assert_eq!(s_links.len(), 1, "exactly one candidate slot was filled");

@@ -28,6 +28,7 @@ use aionforge_domain::nodes::forensic::{AuditEvent, AuditKind};
 use aionforge_domain::nodes::procedural::Skill;
 use aionforge_domain::time::Timestamp;
 use aionforge_domain::value::ObjectValue;
+use aionforge_security::GuardReason;
 use serde_json::json;
 
 use crate::resolve::Resolution;
@@ -512,6 +513,89 @@ pub(crate) fn quarantine_audit(
         }),
         signature: String::new(),
         occurred_at: now.clone(),
+    }
+}
+
+/// One cross-family guard finding, shared by the distill and link-evolution drivers
+/// (07 §3, M6.T01): which rule fired, what it would have done, and the two sides of
+/// the comparison — everything the probe (and the M6.T05 same-family control) needs
+/// to assert the **guard** fired rather than the model declining.
+pub(crate) struct GuardFinding<'a> {
+    /// The inference rule the guard ran for: `"distill"` or `"link_evolve"`.
+    pub rule: &'a str,
+    /// The rule version of the consolidating identity.
+    pub rule_version: &'a str,
+    /// `"refused"` (the item was skipped) or `"warned"` (it proceeded, audited).
+    pub action: &'a str,
+    /// The consolidating model's declared family.
+    pub consolidator_family: Option<&'a str>,
+    /// The distinct raw writer families behind the item's sources.
+    pub writer_families: &'a [String],
+    /// Why the guard fired: `"same_family"`, `"unverifiable_writer"`, or
+    /// `"unverifiable_consolidator"`.
+    pub reason: &'a str,
+    /// For a same-family finding, the writer family that matched.
+    pub matched_writer_family: Option<&'a str>,
+}
+
+/// The `subliminal_guard_warning` audit event for one guarded item (07 §3, M6.T01).
+/// Its id is keyed on the subject, rule, action, reason, and family pair — and
+/// **not** on the instant — so a re-run over unchanged ground dedups to a no-op
+/// instead of flooding the audit subgraph, while a genuinely different finding (the
+/// mode flipped, the writer set changed) records its own row.
+pub(crate) fn guard_audit(
+    actor_id: &Id,
+    subject_id: &Id,
+    finding: &GuardFinding<'_>,
+    namespace: &Namespace,
+    now: &Timestamp,
+) -> AuditEvent {
+    let subject_str = subject_id.to_string();
+    let families_key = finding.writer_families.join(",");
+    let id = audit_id(
+        "subliminal_guard",
+        namespace,
+        &[
+            subject_str.as_str(),
+            finding.rule,
+            finding.rule_version,
+            finding.action,
+            finding.reason,
+            finding.consolidator_family.unwrap_or(""),
+            &families_key,
+        ],
+    );
+    AuditEvent {
+        identity: Identity {
+            id,
+            ingested_at: now.clone(),
+            namespace: namespace.clone(),
+            expired_at: None,
+        },
+        kind: AuditKind::SubliminalGuardWarning,
+        subject_id: *subject_id,
+        actor_id: *actor_id,
+        payload: json!({
+            "action": finding.action,
+            "rule": finding.rule,
+            "rule_version": finding.rule_version,
+            "consolidator_family": finding.consolidator_family,
+            "writer_families": finding.writer_families,
+            "reason": finding.reason,
+            "matched_writer_family": finding.matched_writer_family,
+        }),
+        signature: String::new(),
+        occurred_at: now.clone(),
+    }
+}
+
+/// Translate a fired guard's reason into the audit vocabulary: the `reason` string
+/// and, for a same-family finding, the matched writer family.
+pub(crate) fn guard_reason_parts(reason: &GuardReason) -> (&'static str, Option<&str>) {
+    match reason {
+        GuardReason::SameFamily { writer_family } => ("same_family", Some(writer_family)),
+        GuardReason::UnverifiableWriter => ("unverifiable_writer", None),
+        GuardReason::UnverifiableConsolidator => ("unverifiable_consolidator", None),
     }
 }
 

@@ -250,6 +250,10 @@ pub struct Memory<E> {
     /// alongside the signer. While `None`, every audit read maps to
     /// [`AuditVerification::NotEnabled`] — the substrate never fabricates a checked verdict.
     audit_verifier: Option<AuditVerifier>,
+    /// The cross-family guard posture (07 §3, M6.T01). **Always held** — like the
+    /// core editor it has no disabled state; the facade applies it to every
+    /// inference-calling consolidation rule (`distill`, `evolve_links`).
+    consolidation_guard: ConsolidationGuardPolicy,
 }
 
 impl<E: Embedder> Memory<E> {
@@ -459,6 +463,7 @@ impl<E: Embedder> Memory<E> {
             drift_detector,
             core_editor,
             audit_verifier,
+            consolidation_guard: config.consolidation_guard,
         })
     }
 
@@ -610,6 +615,14 @@ impl<E: Embedder + 'static> Memory<E> {
     /// completer configuration that built `summarizer` — they are recorded in each call's
     /// provenance audit (the `Summarizer` seam does not expose them), never used to drive behavior.
     ///
+    /// **Cross-family guarded** (07 §3, M6.T01): every cluster's writer families are resolved
+    /// before the model call and compared against the summarizer's declared family. A
+    /// same-family or unverifiable cluster is skipped under [`GuardMode::Refuse`] (counted in
+    /// `DistillationReport::guard_refused`) or condensed-with-a-warning under
+    /// [`GuardMode::Warn`]; either way a `subliminal_guard_warning` audit row records the
+    /// finding. The mode comes from [`MemoryConfig::consolidation_guard`], set at construction —
+    /// not from `config` — so user code cannot drop it.
+    ///
     /// # Errors
     /// Returns [`EngineError::Distillation`] if a store read, the note-body embedding, or the
     /// final write fails. A model that is unavailable or returns nothing usable is not an error.
@@ -623,7 +636,12 @@ impl<E: Embedder + 'static> Memory<E> {
     where
         Sz: Summarizer,
     {
-        let distiller = Distiller::new(summarizer, Arc::clone(&self.embedder), config);
+        let distiller = Distiller::new(
+            summarizer,
+            Arc::clone(&self.embedder),
+            config,
+            self.consolidation_guard.mode,
+        );
         let report = distiller.distill(&self.store, namespace, now).await?;
         Ok(report)
     }
@@ -641,6 +659,12 @@ impl<E: Embedder + 'static> Memory<E> {
     /// completer configuration that built `evolver` — they are recorded in each call's provenance
     /// audit (the `LinkEvolver` seam does not expose them), never used to drive behavior.
     ///
+    /// **Cross-family guarded** (07 §3, M6.T01): each source note's writer set — its underlying
+    /// episode writers unioned with the model that authored it, for a distilled note — is
+    /// compared against the evolver's declared family before the model call, so a two-hop
+    /// launder (distill with X, then evolve with X) cannot pass. Same skip/warn/audit behavior
+    /// as [`Memory::distill`], with refusals counted in `LinkEvolveReport::guard_refused`.
+    ///
     /// # Errors
     /// Returns [`EngineError::LinkEvolution`] if a store read or the final write fails. A model that
     /// is unavailable or returns nothing usable is not an error.
@@ -654,7 +678,7 @@ impl<E: Embedder + 'static> Memory<E> {
     where
         Lv: LinkEvolver,
     {
-        let pass = LinkEvolvePass::new(evolver, config);
+        let pass = LinkEvolvePass::new(evolver, config, self.consolidation_guard.mode);
         let report = pass.evolve_links(&self.store, namespace, now).await?;
         Ok(report)
     }
