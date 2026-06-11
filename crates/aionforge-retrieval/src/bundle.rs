@@ -293,23 +293,26 @@ impl RecallBundle {
         out.push_str(RECALLED_MEMORY_CONTEXT_OPEN);
         out.push('\n');
         for entry in &self.structured {
+            let id = entry.id();
             let sid = entry.serialization_id();
             // The kind-specific head: an episode carries its role, a fact its predicate
-            // and lifecycle status. The predicate is `attr_escape`d so an extracted
-            // value cannot break out of its attribute quotes (07 §4). The fused score is
-            // common to both kinds, so it is read through the accessor and appended once.
+            // and lifecycle status. The actionable domain id is exposed as `id` so compact
+            // MCP results can feed lifecycle follow-up tools; the content-derived
+            // serialization id stays available as `sid`. The predicate is `attr_escape`d so an
+            // extracted value cannot break out of its attribute quotes (07 §4). The fused score
+            // is common to both kinds, so it is read through the accessor and appended once.
             match entry {
                 StructuredEntry::Episode(e) => out.push_str(&format!(
-                    "<memory id=\"{sid}\" kind=\"episode\" role=\"{role}\"",
+                    "<memory id=\"{id}\" sid=\"{sid}\" kind=\"episode\" role=\"{role}\"",
                     role = role_tag(e.role),
                 )),
                 StructuredEntry::Fact(f) => out.push_str(&format!(
-                    "<memory id=\"{sid}\" kind=\"fact\" predicate=\"{predicate}\" status=\"{status}\"",
+                    "<memory id=\"{id}\" sid=\"{sid}\" kind=\"fact\" predicate=\"{predicate}\" status=\"{status}\"",
                     predicate = attr_escape(&f.predicate),
                     status = status_tag(f.status),
                 )),
                 StructuredEntry::CoreBlock(c) => out.push_str(&format!(
-                    "<memory id=\"{sid}\" kind=\"core\" block_kind=\"{kind}\"",
+                    "<memory id=\"{id}\" sid=\"{sid}\" kind=\"core\" block_kind=\"{kind}\"",
                     kind = block_kind_tag(c.block_kind),
                 )),
             }

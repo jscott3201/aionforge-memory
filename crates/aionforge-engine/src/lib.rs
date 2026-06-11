@@ -50,7 +50,7 @@ pub use aionforge_consolidate::{
     LINK_EVOLVE_RULE_VERSION, LLMLinkEvolver, LLMSummarizer, LinkEvolveConfig, LinkEvolveError,
     LinkEvolveReport, ObjectRule, PassConfig, PredicateRule, RELATIONSHIP_VOCABULARY,
     RULE_LINK_EVOLVE_VERSION, ResolutionConfig, Rule, RuleExtractor, RuleInducer, RuleLinkEvolver,
-    RuleSummarizer, SummarizationConfig,
+    RuleSummarizer, SummarizationConfig, TickReport,
 };
 pub use aionforge_domain::authz::{
     AuthorizationError, Authorizer, DefaultAuthorizer, DenyReason, Principal, VisibleSet,
@@ -594,6 +594,67 @@ impl<E: Embedder> Memory<E> {
 }
 
 impl<E: Embedder + 'static> Memory<E> {
+    fn build_consolidator<X, Sz, I>(
+        &self,
+        extractor: X,
+        summarizer: Sz,
+        inducer: I,
+        config: ConsolidationConfig,
+        pass_config: PassConfig,
+    ) -> Consolidator
+    where
+        X: FactExtractor + 'static,
+        Sz: Summarizer + 'static,
+        I: SkillInducer + 'static,
+    {
+        let induction_config = pass_config.induction.clone();
+        let extraction = FactExtractionPass::new(
+            Arc::new(extractor),
+            Arc::clone(&self.embedder),
+            Arc::new(summarizer),
+            pass_config,
+        );
+        let induction = SkillInductionPass::new(Arc::new(inducer), induction_config);
+        let mut consolidator = Consolidator::new(Arc::clone(&self.store), config);
+        consolidator.register(Box::new(extraction));
+        consolidator.register(Box::new(induction));
+        consolidator
+    }
+
+    /// Run one foreground consolidation tick with host-owned rule implementations.
+    ///
+    /// This is the foreground counterpart to [`Self::start_consolidation`] for hosts that want
+    /// an explicit maintenance operation, such as an MCP tool. It uses the same injected
+    /// [`FactExtractor`], [`Summarizer`], and [`SkillInducer`] seams as the background loop; callers
+    /// choose the implementations once at the host boundary, never from end-user input.
+    ///
+    /// The call resets any stale `in_progress` episodes before ticking, matching the recovery step
+    /// the background loop performs at startup. Like the background loop, it is not re-entrant: a
+    /// host must not run this concurrently with another foreground tick or a background
+    /// consolidator over the same store.
+    ///
+    /// # Errors
+    /// Returns [`EngineError::Store`] if the recovery reset fails or [`EngineError::Consolidation`]
+    /// if the scheduler cannot complete the tick.
+    pub async fn consolidate_once<X, Sz, I>(
+        &self,
+        extractor: X,
+        summarizer: Sz,
+        inducer: I,
+        config: ConsolidationConfig,
+        pass_config: PassConfig,
+    ) -> Result<TickReport, EngineError>
+    where
+        X: FactExtractor + 'static,
+        Sz: Summarizer + 'static,
+        I: SkillInducer + 'static,
+    {
+        self.store.reset_in_progress_episodes()?;
+        let consolidator =
+            self.build_consolidator(extractor, summarizer, inducer, config, pass_config);
+        Ok(consolidator.tick_once().await?)
+    }
+
     /// Start the background consolidator with the fact-extraction pass (04 §2, M2.T04).
     ///
     /// This is opt-in and explicit so `Memory::new` stays synchronous and runtime-free:
@@ -630,18 +691,8 @@ impl<E: Embedder + 'static> Memory<E> {
         Sz: Summarizer + 'static,
         I: SkillInducer + 'static,
     {
-        let induction_config = pass_config.induction.clone();
-        let extraction = FactExtractionPass::new(
-            Arc::new(extractor),
-            Arc::clone(&self.embedder),
-            Arc::new(summarizer),
-            pass_config,
-        );
-        let induction = SkillInductionPass::new(Arc::new(inducer), induction_config);
-        let mut consolidator = Consolidator::new(Arc::clone(&self.store), config);
-        consolidator.register(Box::new(extraction));
-        consolidator.register(Box::new(induction));
-        consolidator.start()
+        self.build_consolidator(extractor, summarizer, inducer, config, pass_config)
+            .start()
     }
 
     /// Run the optional, off-by-default LLM distiller over one namespace's current support facts,
@@ -1042,6 +1093,10 @@ pub enum EngineError {
     /// The optional off-cursor LLM link evolver failed (a store read or the write).
     #[error("link evolution failed")]
     LinkEvolution(#[from] LinkEvolveError),
+
+    /// The foreground consolidation scheduler failed.
+    #[error("consolidation failed")]
+    Consolidation(#[from] aionforge_consolidate::ConsolidationError),
 
     /// The optional attestation/quorum-promotion path refused an attestation or failed (06 §4).
     #[error("attestation or promotion failed")]

@@ -10,9 +10,10 @@ use aionforge_domain::ids::Id;
 use aionforge_domain::time::Timestamp;
 use aionforge_engine::{ForgettingPolicy, Memory, MemoryConfig};
 use aionforge_mcp::{
-    AionforgeMcp, AuditHistoryToolParams, CaptureToolParams, ConsolidationStatusToolParams,
-    MemoryLifecycleToolParams, SearchToolParams, audit_history_tool, capture_tool,
-    consolidation_status_tool, forget_tool, search_tool, unforget_tool,
+    AionforgeMcp, AuditHistoryToolParams, CaptureToolParams, ConsolidationRunToolParams,
+    ConsolidationStatusToolParams, MemoryLifecycleToolParams, SearchToolParams, audit_history_tool,
+    capture_tool, consolidate_tool, consolidation_status_tool, forget_tool, search_tool,
+    unforget_tool,
 };
 use rmcp::ServiceExt;
 
@@ -112,6 +113,15 @@ fn capture_id(receipt: &str) -> String {
         .to_string()
 }
 
+fn first_search_memory_id(output: &str) -> String {
+    let marker = "<memory id=\"";
+    let start = output.find(marker).expect("search result has a memory id") + marker.len();
+    let end = output[start..]
+        .find('"')
+        .expect("memory id attribute closes");
+    output[start..start + end].to_string()
+}
+
 fn lifecycle_params(memory_id: &str, agent: Id) -> MemoryLifecycleToolParams {
     MemoryLifecycleToolParams {
         memory_id: memory_id.to_string(),
@@ -151,6 +161,7 @@ async fn mcp_transport_lists_lifecycle_tools() -> TestResult {
         "capture",
         "search",
         "consolidation_status",
+        "consolidate",
         "forget",
         "unforget",
         "audit_history",
@@ -186,6 +197,70 @@ async fn consolidation_status_reports_pending_capture_backlog() -> TestResult {
     assert!(out.contains("pending=1"), "{out}");
     assert!(out.contains("failed=0"), "{out}");
     assert!(out.contains("state=backlog_pending"), "{out}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn capture_consolidate_search_forget_cycle_is_client_visible() -> TestResult {
+    let memory = forgetting_memory();
+    let agent = Id::generate();
+    let receipt = capture_tool(
+        &memory,
+        capture_params("standalone lifecycle memo", &agent.to_string()),
+        &now(),
+    )
+    .await?;
+    let captured_episode_id = capture_id(&receipt);
+
+    let before = consolidation_status_tool(
+        &memory,
+        ConsolidationStatusToolParams {
+            verbose: Some(false),
+        },
+        &now(),
+    )?;
+    assert!(before.contains("pending=1"), "{before}");
+    assert!(
+        !before.contains(&captured_episode_id),
+        "status remains compact and does not list episode ids: {before}"
+    );
+
+    let run = consolidate_tool(
+        &memory,
+        ConsolidationRunToolParams {
+            max_ticks: Some(3),
+            verbose: Some(true),
+        },
+    )
+    .await?;
+    assert!(run.starts_with("[consolidate] "), "{run}");
+    assert!(run.contains("consolidated=1"), "{run}");
+    assert!(run.contains("pending_after=0"), "{run}");
+    assert!(run.contains("rule_set=deterministic_defaults"), "{run}");
+
+    let after = consolidation_status_tool(
+        &memory,
+        ConsolidationStatusToolParams {
+            verbose: Some(false),
+        },
+        &now(),
+    )?;
+    assert!(after.contains("pending=0"), "{after}");
+
+    let found = search_tool(
+        &memory,
+        search_params("standalone lifecycle", agent),
+        &now(),
+    )
+    .await?;
+    assert!(
+        !found.starts_with("hits: 0 "),
+        "search sees consolidated memory: {found}"
+    );
+    let memory_id = first_search_memory_id(&found);
+
+    let forgotten = forget_tool(&memory, lifecycle_params(&memory_id, agent), &now())?;
+    assert!(forgotten.contains("outcome=forgotten"), "{forgotten}");
     Ok(())
 }
 

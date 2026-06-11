@@ -50,6 +50,8 @@ enabled_tools = ["search", "consolidation_status", "audit_history"]
 approval_mode = "approve"
 [mcp_servers.aionforge_memory.tools.capture]
 approval_mode = "prompt"
+[mcp_servers.aionforge_memory.tools.consolidate]
+approval_mode = "prompt"
 [mcp_servers.aionforge_memory.tools.forget]
 approval_mode = "prompt"
 [mcp_servers.aionforge_memory.tools.unforget]
@@ -104,8 +106,8 @@ for Streamable HTTP and send the bearer token as a static header.
 ```
 
 OpenCode can enable MCP tools globally or per agent. Keep mutating tools such as
-`capture`, `forget`, and `unforget` behind approval until the host's policy is
-settled.
+`capture`, `consolidate`, `forget`, and `unforget` behind approval until the
+host's policy is settled.
 
 ## Cursor
 
@@ -133,10 +135,11 @@ failures.
 ## Tool approval posture
 
 Read-like tools are `search`, `consolidation_status`, and `audit_history`.
-Mutating tools are `capture`, `forget`, and `unforget`; configure clients to ask
-before running them unless the host has a stronger local policy. `forget` and
-`unforget` require a `viewer` and enforce the viewer's writable namespace set at
-the server boundary.
+Mutating tools are `capture`, `consolidate`, `forget`, and `unforget`; configure
+clients to ask before running them unless the host has a stronger local policy.
+`consolidate` runs bounded foreground ticks with server-owned deterministic
+rules only. `forget` and `unforget` require a `viewer` and enforce the viewer's
+writable namespace set at the server boundary.
 
 ## Deferred
 

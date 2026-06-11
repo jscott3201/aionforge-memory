@@ -17,12 +17,15 @@ use aionforge_domain::nodes::procedural::{BadPattern, Skill};
 use aionforge_domain::nodes::semantic::{Entity, Fact};
 use aionforge_domain::time::Timestamp;
 use aionforge_engine::{
-    AuditCursor, AuditPage, AuditRecord, AuditVerification, Memory, PointForget, PointUnforget,
-    Principal,
+    AuditCursor, AuditPage, AuditRecord, AuditVerification, ConsolidationConfig, Memory,
+    PassConfig, PointForget, PointUnforget, Principal, RuleExtractor, RuleInducer, RuleSummarizer,
+    TickReport,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
 
+const DEFAULT_CONSOLIDATION_MAX_TICKS: usize = 1;
+const MAX_CONSOLIDATION_MAX_TICKS: usize = 5;
 const DEFAULT_AUDIT_LIMIT: usize = 20;
 const MAX_AUDIT_LIMIT: usize = 50;
 const PAYLOAD_PREVIEW_CHARS: usize = 240;
@@ -41,6 +44,17 @@ const MCP_MEMORY_LABELS: [&str; 6] = [
 pub struct ConsolidationStatusToolParams {
     /// Include an explanatory status hint.
     #[schemars(description = "Include an explanatory status hint.")]
+    pub verbose: Option<bool>,
+}
+
+/// Parameters for the `consolidate` tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ConsolidationRunToolParams {
+    /// Maximum foreground ticks to run (default 1, max 5).
+    #[schemars(description = "Maximum foreground ticks to run (default 1, max 5).")]
+    pub max_ticks: Option<usize>,
+    /// Include the server-owned pass profile.
+    #[schemars(description = "Include the server-owned pass profile.")]
     pub verbose: Option<bool>,
 }
 
@@ -134,6 +148,56 @@ pub fn consolidation_status_tool<E: Embedder>(
         };
         out.push_str(" state=");
         out.push_str(state);
+    }
+    Ok(out)
+}
+
+/// Run a bounded foreground consolidation pass using server-owned deterministic rules.
+///
+/// # Errors
+/// Returns a structured `ERR_*` string if the foreground tick fails.
+pub async fn consolidate_tool<E: Embedder + 'static>(
+    memory: &Memory<E>,
+    params: ConsolidationRunToolParams,
+) -> Result<String, String> {
+    let max_ticks = params
+        .max_ticks
+        .unwrap_or(DEFAULT_CONSOLIDATION_MAX_TICKS)
+        .clamp(1, MAX_CONSOLIDATION_MAX_TICKS);
+    let mut ticks = 0usize;
+    let mut total = TickReport::default();
+    for _ in 0..max_ticks {
+        let report = memory
+            .consolidate_once(
+                RuleExtractor::with_default_rules(),
+                RuleSummarizer::with_default_rules(),
+                RuleInducer::with_default_rules(),
+                ConsolidationConfig::default(),
+                PassConfig::default(),
+            )
+            .await
+            .map_err(|error| format!("ERR_CONSOLIDATE: {error}"))?;
+        ticks += 1;
+        total.consolidated += report.consolidated;
+        total.retried += report.retried;
+        total.failed += report.failed;
+        total.pending_after = report.pending_after;
+
+        if report.pending_after == 0
+            || report.retried > 0
+            || report.failed > 0
+            || (report.consolidated == 0 && report.retried == 0 && report.failed == 0)
+        {
+            break;
+        }
+    }
+
+    let mut out = format!(
+        "[consolidate] ticks={} consolidated={} retried={} failed={} pending_after={}",
+        ticks, total.consolidated, total.retried, total.failed, total.pending_after
+    );
+    if params.verbose.unwrap_or(false) {
+        out.push_str(" mode=foreground rule_set=deterministic_defaults");
     }
     Ok(out)
 }

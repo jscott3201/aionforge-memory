@@ -148,6 +148,59 @@ async fn capture_then_start_consolidation_derives_a_fact() {
     );
 }
 
+#[tokio::test]
+async fn capture_then_consolidate_once_derives_a_fact() {
+    let memory =
+        Memory::open_in_memory(FakeEmbedder::new(), &now(), MemoryConfig::default()).expect("open");
+    let receipt = memory
+        .capture(CaptureRequest {
+            content: "Alice works on Aionforge".to_string(),
+            role: Role::User,
+            agent_id: Id::generate(),
+            teams: Vec::new(),
+            session_id: None,
+            captured_at: now(),
+            writer: WriterContext {
+                model_family: "host".to_string(),
+                model_version: None,
+                transport: None,
+                request_id: None,
+                trust: 0.9,
+                signed: None,
+            },
+            trusted: false,
+            namespace: None,
+        })
+        .await
+        .expect("capture");
+    assert_eq!(receipt.verdict, CaptureVerdict::New);
+    assert_eq!(
+        fact_count(&memory),
+        0,
+        "no fact exists until consolidation runs"
+    );
+
+    let report = memory
+        .consolidate_once(
+            RuleExtractor::with_default_rules(),
+            RuleSummarizer::with_default_rules(),
+            RuleInducer::with_default_rules(),
+            ConsolidationConfig::default(),
+            PassConfig::default(),
+        )
+        .await
+        .expect("foreground consolidation");
+
+    assert_eq!(report.consolidated, 1);
+    assert_eq!(report.retried, 0);
+    assert_eq!(report.failed, 0);
+    assert_eq!(report.pending_after, 0);
+    assert!(
+        fact_count(&memory) >= 1,
+        "foreground consolidation derived a fact"
+    );
+}
+
 /// One minute after [`now`], for measuring lag against a fresh capture.
 fn a_minute_later() -> Timestamp {
     "2026-06-06T09:31:00-05:00[America/Chicago]"
