@@ -183,7 +183,6 @@ jobs:
 
   docker-build:
     name: docker image build + hadolint
-    # Wired but inert until a Dockerfile exists (lands with the Alpine deployment work).
     needs: detect
     if: needs.detect.outputs.dockerfile == 'true'
     runs-on: ubuntu-latest
@@ -202,6 +201,7 @@ jobs:
         with:
           context: .
           push: false
+          ssh: default
 
   # M6 red-team probe gate and M7 benchmark gates are added to this workflow as
   # those milestones land (see _spec/plan.md). They are not yet present.
