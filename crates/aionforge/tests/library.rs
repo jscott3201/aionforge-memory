@@ -19,11 +19,15 @@ struct FakeEmbedder {
 
 impl FakeEmbedder {
     fn new() -> Self {
+        Self::with_dimension(4)
+    }
+
+    fn with_dimension(dimension: u32) -> Self {
         Self {
             model: EmbedderModel {
                 family: "fake".to_string(),
                 version: "1".to_string(),
-                dimension: 4,
+                dimension,
             },
         }
     }
@@ -111,6 +115,52 @@ fn skill(namespace: Namespace) -> Skill {
         deprecated_at: None,
         induced: false,
     }
+}
+
+#[test]
+fn doctor_report_surfaces_store_and_embedder_health() {
+    let memory = Memory::open_in_memory(FakeEmbedder::new(), &now(), MemoryConfig::default())
+        .expect("open memory");
+
+    let report = memory.doctor_report().expect("doctor report");
+
+    assert!(
+        report.ok,
+        "fresh in-memory memory should be healthy: {report:#?}"
+    );
+    assert!(report.store.ok);
+    assert!(report.embedder.ok);
+    assert_eq!(report.embedder.model.dimension, 4);
+    assert!(report.embedder.matches_store_config);
+    assert!(report.embedder.vector_dimension_mismatches.is_empty());
+}
+
+#[test]
+fn doctor_report_flags_live_embedder_dimension_mismatch() {
+    let store = Arc::new(
+        aionforge::Store::open_with_config(aionforge::StoreConfig {
+            embedding_dimension: 4,
+        })
+        .expect("open store"),
+    );
+    store.migrate(&now()).expect("migrate store");
+    let memory = Memory::new(
+        Arc::clone(&store),
+        FakeEmbedder::with_dimension(8),
+        MemoryConfig::default(),
+        &now(),
+    )
+    .expect("build memory");
+
+    let report = memory.doctor_report().expect("doctor report");
+
+    assert!(!report.ok, "mismatched embedder should fail health");
+    assert!(report.store.ok, "store remains internally consistent");
+    assert!(!report.embedder.ok);
+    assert!(!report.embedder.matches_store_config);
+    assert_eq!(report.embedder.store_config_dimension, 4);
+    assert_eq!(report.embedder.model.dimension, 8);
+    assert_eq!(report.embedder.vector_dimension_mismatches.len(), 7);
 }
 
 #[tokio::test]

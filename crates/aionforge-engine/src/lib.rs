@@ -75,6 +75,7 @@ pub use aionforge_trust::{
 
 mod audit;
 mod core_block;
+mod doctor;
 mod drift_sweep;
 mod erase;
 mod forget_sweep;
@@ -86,6 +87,7 @@ pub use aionforge_store::{AuditCursor, MAX_AUDIT_PAGE};
 pub use aionforge_store::{ConsolidatingModel, NoteLineage, WriterFamilySet};
 pub use audit::{AuditPage, AuditRecord, AuditVerification};
 pub use core_block::{CoreBlockCreate, CoreBlockDraft};
+pub use doctor::{EmbedderDoctorReport, MemoryDoctorReport};
 pub use drift_sweep::BaselineComputation;
 pub use guard::{ConsolidationGuardPolicy, GuardMode, StartupWarning};
 pub use reliability_sweep::D1SweepReport;
