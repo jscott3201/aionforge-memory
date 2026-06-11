@@ -8,8 +8,10 @@ use aionforge_domain::embedding::{EmbedderModel, Embedding};
 use aionforge_domain::time::Timestamp;
 use aionforge_engine::{Memory, MemoryConfig};
 use aionforge_mcp::{
-    BearerToken, StreamableHttpConfigError, StreamableHttpOptions, streamable_http_service,
-    streamable_http_service_with_auth,
+    BearerAuthChallenge, BearerToken, OAuthProtectedResourceMetadata, STREAMABLE_HTTP_ENDPOINT,
+    StreamableHttpConfigError, StreamableHttpOptions, oauth_protected_resource_well_known_path,
+    streamable_http_service, streamable_http_service_with_auth,
+    streamable_http_service_with_auth_challenge,
 };
 use bytes::Bytes;
 use http::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HOST, ORIGIN, WWW_AUTHENTICATE};
@@ -195,6 +197,89 @@ async fn bearer_auth_service_requires_authorization_header() -> TestResult {
         .insert(AUTHORIZATION, "Bearer test-secret".parse()?);
     assert_eq!(service.call(allowed).await?.status(), StatusCode::OK);
     Ok(())
+}
+
+#[tokio::test]
+async fn bearer_auth_challenge_can_advertise_oauth_metadata() -> TestResult {
+    let token = BearerToken::new("test-secret")?;
+    let metadata_url = "https://memory.example.com/.well-known/oauth-protected-resource/mcp";
+    let challenge = BearerAuthChallenge::default()
+        .with_resource_metadata_url(metadata_url)
+        .with_scope("aionforge:read aionforge:write");
+    let mut service =
+        streamable_http_service_with_auth_challenge(memory(), json_options(), token, challenge)?;
+
+    let response = service
+        .call(initialize_request("localhost:3918", None))
+        .await?;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    let challenge = response
+        .headers()
+        .get(WWW_AUTHENTICATE)
+        .and_then(|h| h.to_str().ok())
+        .expect("www-authenticate");
+    assert!(challenge.starts_with(r#"Bearer realm="aionforge-mcp""#));
+    assert!(
+        challenge.contains(&format!(r#"resource_metadata="{metadata_url}""#)),
+        "{challenge}"
+    );
+    assert!(
+        challenge.contains(r#"scope="aionforge:read aionforge:write""#),
+        "{challenge}"
+    );
+    Ok(())
+}
+
+#[test]
+fn bearer_auth_challenge_quotes_header_parameters() {
+    let challenge = BearerAuthChallenge::default()
+        .with_realm(r#"prod "mcp"\realm"#)
+        .with_resource_metadata_url("https://memory.example.com/oauth\r\nmetadata")
+        .with_scope("aionforge:read");
+
+    assert_eq!(
+        challenge.header_value(),
+        r#"Bearer realm="prod \"mcp\"\\realm", resource_metadata="https://memory.example.com/oauthmetadata", scope="aionforge:read""#
+    );
+}
+
+#[test]
+fn oauth_protected_resource_metadata_uses_rfc9728_shape() {
+    assert_eq!(
+        oauth_protected_resource_well_known_path(STREAMABLE_HTTP_ENDPOINT),
+        "/.well-known/oauth-protected-resource/mcp"
+    );
+
+    let metadata = OAuthProtectedResourceMetadata::new(
+        "https://memory.example.com/mcp",
+        ["https://auth.example.com"],
+    )
+    .with_scopes(["aionforge:read", "aionforge:write"])
+    .with_resource_documentation("https://docs.example.com/aionforge/mcp")
+    .with_resource_policy_uri("https://docs.example.com/aionforge/policy");
+    let value: serde_json::Value = serde_json::from_str(&metadata.to_json()).expect("json");
+    assert_eq!(value["resource"], "https://memory.example.com/mcp");
+    assert_eq!(
+        value["authorization_servers"],
+        serde_json::json!(["https://auth.example.com"])
+    );
+    assert_eq!(
+        value["scopes_supported"],
+        serde_json::json!(["aionforge:read", "aionforge:write"])
+    );
+    assert_eq!(
+        value["bearer_methods_supported"],
+        serde_json::json!(["header"])
+    );
+    assert_eq!(value["resource_name"], "Aionforge Memory MCP");
+    assert_eq!(
+        value["resource_documentation"],
+        "https://docs.example.com/aionforge/mcp"
+    );
+    assert_eq!(
+        value["resource_policy_uri"],
+        "https://docs.example.com/aionforge/policy"
+    );
 }
 
 #[test]
