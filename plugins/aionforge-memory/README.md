@@ -25,13 +25,15 @@ aionforge serve http --listen 127.0.0.1:3918 \
 
 ## Install Notes
 
-Codex can discover this repo plugin through `.agents/plugins/marketplace.json`. The Codex manifest is at `.codex-plugin/plugin.json` and points to `.mcp.json`.
+Codex can discover this repo plugin through `.agents/plugins/marketplace.json`. The Codex manifest is at `.codex-plugin/plugin.json` and points to `.mcp.json`, which uses the `aionforge_memory` server id and Codex's `bearer_token_env_var` auth field.
 
 Claude Code can test the plugin directly:
 
 ```bash
 claude --plugin-dir ./plugins/aionforge-memory
 ```
+
+The Claude manifest points to `claude.mcp.json`, which keeps Claude's static-header MCP shape separate from the Codex config.
 
 Cursor can load it as a local plugin by symlinking or copying this directory into `~/.cursor/plugins/local/aionforge-memory`. Cursor reads `.cursor-plugin/plugin.json` and `mcp.json`.
 

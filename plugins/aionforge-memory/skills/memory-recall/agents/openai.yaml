@@ -5,7 +5,7 @@ interface:
 dependencies:
   tools:
     - type: "mcp"
-      value: "aionforge-memory"
+      value: "aionforge_memory"
       description: "Aionforge Memory MCP server"
       transport: "streamable_http"
       url: "http://127.0.0.1:3918/mcp"

@@ -27,6 +27,15 @@ require_grep() {
   fi
 }
 
+reject_grep() {
+  file="$1"
+  pattern="$2"
+  label="$3"
+  if grep -Eq "$pattern" "$file"; then
+    fail "$label found in $file"
+  fi
+}
+
 validate_json() {
   file="$1"
   if ! python3 -m json.tool "$file" >/dev/null; then
@@ -56,6 +65,7 @@ for file in \
   "$plugin_dir/.cursor-plugin/plugin.json" \
   "$plugin_dir/plugin.json" \
   "$plugin_dir/.mcp.json" \
+  "$plugin_dir/claude.mcp.json" \
   "$plugin_dir/mcp.json" \
   ".agents/plugins/marketplace.json" \
   ".cursor-plugin/marketplace.json"
@@ -76,16 +86,19 @@ for skill in memory-loop memory-recall memory-capture memory-maintenance; do
   [ -f "$metadata" ] || continue
   require_grep "$metadata" 'allow_implicit_invocation: true' "$skill implicit invocation"
   require_grep "$metadata" 'type: "mcp"' "$skill MCP dependency"
-  require_grep "$metadata" 'value: "aionforge-memory"' "$skill MCP server name"
+  require_grep "$metadata" 'value: "aionforge_memory"' "$skill MCP server name"
 done
 
 require_grep "$plugin_dir/.codex-plugin/plugin.json" '"skills": "\./skills/"' "Codex skills path"
 require_grep "$plugin_dir/.codex-plugin/plugin.json" '"mcpServers": "\./\.mcp\.json"' "Codex MCP path"
-require_grep "$plugin_dir/.claude-plugin/plugin.json" '"mcpServers": "\./\.mcp\.json"' "Claude MCP path"
+require_grep "$plugin_dir/.claude-plugin/plugin.json" '"mcpServers": "\./claude\.mcp\.json"' "Claude MCP path"
 require_grep "$plugin_dir/.cursor-plugin/plugin.json" '"mcpServers": "\./mcp\.json"' "Cursor MCP path"
-require_grep "$plugin_dir/plugin.json" '"mcpServers": "\.mcp\.json"' "Copilot MCP path"
+require_grep "$plugin_dir/plugin.json" '"mcpServers": "mcp\.json"' "Copilot MCP path"
 
-require_grep "$plugin_dir/.mcp.json" '"Authorization": "Bearer \$\{AIONFORGE_MCP_TOKEN\}"' "standard bearer header"
+require_grep "$plugin_dir/.mcp.json" '"aionforge_memory"' "Codex MCP server id"
+require_grep "$plugin_dir/.mcp.json" '"bearer_token_env_var": "AIONFORGE_MCP_TOKEN"' "Codex bearer token env"
+reject_grep "$plugin_dir/.mcp.json" '"Authorization"' "Codex static authorization header"
+require_grep "$plugin_dir/claude.mcp.json" '"Authorization": "Bearer \$\{AIONFORGE_MCP_TOKEN\}"' "Claude bearer header"
 require_grep "$plugin_dir/mcp.json" '"Authorization": "Bearer \$\{env:AIONFORGE_MCP_TOKEN\}"' "Cursor bearer header"
 
 if grep -RIEq 'sk-[A-Za-z0-9_-]{16,}|Bearer [A-Za-z0-9_-]{16,}' "$plugin_dir" .agents/plugins .cursor-plugin; then
