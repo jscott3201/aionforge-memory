@@ -90,6 +90,15 @@ cargo build --workspace --locked
 cargo nextest run --workspace --locked --all-features
 ```
 
+Run the MCP server from the single binary:
+
+```bash
+aionforge serve stdio
+AIONFORGE_MCP_TOKEN=change-me \
+  aionforge serve http --listen 127.0.0.1:3918 \
+  --bearer-token-env AIONFORGE_MCP_TOKEN
+```
+
 `Cargo.lock` pins the exact substrate commit, so builds are reproducible and CI runs
 `--locked`. To pull a newer `development` commit, run `cargo update -p selene-core` (and
 the other `selene-*` crates).

@@ -9,6 +9,7 @@ mod cli;
 mod doctor;
 mod error;
 mod host;
+mod serve;
 
 use crate::cli::{Cli, Command};
 use crate::error::CliError;
@@ -38,6 +39,13 @@ fn run(cli: Cli, output: &mut impl Write) -> Result<ExitCode, CliError> {
             } else {
                 ExitCode::from(2)
             })
+        }
+        Command::Serve(args) => {
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()?;
+            runtime.block_on(serve::run(&host_options, args))?;
+            Ok(ExitCode::SUCCESS)
         }
     }
 }

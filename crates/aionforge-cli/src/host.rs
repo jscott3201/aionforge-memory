@@ -2,11 +2,13 @@
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use aionforge::{
     CaptureConfig, CategoryRule, ConsolidationGuardPolicy, CoreEditPolicy, CoreEditRule,
-    DriftPolicy, Embedder, EmbedderModel, Embedding, ForgettingPolicy, GuardMode, MemoryConfig,
-    PromotionPolicy, ReliabilityPolicy, RetrieverConfig, SecurityGate,
+    DriftPolicy, Embedder, EmbedderModel, Embedding, ForgettingPolicy, GuardMode, Memory,
+    MemoryConfig, PromotionPolicy, ReliabilityPolicy, RetrieverConfig, SecurityGate, Store,
+    Timestamp,
 };
 use aionforge_config::{Config, GuardMode as ConfigGuardMode};
 use aionforge_embed::{EmbedError, HttpEmbedder};
@@ -27,6 +29,18 @@ pub(crate) fn load_config(options: &HostOptions) -> Result<Config, CliError> {
         config.validate()?;
     }
     Ok(config)
+}
+
+pub(crate) fn open_memory(config: &Config) -> Result<Arc<Memory<RuntimeEmbedder>>, CliError> {
+    let now = Timestamp::now();
+    let memory_config = memory_config(config)?;
+    let embedder = runtime_embedder(config)?;
+    let store = Arc::new(Store::open_or_recover(
+        config.data_dir(),
+        config.store_config(),
+        &now,
+    )?);
+    Ok(Arc::new(Memory::new(store, embedder, memory_config, &now)?))
 }
 
 pub(crate) enum RuntimeEmbedder {
