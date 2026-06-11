@@ -294,7 +294,7 @@ async fn forget_and_unforget_are_scoped_and_audited() -> TestResult {
     let audit = audit_history_tool(
         &memory,
         AuditHistoryToolParams {
-            subject_id: memory_id.clone(),
+            subject_id: Some(memory_id.clone()),
             viewer: format!("agent:{alice}"),
             teams: Vec::new(),
             kind: Some("forget".to_string()),
@@ -319,13 +319,69 @@ async fn forget_and_unforget_are_scoped_and_audited() -> TestResult {
 }
 
 #[tokio::test]
+async fn audit_history_can_scan_visible_events_by_kind_without_subject() -> TestResult {
+    let memory = forgetting_memory();
+    let alice = Id::generate();
+    let bob = Id::generate();
+    let first = capture_tool(
+        &memory,
+        capture_params("first by-kind audit memory", &alice.to_string()),
+        &now(),
+    )
+    .await?;
+    let second = capture_tool(
+        &memory,
+        capture_params("second by-kind audit memory", &alice.to_string()),
+        &now(),
+    )
+    .await?;
+    let hidden = capture_tool(
+        &memory,
+        capture_params("hidden by-kind audit memory", &bob.to_string()),
+        &now(),
+    )
+    .await?;
+    let first_id = capture_id(&first);
+    let second_id = capture_id(&second);
+    let hidden_id = capture_id(&hidden);
+    forget_tool(&memory, lifecycle_params(&first_id, alice), &now())?;
+    forget_tool(&memory, lifecycle_params(&second_id, alice), &now())?;
+    forget_tool(&memory, lifecycle_params(&hidden_id, bob), &now())?;
+
+    let audit = audit_history_tool(
+        &memory,
+        AuditHistoryToolParams {
+            subject_id: None,
+            viewer: format!("agent:{alice}"),
+            teams: Vec::new(),
+            kind: Some("forget".to_string()),
+            after: None,
+            limit: Some(10),
+            verbose: None,
+        },
+    )?;
+
+    assert!(
+        audit.starts_with("[audit] subject=* kind=forget count=2"),
+        "{audit}"
+    );
+    assert!(audit.contains(&format!("subject={first_id}")), "{audit}");
+    assert!(audit.contains(&format!("subject={second_id}")), "{audit}");
+    assert!(
+        !audit.contains(&format!("subject={hidden_id}")),
+        "another agent's private audit row stays hidden: {audit}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn audit_history_rejects_unknown_kind() -> TestResult {
     let memory = memory();
     let agent = Id::generate();
     let err = audit_history_tool(
         &memory,
         AuditHistoryToolParams {
-            subject_id: agent.to_string(),
+            subject_id: Some(agent.to_string()),
             viewer: format!("agent:{agent}"),
             teams: Vec::new(),
             kind: Some("not_a_kind".to_string()),
@@ -336,5 +392,47 @@ async fn audit_history_rejects_unknown_kind() -> TestResult {
     )
     .expect_err("unknown audit kind rejected");
     assert!(err.starts_with("ERR_INVALID_AUDIT_KIND"), "{err}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn audit_history_requires_subject_or_kind() -> TestResult {
+    let memory = memory();
+    let agent = Id::generate();
+    let err = audit_history_tool(
+        &memory,
+        AuditHistoryToolParams {
+            subject_id: None,
+            viewer: format!("agent:{agent}"),
+            teams: Vec::new(),
+            kind: None,
+            after: None,
+            limit: None,
+            verbose: None,
+        },
+    )
+    .expect_err("unscoped audit query rejected");
+    assert!(err.starts_with("ERR_INVALID_AUDIT_QUERY"), "{err}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn audit_history_rejects_blank_subject_even_with_kind() -> TestResult {
+    let memory = memory();
+    let agent = Id::generate();
+    let err = audit_history_tool(
+        &memory,
+        AuditHistoryToolParams {
+            subject_id: Some(" ".to_string()),
+            viewer: format!("agent:{agent}"),
+            teams: Vec::new(),
+            kind: Some("forget".to_string()),
+            after: None,
+            limit: None,
+            verbose: None,
+        },
+    )
+    .expect_err("blank subject should not become a kind-only query");
+    assert!(err.starts_with("ERR_INVALID_SUBJECT_ID"), "{err}");
     Ok(())
 }

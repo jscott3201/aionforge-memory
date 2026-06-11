@@ -237,7 +237,7 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
     }
 
     #[tool(
-        description = "Read principal-scoped audit history for one subject id, optionally filtered by snake_case audit kind.",
+        description = "Read principal-scoped audit history by subject, by snake_case kind, or by subject+kind.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,

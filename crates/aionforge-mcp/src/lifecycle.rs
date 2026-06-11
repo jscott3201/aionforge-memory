@@ -89,9 +89,12 @@ pub struct AuditCursorToolParam {
 /// Parameters for the `audit_history` tool.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct AuditHistoryToolParams {
-    /// The memory or node id whose audit history should be read.
-    #[schemars(description = "The memory or node id whose audit history should be read.")]
-    pub subject_id: String,
+    /// The memory or node id whose audit history should be read. Omit only when `kind`
+    /// is provided to read all visible events of that kind.
+    #[schemars(
+        description = "The memory or node id whose audit history should be read. Omit only when kind is provided to read all visible events of that kind."
+    )]
+    pub subject_id: Option<String>,
     /// The reading agent namespace, `agent:<id>`.
     #[schemars(description = "The reading agent namespace, agent:<id>.")]
     pub viewer: String,
@@ -256,7 +259,11 @@ pub fn audit_history_tool<E: Embedder>(
     memory: &Memory<E>,
     params: AuditHistoryToolParams,
 ) -> Result<String, String> {
-    let subject = parse_id(&params.subject_id, "SUBJECT_ID")?;
+    let subject = params
+        .subject_id
+        .as_deref()
+        .map(|subject| parse_id(subject.trim(), "SUBJECT_ID"))
+        .transpose()?;
     let principal = parse_principal(&params.viewer, params.teams)?;
     let after = params.after.map(parse_audit_cursor).transpose()?;
     let limit = params
@@ -269,24 +276,40 @@ pub fn audit_history_tool<E: Embedder>(
         .as_deref()
         .map(str::trim)
         .filter(|kind| !kind.is_empty());
+    let kind = kind_filter.map(parse_audit_kind).transpose()?;
 
-    let (kind_label, page) = match kind_filter {
-        Some(raw) => {
-            let kind = parse_audit_kind(raw)?;
+    let (scope, kind_label, page) = match (subject.as_ref(), kind) {
+        (Some(subject), Some(kind)) => {
             let page = memory
-                .audit_by_subject_kind(&principal, &subject, kind, after.as_ref(), limit)
+                .audit_by_subject_kind(&principal, subject, kind, after.as_ref(), limit)
                 .map_err(|error| format!("ERR_AUDIT_HISTORY: {error}"))?;
-            (audit_kind_name(kind), page)
+            (
+                AuditRenderScope::Subject(subject),
+                audit_kind_name(kind),
+                page,
+            )
         }
-        None => {
+        (Some(subject), None) => {
             let page = memory
-                .audit_history(&principal, &subject, after.as_ref(), limit)
+                .audit_history(&principal, subject, after.as_ref(), limit)
                 .map_err(|error| format!("ERR_AUDIT_HISTORY: {error}"))?;
-            ("all".to_string(), page)
+            (AuditRenderScope::Subject(subject), "all".to_string(), page)
+        }
+        (None, Some(kind)) => {
+            let page = memory
+                .audit_by_kind(&principal, kind, after.as_ref(), limit)
+                .map_err(|error| format!("ERR_AUDIT_HISTORY: {error}"))?;
+            (AuditRenderScope::AllVisible, audit_kind_name(kind), page)
+        }
+        (None, None) => {
+            return Err(
+                "ERR_INVALID_AUDIT_QUERY: subject_id is required unless kind is provided"
+                    .to_string(),
+            );
         }
     };
 
-    Ok(render_audit_page(&subject, &kind_label, &page, verbose))
+    Ok(render_audit_page(scope, &kind_label, &page, verbose))
 }
 
 fn duration_seconds(duration: Duration) -> u64 {
@@ -353,22 +376,46 @@ fn parse_audit_kind(raw: &str) -> Result<AuditKind, String> {
     })
 }
 
-fn render_audit_page(subject: &Id, kind_label: &str, page: &AuditPage, verbose: bool) -> String {
+enum AuditRenderScope<'a> {
+    Subject(&'a Id),
+    AllVisible,
+}
+
+impl AuditRenderScope<'_> {
+    fn subject_label(&self) -> String {
+        match self {
+            Self::Subject(subject) => subject.to_string(),
+            Self::AllVisible => "*".to_string(),
+        }
+    }
+
+    fn include_subject_per_record(&self) -> bool {
+        matches!(self, Self::AllVisible)
+    }
+}
+
+fn render_audit_page(
+    scope: AuditRenderScope<'_>,
+    kind_label: &str,
+    page: &AuditPage,
+    verbose: bool,
+) -> String {
     let mut out = format!(
         "[audit] subject={} kind={} count={} next={}",
-        subject,
+        scope.subject_label(),
         kind_label,
         page.records.len(),
         render_audit_cursor(page.next.as_ref())
     );
+    let include_subject = scope.include_subject_per_record();
     for record in &page.records {
         out.push('\n');
-        out.push_str(&render_audit_record(record, verbose));
+        out.push_str(&render_audit_record(record, verbose, include_subject));
     }
     out
 }
 
-fn render_audit_record(record: &AuditRecord, verbose: bool) -> String {
+fn render_audit_record(record: &AuditRecord, verbose: bool, include_subject: bool) -> String {
     let event = &record.event;
     let mut out = format!(
         "- id={} kind={} at={} actor={} ns={} verification={}",
@@ -379,6 +426,10 @@ fn render_audit_record(record: &AuditRecord, verbose: bool) -> String {
         event.identity.namespace,
         verification_name(&record.verification)
     );
+    if include_subject {
+        out.push_str(" subject=");
+        out.push_str(&event.subject_id.to_string());
+    }
     if verbose {
         out.push_str(" payload=");
         out.push_str(&preview_json(&event.payload));

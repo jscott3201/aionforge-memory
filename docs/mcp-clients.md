@@ -204,7 +204,10 @@ failures. Use Cursor's tool approval and run-mode controls for `capture`,
 ## Tool approval posture
 
 Read-like tools are `server_status`, `search`, `consolidation_status`, and
-`audit_history`. Mutating tools are `capture`, `consolidate`, `forget`, and
+`audit_history`. `audit_history` reads the principal-scoped audit subgraph by
+subject, by `kind`, or by subject+kind; when `subject_id` is omitted, `kind` is
+required and the compact output uses `subject=*` while listing each row's
+subject. Mutating tools are `capture`, `consolidate`, `forget`, and
 `unforget`; configure clients to ask before running them unless the host has a
 stronger local policy. `server_status` is the cheapest connection sanity check:
 it reports the crate version, tool/resource/prompt counts, advertised transports,
