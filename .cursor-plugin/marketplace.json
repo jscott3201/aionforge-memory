@@ -21,7 +21,7 @@
       "keywords": ["memory", "mcp", "agent-skills", "retrieval"],
       "category": "Productivity",
       "skills": "skills/",
-      "mcpServers": "mcp.json"
+      "mcpServers": "cursor.mcp.json"
     }
   ]
 }

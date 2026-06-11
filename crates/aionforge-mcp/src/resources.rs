@@ -146,7 +146,7 @@ It bundles:
 - skills/memory-maintenance: inspect backlog, audit provenance, consolidate derived work, forget, or restore memory.
 - Claude Code agent aionforge-memory-steward: keeps recall, capture, and handoff in the main task loop.
 - Claude Code commands /aionforge-memory:memory-session and /aionforge-memory:memory-handoff.
-- MCP configs for Codex, Claude Code, Cursor, and GitHub Copilot CLI.
+- MCP configs for Codex, Claude Code, and Cursor.
 
 Requirements:
 - Run the Aionforge MCP server over HTTP or stdio.
@@ -156,8 +156,8 @@ Requirements:
 Local test paths:
 - Claude Code: claude --plugin-dir ./plugins/aionforge-memory
 - Cursor: symlink the directory into ~/.cursor/plugins/local/aionforge-memory.
-- Copilot CLI: copilot plugin install ./plugins/aionforge-memory
 - Codex: use .agents/plugins/marketplace.json from the repo root.
+- Codex root manifest: plugin.json also points at .mcp.json, so Codex gets one authenticated aionforge_memory server.
 - Codex plugin policy: copy plugins/aionforge-memory/codex.plugin-policy.example.toml into config.toml if you want read-like tools approved and mutating tools prompted under plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory.
 
 Recall safety:

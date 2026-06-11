@@ -112,7 +112,7 @@ for file in \
   "$plugin_dir/plugin.json" \
   "$plugin_dir/.mcp.json" \
   "$plugin_dir/claude.mcp.json" \
-  "$plugin_dir/mcp.json" \
+  "$plugin_dir/cursor.mcp.json" \
   "$plugin_dir/settings.json" \
   ".agents/plugins/marketplace.json" \
   ".cursor-plugin/marketplace.json"
@@ -149,15 +149,19 @@ require_grep "$plugin_dir/codex.plugin-policy.example.toml" 'default_tools_appro
 require_grep "$plugin_dir/codex.plugin-policy.example.toml" '\.tools\.search\]' "Codex search tool policy"
 require_grep "$plugin_dir/codex.plugin-policy.example.toml" '\.tools\.capture\]' "Codex capture tool policy"
 require_grep "$plugin_dir/.claude-plugin/plugin.json" '"mcpServers": "\./claude\.mcp\.json"' "Claude MCP path"
-require_grep "$plugin_dir/.cursor-plugin/plugin.json" '"mcpServers": "\./mcp\.json"' "Cursor MCP path"
-require_grep "$plugin_dir/plugin.json" '"mcpServers": "mcp\.json"' "Copilot MCP path"
+require_grep "$plugin_dir/.cursor-plugin/plugin.json" '"mcpServers": "\./cursor\.mcp\.json"' "Cursor MCP path"
+require_grep "$plugin_dir/plugin.json" '"mcpServers": "\.mcp\.json"' "root MCP path"
 
 require_grep "$plugin_dir/settings.json" '"agent": "aionforge-memory-steward"' "Claude default agent setting"
 require_grep "$plugin_dir/.mcp.json" '"aionforge_memory"' "Codex MCP server id"
 require_grep "$plugin_dir/.mcp.json" '"bearer_token_env_var": "AIONFORGE_MCP_TOKEN"' "Codex bearer token env"
 reject_grep "$plugin_dir/.mcp.json" '"Authorization"' "Codex static authorization header"
 require_grep "$plugin_dir/claude.mcp.json" '"Authorization": "Bearer \$\{AIONFORGE_MCP_TOKEN\}"' "Claude bearer header"
-require_grep "$plugin_dir/mcp.json" '"Authorization": "Bearer \$\{env:AIONFORGE_MCP_TOKEN\}"' "Cursor bearer header"
+require_grep "$plugin_dir/cursor.mcp.json" '"Authorization": "Bearer \$\{env:AIONFORGE_MCP_TOKEN\}"' "Cursor bearer header"
+
+if [ -e "$plugin_dir/mcp.json" ]; then
+  fail "legacy generic MCP manifest remains at $plugin_dir/mcp.json"
+fi
 
 if grep -RIEq 'sk-[A-Za-z0-9_-]{16,}|Bearer [A-Za-z0-9_-]{16,}' "$plugin_dir" .agents/plugins .cursor-plugin; then
   fail "plugin package appears to contain a literal secret"
