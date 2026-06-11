@@ -14,6 +14,10 @@ COPY . .
 
 RUN --mount=type=ssh,required=true cargo build --locked --release -p aionforge-cli
 
+FROM scratch AS binary-artifact
+
+COPY --from=builder /workspace/target/release/aionforge /aionforge
+
 FROM alpine:3.22 AS runtime
 
 LABEL org.opencontainers.image.source="https://github.com/Aionforge-Labs/aionforge-memory"
