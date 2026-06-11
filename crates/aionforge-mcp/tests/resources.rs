@@ -20,6 +20,20 @@ use rmcp::model::ReadResourceRequestParams;
 type TestError = Box<dyn std::error::Error + Send + Sync>;
 type TestResult<T = ()> = Result<T, TestError>;
 
+const TOTAL_STATIC_RESOURCE_BUDGET_BYTES: usize = 12_000;
+
+const RESOURCE_BODY_BUDGETS: &[(&str, usize)] = &[
+    (TOOL_MANIFEST_RESOURCE_URI, 4_096),
+    (RECALL_UNTRUSTED_DATA_PROMPT_RESOURCE_URI, 1_200),
+    (MCP_SURFACE_GUIDE_RESOURCE_URI, 1_800),
+    (TOOL_APPROVAL_POLICY_RESOURCE_URI, 1_600),
+    (CLIENT_OAUTH_GUIDE_RESOURCE_URI, 2_000),
+    (CODEX_CONFIG_RESOURCE_URI, 2_000),
+    (CLAUDE_CODE_CONFIG_RESOURCE_URI, 512),
+    (OPENCODE_CONFIG_RESOURCE_URI, 1_024),
+    (CURSOR_CONFIG_RESOURCE_URI, 512),
+];
+
 #[derive(Clone)]
 struct FakeEmbedder {
     model: EmbedderModel,
@@ -120,6 +134,22 @@ async fn mcp_transport_lists_client_policy_resources() -> TestResult {
     ] {
         assert!(uris.contains(uri), "{uri} listed in {uris:?}");
     }
+    assert_eq!(RESOURCE_BODY_BUDGETS.len(), uris.len());
+
+    let mut total_resource_bytes = 0;
+    for (uri, max_bytes) in RESOURCE_BODY_BUDGETS {
+        let body = read_text_resource(&client, uri).await?;
+        let body_bytes = body.len();
+        total_resource_bytes += body_bytes;
+        assert!(
+            body_bytes <= *max_bytes,
+            "{uri} exceeds resource body budget: {body_bytes} > {max_bytes}"
+        );
+    }
+    assert!(
+        total_resource_bytes <= TOTAL_STATIC_RESOURCE_BUDGET_BYTES,
+        "compiled-in MCP resources exceed total budget: {total_resource_bytes} > {TOTAL_STATIC_RESOURCE_BUDGET_BYTES}"
+    );
 
     let manifest = read_text_resource(&client, TOOL_MANIFEST_RESOURCE_URI).await?;
     let manifest: serde_json::Value = serde_json::from_str(&manifest)?;
