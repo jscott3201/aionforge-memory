@@ -14,6 +14,7 @@ as the `recall_untrusted_data` prompt and as the
 The server also publishes compact setup resources so agents and client UIs can
 discover the recommended posture without loading this whole document:
 
+- `aionforge://manifest/tools.json`
 - `aionforge://guide/mcp-surface`
 - `aionforge://policy/tool-approval`
 - `aionforge://client/codex/config.toml`
@@ -187,8 +188,11 @@ ticks with server-owned deterministic rules only and returns
 `unforget` require a `viewer` and enforce the viewer's writable namespace set at
 the server boundary.
 
-The compact resources listed above intentionally mirror this section. Keep them
-short: they are meant for agent context, not exhaustive documentation.
+`aionforge://manifest/tools.json` is the lowest-token machine-readable contract
+for agents. It lists the server version, tool classes, recommended approval
+posture, compact output shape, and stable `ERR_*` markers. The other compact
+resources intentionally mirror this section; keep them short because they are
+meant for agent context, not exhaustive documentation.
 
 ## Deferred
 

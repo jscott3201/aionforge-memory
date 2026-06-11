@@ -12,6 +12,7 @@ use aionforge_mcp::{
     AionforgeMcp, CLAUDE_CODE_CONFIG_RESOURCE_URI, CODEX_CONFIG_RESOURCE_URI,
     CURSOR_CONFIG_RESOURCE_URI, MCP_SURFACE_GUIDE_RESOURCE_URI, OPENCODE_CONFIG_RESOURCE_URI,
     RECALL_UNTRUSTED_DATA_PROMPT_RESOURCE_URI, TOOL_APPROVAL_POLICY_RESOURCE_URI,
+    TOOL_MANIFEST_RESOURCE_URI,
 };
 use rmcp::ServiceExt;
 use rmcp::model::ReadResourceRequestParams;
@@ -107,6 +108,7 @@ async fn mcp_transport_lists_client_policy_resources() -> TestResult {
         .collect();
 
     for uri in [
+        TOOL_MANIFEST_RESOURCE_URI,
         RECALL_UNTRUSTED_DATA_PROMPT_RESOURCE_URI,
         MCP_SURFACE_GUIDE_RESOURCE_URI,
         TOOL_APPROVAL_POLICY_RESOURCE_URI,
@@ -117,6 +119,38 @@ async fn mcp_transport_lists_client_policy_resources() -> TestResult {
     ] {
         assert!(uris.contains(uri), "{uri} listed in {uris:?}");
     }
+
+    let manifest = read_text_resource(&client, TOOL_MANIFEST_RESOURCE_URI).await?;
+    let manifest: serde_json::Value = serde_json::from_str(&manifest)?;
+    assert_eq!(manifest["schema"], "aionforge.mcp_tools.v1");
+    assert_eq!(manifest["server"]["resource_count"].as_u64(), Some(8));
+    assert_eq!(
+        manifest["policy"]["read_like_approval"],
+        "allow_without_prompt"
+    );
+    assert!(
+        manifest["tools"]
+            .as_array()
+            .expect("tools")
+            .iter()
+            .any(|tool| tool["name"] == "server_status"
+                && tool["class"] == "read_like"
+                && tool["approval"] == "allow_without_prompt")
+    );
+    assert!(
+        manifest["tools"]
+            .as_array()
+            .expect("tools")
+            .iter()
+            .any(|tool| tool["name"] == "forget"
+                && tool["class"] == "mutating"
+                && tool["approval"] == "ask_user"
+                && tool["errors"]
+                    .as_array()
+                    .expect("errors")
+                    .iter()
+                    .any(|error| error == "ERR_NOT_FOUND"))
+    );
 
     let codex = read_text_resource(&client, CODEX_CONFIG_RESOURCE_URI).await?;
     assert!(codex.contains("[mcp_servers.aionforge_memory]"));
