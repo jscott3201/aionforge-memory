@@ -2,14 +2,13 @@
 
 use std::fmt::Write as _;
 use std::path::Path;
-use std::sync::Arc;
 
-use aionforge::{Memory, MemoryDoctorReport, Store, Timestamp};
+use aionforge::MemoryDoctorReport;
 use aionforge_config::Config;
 
 use crate::cli::DoctorArgs;
 use crate::error::CliError;
-use crate::host::{HostOptions, load_config, memory_config, runtime_embedder};
+use crate::host::{HostOptions, load_config, open_memory};
 
 #[derive(Debug)]
 pub(crate) struct DoctorOutcome {
@@ -27,15 +26,7 @@ fn run_with_config(
     config_path: &Path,
     args: DoctorArgs,
 ) -> Result<DoctorOutcome, CliError> {
-    let now = Timestamp::now();
-    let memory_config = memory_config(&config)?;
-    let embedder = runtime_embedder(&config)?;
-    let store = Arc::new(Store::open_or_recover(
-        config.data_dir(),
-        config.store_config(),
-        &now,
-    )?);
-    let memory = Memory::new(store, embedder, memory_config, &now)?;
+    let memory = open_memory(&config)?;
     let report = memory.doctor_report()?;
     let rendered = if args.json {
         render_json(config_path, config.data_dir(), &report)?
@@ -187,6 +178,8 @@ mod tests {
     use super::*;
     use aionforge::Embedder;
     use aionforge_config::Config;
+
+    use crate::host::{memory_config, runtime_embedder};
 
     #[test]
     fn human_doctor_report_opens_a_fresh_store_without_network() {

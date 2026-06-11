@@ -14,6 +14,9 @@ pub(crate) enum CliError {
     #[error(transparent)]
     Engine(Box<aionforge::EngineError>),
 
+    #[error("could not serve MCP: {0}")]
+    Serve(String),
+
     #[error("could not render doctor report: {0}")]
     Format(#[from] std::fmt::Error),
 
@@ -45,5 +48,11 @@ impl From<aionforge_store::StoreError> for CliError {
 impl From<aionforge::EngineError> for CliError {
     fn from(error: aionforge::EngineError) -> Self {
         Self::Engine(Box::new(error))
+    }
+}
+
+impl From<aionforge_mcp::StreamableHttpConfigError> for CliError {
+    fn from(error: aionforge_mcp::StreamableHttpConfigError) -> Self {
+        Self::Serve(error.to_string())
     }
 }

@@ -27,6 +27,14 @@ discover the recommended posture without loading this whole document:
 Use `aionforge_mcp::streamable_http_service` or
 `aionforge_mcp::streamable_http_service_with_auth` from an HTTP host and mount
 the returned Tower service at `aionforge_mcp::STREAMABLE_HTTP_ENDPOINT` (`/mcp`).
+The single `aionforge` binary can serve the same surface directly:
+
+```bash
+aionforge serve stdio
+AIONFORGE_MCP_TOKEN=change-me \
+  aionforge serve http --listen 127.0.0.1:3918 \
+  --bearer-token-env AIONFORGE_MCP_TOKEN
+```
 
 Default HTTP posture:
 
@@ -62,6 +70,24 @@ Use the MCP endpoint URL as the OAuth `resource` value, for example
 `https://memory.example.com/mcp`. Authorization and token requests should include
 that resource value, and the verifier should reject tokens that are not audience
 bound to it.
+
+When running the built-in HTTP server behind an OAuth verifier, pass the public
+endpoint URL and issuer metadata so MCP clients can discover the protected
+resource:
+
+```bash
+aionforge serve http --listen 127.0.0.1:3918 \
+  --bearer-token-env AIONFORGE_MCP_TOKEN \
+  --public-url https://memory.example.com/mcp \
+  --oauth-issuer https://auth.example.com \
+  --oauth-scope memory.read --oauth-scope memory.write
+```
+
+That serves RFC 9728 protected-resource metadata at
+`/.well-known/oauth-protected-resource/mcp` and advertises that metadata URL in
+the 401 `WWW-Authenticate` challenge. Token validation is still the job of the
+upstream OAuth verifier; the built-in bearer wrapper only checks the bearer value
+that reaches the MCP service.
 
 ## Codex CLI
 
@@ -149,7 +175,6 @@ for Streamable HTTP and send the bearer token as a static header.
       "type": "remote",
       "url": "http://127.0.0.1:3918/mcp",
       "enabled": true,
-      "oauth": false,
       "headers": {
         "Authorization": "Bearer {env:AIONFORGE_MCP_TOKEN}"
       },
