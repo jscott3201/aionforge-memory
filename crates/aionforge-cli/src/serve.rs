@@ -206,6 +206,11 @@ fn endpoint_url(args: &ServeArgs) -> Result<Url, CliError> {
             "public MCP URL path must be {STREAMABLE_HTTP_ENDPOINT}"
         )));
     }
+    if url.query().is_some() || url.fragment().is_some() {
+        return Err(CliError::Serve(
+            "public MCP URL must not include a query string or fragment".to_string(),
+        ));
+    }
     Ok(url)
 }
 
@@ -322,6 +327,20 @@ mod tests {
             error
                 .to_string()
                 .contains("public MCP URL path must be /mcp")
+        );
+    }
+
+    #[test]
+    fn public_url_must_not_include_query_or_fragment() {
+        let mut args = http_args();
+        args.public_url = Some("https://memory.example.com/mcp?token=bad".to_string());
+
+        let error = endpoint_url(&args).expect_err("query rejected");
+
+        assert!(
+            error
+                .to_string()
+                .contains("public MCP URL must not include a query string or fragment")
         );
     }
 
