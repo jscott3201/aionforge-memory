@@ -91,7 +91,10 @@ The edge schema carries no model field, so each call's provenance — the model 
 the endpoint, the pinned seed, and the per-pair decisions (created or revised, with the label and
 confidence) — is recorded in a `link_evolve` audit event wired straight to the source note
 (`AuditEvent -AUDIT-> Note`). The API key never appears in the payload. This is what a later
-cross-family consolidation guard reads to verify which model family proposed a relationship.
+[cross-family consolidation guard](cross-family-guard.md) reads to verify which model family
+proposed a relationship — since M6.T01 each source note is checked before the model call, with
+the note's own authoring model unioned into its writer set so a distill-then-evolve launder
+cannot pass.
 
 ## Running it
 
