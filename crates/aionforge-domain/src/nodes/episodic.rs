@@ -66,6 +66,13 @@ pub struct Origin {
     pub injection_flags: Vec<String>,
     /// Capture latency in milliseconds.
     pub capture_latency_ms: Option<u64>,
+    /// A writer-asserted supersession hint (04 §1 step 3): the id of a live episode this
+    /// capture replaces, validated at capture against the writer's writable namespaces.
+    /// Evidence for consolidation's supersession pass, never a capture-time action — the
+    /// funnel records the claim; the pass decides what (if anything) it retires. Optional
+    /// and absent-skipped so pre-hint episodes round-trip byte-identical.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supersedes: Option<Id>,
 }
 
 /// A raw captured event: the episodic tier, immutable and append-only (02 §4.1).

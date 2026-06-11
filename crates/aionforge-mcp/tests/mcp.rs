@@ -91,6 +91,7 @@ fn capture_params(content: &str, agent_id: &str) -> CaptureToolParams {
         trust: None,
         model_family: None,
         captured_at: None,
+        supersedes: None,
     }
 }
 
@@ -520,6 +521,7 @@ async fn search_tool_widens_to_a_team_only_when_the_host_asserts_membership() {
             },
             trusted: true,
             namespace: Some(Namespace::Team("squad".to_string())),
+            supersedes: None,
         })
         .await
         .expect("trusted team capture");

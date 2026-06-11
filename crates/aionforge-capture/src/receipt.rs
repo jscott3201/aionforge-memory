@@ -28,6 +28,11 @@ pub struct CaptureReceipt {
     pub injection_flags: Vec<String>,
     /// Whether the content was embedded, skipped, or not requested.
     pub embedding: EmbeddingOutcome,
+    /// The validated supersedes hint recorded in the episode's origin (04 §1 step 3),
+    /// echoed so the writer can confirm the claim landed. `None` when no hint was sent
+    /// — and on an exact duplicate, where nothing new is written and the existing
+    /// episode's immutable origin cannot adopt the claim.
+    pub supersedes: Option<Id>,
 }
 
 /// The dedup decision the capture path made (04 §1 step 2–3).

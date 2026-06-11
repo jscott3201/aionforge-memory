@@ -102,6 +102,7 @@ fn capture_params(content: &str, agent_id: &str) -> CaptureToolParams {
         trust: Some(0.1),
         model_family: None,
         captured_at: None,
+        supersedes: None,
     }
 }
 

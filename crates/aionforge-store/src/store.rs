@@ -21,7 +21,7 @@ use selene_gql::{BindingTable, BuiltinProcedureRegistry, Session, StatementOutpu
 use selene_graph::{DEFAULT_WAL_FILE_NAME, GraphTypeDef, SeleneGraph, SharedGraph, WalConfig};
 
 use crate::config::StoreConfig;
-use crate::convert::as_id;
+use crate::convert::{as_id, as_namespace};
 use crate::error::StoreError;
 use crate::gql::{BoundQuery, QueryResult, Rows};
 use crate::providers::candidate_state_provider;
@@ -405,6 +405,33 @@ impl Store {
         match self.execute(&query)? {
             QueryResult::Rows(rows) => match rows.value(0, 0) {
                 Some(value) => Ok(Some(as_id(value)?)),
+                None => Ok(None),
+            },
+            _ => Ok(None),
+        }
+    }
+
+    /// The namespace of the live episode with this domain id, if one exists.
+    ///
+    /// The supersedes-hint validation probe (04 §1 step 3): the capture path checks a
+    /// writer-claimed target id resolves to a *live* episode (a soft-forgotten one is
+    /// already out of recall, so superseding it is moot) and reads its namespace so the
+    /// writer's authority over it can be checked. `Episode.id` is scalar-indexed, so
+    /// this is a probe, not a scan. Returns `Ok(None)` for missing AND soft-forgotten
+    /// alike — the caller collapses every miss to one outcome so the probe is no
+    /// existence oracle.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the query fails or the stored namespace cannot parse.
+    pub fn episode_namespace_by_id(&self, id: &Id) -> Result<Option<Namespace>, StoreError> {
+        let query = BoundQuery::new(
+            "MATCH (e:Episode) WHERE e.id = $id AND e.expired_at IS NULL \
+             RETURN e.namespace AS ns LIMIT 1",
+        )
+        .bind_uuid("id", id)?;
+        match self.execute(&query)? {
+            QueryResult::Rows(rows) => match rows.value(0, 0) {
+                Some(value) => Ok(Some(as_namespace(value)?)),
                 None => Ok(None),
             },
             _ => Ok(None),

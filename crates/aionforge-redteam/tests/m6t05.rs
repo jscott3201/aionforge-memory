@@ -202,6 +202,7 @@ async fn seed_trait_corpus(memory: &Memory<ProbeEmbedder>) -> Namespace {
                 },
                 trusted: false,
                 namespace: None,
+                supersedes: None,
             })
             .await
             .expect("capture trait corpus");

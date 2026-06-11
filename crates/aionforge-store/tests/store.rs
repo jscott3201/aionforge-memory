@@ -105,6 +105,7 @@ fn rich_episode() -> Episode {
         }],
         injection_flags: vec!["ignore-previous".to_string()],
         capture_latency_ms: Some(2),
+        supersedes: None,
     });
     ep
 }

@@ -187,6 +187,7 @@ async fn a_host_can_capture_and_search_through_the_library() {
             },
             trusted: false,
             namespace: None,
+            supersedes: None,
         })
         .await
         .expect("capture");

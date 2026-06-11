@@ -224,6 +224,7 @@ async fn capture_text(
             },
             trusted: false,
             namespace: None,
+            supersedes: None,
         })
         .await
         .expect("capture");

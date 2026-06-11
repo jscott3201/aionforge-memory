@@ -189,6 +189,34 @@ where
             Some(gate) => Some(self.admit_signed_write(gate.as_ref(), &request)?),
         };
 
+        // 3b. Supersedes-hint validation (04 §1 step 3). The hint is a writer claim about
+        //     another memory, so it is checked after the gate (a forged writer never gets a
+        //     probe) and before dedup (an invalid claim refuses the capture even when the
+        //     content would have deduped). The target must be a LIVE episode in a namespace
+        //     this writer may write — the same `authorize_write` that gates the write itself.
+        //     Missing, soft-forgotten, and foreign targets all collapse to one error; the
+        //     specific cause lives only in the `supersedes_rejected` audit (no oracle).
+        let supersedes = match &request.supersedes {
+            None => None,
+            Some(target) => {
+                let cause = match self.store.episode_namespace_by_id(target)? {
+                    None => Some("target_not_found"),
+                    Some(target_ns) => {
+                        match self.authorizer.authorize_write(&principal, &target_ns) {
+                            Ok(()) => None,
+                            Err(_) => Some("target_not_writable"),
+                        }
+                    }
+                };
+                if let Some(cause) = cause {
+                    self.store
+                        .commit_audit(&supersedes_rejected_audit(&request, target, cause))?;
+                    return Err(CaptureError::InvalidSupersedesTarget);
+                }
+                Some(*target)
+            }
+        };
+
         if let Some(existing) = self.store.episode_id_by_content_hash(&content_hash)? {
             return Ok(CaptureReceipt {
                 episode_id: existing,
@@ -198,6 +226,9 @@ where
                 redactions: outcome.redactions,
                 injection_flags: outcome.injection_flags,
                 embedding: EmbeddingOutcome::NotRequested,
+                // Dedup wins over the hint: the existing episode's origin is immutable, so
+                // a hint on duplicate content is dropped — the verdict tells the writer.
+                supersedes: None,
             });
         }
 
@@ -269,6 +300,7 @@ where
                 // End-to-end capture latency is a surface-level SLA metric (04 §3); it
                 // cannot be measured from inside the record being committed.
                 capture_latency_ms: None,
+                supersedes,
             }),
         };
 
@@ -323,6 +355,7 @@ where
             redactions: outcome.redactions,
             injection_flags: outcome.injection_flags,
             embedding: embedding_outcome,
+            supersedes,
         })
     }
 
@@ -533,6 +566,33 @@ fn capture_error_label(error: &CaptureError) -> &'static str {
         CaptureError::ProvenanceUnavailable(_) => "provenance_unavailable",
         CaptureError::SystemRoleNotWritable => "system_role_not_writable",
         CaptureError::ResidueOnly => "residue_only",
+        CaptureError::InvalidSupersedesTarget => "invalid_supersedes_target",
+    }
+}
+
+/// The `supersedes_rejected` audit for an invalid supersedes hint (04 §1 step 3), mirroring
+/// [`namespace_denied_audit`]'s write-then-return shape: the rejection produces no memory
+/// subject, so the subject and actor are the writing agent. The payload carries the claimed
+/// target id and the specific cause (`target_not_found` vs `target_not_writable`) for
+/// forensics; the returned error collapses both so the hint is no existence oracle.
+fn supersedes_rejected_audit(request: &CaptureRequest, target: &Id, cause: &str) -> AuditEvent {
+    AuditEvent {
+        identity: Identity {
+            id: Id::generate(),
+            ingested_at: request.captured_at.clone(),
+            namespace: Namespace::System,
+            expired_at: None,
+        },
+        kind: AuditKind::SupersedesRejected,
+        subject_id: request.agent_id,
+        actor_id: request.agent_id,
+        payload: serde_json::json!({
+            "reason": cause,
+            "agent": request.agent_id.to_string(),
+            "claimed_target": target.to_string(),
+        }),
+        signature: String::new(),
+        occurred_at: request.captured_at.clone(),
     }
 }
 

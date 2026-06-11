@@ -58,6 +58,13 @@ pub struct CaptureToolParams {
         description = "Event time as RFC3339 (e.g. 2026-06-07T12:00:00Z); defaults to capture time."
     )]
     pub captured_at: Option<String>,
+    /// The id of a live memory this capture replaces (a writer-asserted supersession
+    /// hint). Recorded as evidence for consolidation; the target must be a memory this
+    /// writer could write, or the capture is refused.
+    #[schemars(
+        description = "Id of a live memory this capture replaces; consolidation evidence, not an immediate action. Must be the writer's own memory."
+    )]
+    pub supersedes: Option<String>,
 }
 
 /// Parameters for the `search` tool.
@@ -112,6 +119,12 @@ pub async fn capture_tool<E: Embedder>(
         Some(raw) => parse_captured_at(raw)?,
         None => now.clone(),
     };
+    let supersedes = params
+        .supersedes
+        .as_deref()
+        .map(Id::parse)
+        .transpose()
+        .map_err(|_| "ERR_INVALID_SUPERSEDES: supersedes must be a memory id (UUID)".to_string())?;
 
     let request = CaptureRequest {
         content: params.content,
@@ -140,6 +153,7 @@ pub async fn capture_tool<E: Embedder>(
         // private namespace (04 §1, 06 §1).
         trusted: false,
         namespace: None,
+        supersedes,
     };
 
     let receipt = memory
@@ -234,8 +248,12 @@ fn format_receipt(receipt: &CaptureReceipt) -> String {
         EmbeddingOutcome::Skipped(_) => "skipped",
         EmbeddingOutcome::NotRequested => "not_requested",
     };
+    let supersedes = match &receipt.supersedes {
+        Some(target) => format!(" sup={target}"),
+        None => String::new(),
+    };
     format!(
-        "[capture] {id} verdict={verdict} redactions={redactions} flags={flags} emb={embedding} ns={ns}",
+        "[capture] {id} verdict={verdict} redactions={redactions} flags={flags} emb={embedding} ns={ns}{supersedes}",
         id = receipt.episode_id,
         redactions = receipt.redactions.len(),
         flags = receipt.injection_flags.len(),

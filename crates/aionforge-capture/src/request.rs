@@ -38,6 +38,12 @@ pub struct CaptureRequest {
     /// is always placed in `agent:<agent_id>`. `None` defaults to that private
     /// namespace as well.
     pub namespace: Option<Namespace>,
+    /// A writer-asserted supersession hint (04 §1 step 3): the id of a live episode this
+    /// capture replaces. Validated against the writer's writable namespaces and recorded
+    /// in `Episode.origin` as evidence for consolidation — capture itself never retires
+    /// the target. An invalid hint refuses the whole capture with one collapsed error
+    /// for every cause, so the hint is no existence oracle.
+    pub supersedes: Option<Id>,
 }
 
 /// The writer's provenance and origin context, folded into the provenance record

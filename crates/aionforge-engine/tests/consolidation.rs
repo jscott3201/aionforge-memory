@@ -108,6 +108,7 @@ async fn capture_then_start_consolidation_derives_a_fact() {
             },
             trusted: false,
             namespace: None,
+            supersedes: None,
         })
         .await
         .expect("capture");
@@ -170,6 +171,7 @@ async fn capture_then_consolidate_once_derives_a_fact() {
             },
             trusted: false,
             namespace: None,
+            supersedes: None,
         })
         .await
         .expect("capture");
@@ -230,6 +232,7 @@ async fn consolidation_lag_reports_a_pending_capture_without_reaching_into_the_s
             },
             trusted: false,
             namespace: None,
+            supersedes: None,
         })
         .await
         .expect("capture");
