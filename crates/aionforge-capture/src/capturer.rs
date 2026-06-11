@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use aionforge_domain::authz::{AuthorizationError, Authorizer, Principal};
 use aionforge_domain::blocks::{Identity, Stats};
-use aionforge_domain::contracts::{Capture, Embedder, PrivacyFilter};
+use aionforge_domain::contracts::{Capture, Embedder, FilterOutcome, PrivacyFilter};
 use aionforge_domain::embedding::Embedding;
 use aionforge_domain::gate::{GateError, GateRejection, ProvenanceGate};
 use aionforge_domain::ids::{ContentHash, Id};
@@ -146,6 +146,18 @@ where
         for (marker, count) in &outcome.marker_hits {
             metrics::counter!("capture_injection_marker_hits_total", "marker" => marker.clone())
                 .increment(u64::from(*count));
+        }
+
+        // 1b. Residue-only refusal (07 §5). When marker excision hollowed the content out,
+        //     the leftover fragment is junk that would surface in recall as a memory — so the
+        //     write is refused fail-closed, after the marker tally above (marker activity is
+        //     a property of the traffic) and before any dedup hash, authz, or embedder work.
+        //     `is_residue_only` never fires without an injection flag, so benign short
+        //     captures are untouched and the M6.T03 false-positive ceiling holds.
+        if outcome.is_residue_only(&request.content) {
+            self.store
+                .commit_audit(&residue_rejected_audit(&request, &outcome))?;
+            return Err(CaptureError::ResidueOnly);
         }
 
         // 2. Deduplication, exact half: the hash is over the *cleaned* content, so the
@@ -520,6 +532,35 @@ fn capture_error_label(error: &CaptureError) -> &'static str {
         CaptureError::ClockSkew { .. } => "clock_skew",
         CaptureError::ProvenanceUnavailable(_) => "provenance_unavailable",
         CaptureError::SystemRoleNotWritable => "system_role_not_writable",
+        CaptureError::ResidueOnly => "residue_only",
+    }
+}
+
+/// The `residue_rejected` audit for a capture hollowed out by marker excision (07 §5),
+/// mirroring [`namespace_denied_audit`]'s write-then-return shape: the rejection produces no
+/// memory subject, so the subject and actor are the writing agent. The payload records the
+/// markers that fired and the original/cleaned lengths — never the residue text itself, so the
+/// audit log does not re-host fragments of a filtered injection.
+fn residue_rejected_audit(request: &CaptureRequest, outcome: &FilterOutcome) -> AuditEvent {
+    AuditEvent {
+        identity: Identity {
+            id: Id::generate(),
+            ingested_at: request.captured_at.clone(),
+            namespace: Namespace::System,
+            expired_at: None,
+        },
+        kind: AuditKind::ResidueRejected,
+        subject_id: request.agent_id,
+        actor_id: request.agent_id,
+        payload: serde_json::json!({
+            "reason": "residue_only_after_excision",
+            "agent": request.agent_id.to_string(),
+            "injection_flags": outcome.injection_flags,
+            "original_len": request.content.len(),
+            "cleaned_len": outcome.cleaned.len(),
+        }),
+        signature: String::new(),
+        occurred_at: request.captured_at.clone(),
     }
 }
 
