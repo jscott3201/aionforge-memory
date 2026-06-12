@@ -2,7 +2,7 @@
 
 Aionforge Memory ships a plugin package at
 [`plugins/aionforge-memory`](../plugins/aionforge-memory). It bundles four Agent
-Skills with MCP configuration for Codex, Claude Code, and Cursor.
+Skills plus Claude Code and Cursor MCP templates.
 
 The plugin is meant to make the existing MCP service easier to use. It does not
 add a second server and it does not execute stored skills from memory. The MCP
@@ -26,7 +26,8 @@ approval hints.
   `/aionforge-memory:memory-handoff`: explicit workflows for starting a
   memory-backed task and ending with a durable handoff.
 - Client manifests for Codex, Claude Code, and Cursor.
-- MCP config files for the local HTTP endpoint at `http://127.0.0.1:3918/mcp`.
+- Claude Code and Cursor MCP config files for the local HTTP endpoint at
+  `http://127.0.0.1:3918/mcp`.
 
 ## Identity Setup
 
@@ -49,22 +50,15 @@ raw UUID for capture.
 ## Client Notes
 
 Codex can discover the plugin from the repo-scoped
-`.agents/plugins/marketplace.json`. The Codex plugin manifest points to
-`.mcp.json`. After installation, `codex plugin list` shows the
-marketplace-qualified plugin id. For the repo marketplace, the id is
+`.agents/plugins/marketplace.json`. After installation, `codex plugin list`
+shows the marketplace-qualified plugin id. For the repo marketplace, the id is
 `aionforge-memory@aionforge-plugins`.
 
-The package root `plugin.json` also points at `.mcp.json`. That keeps Codex on
-one plugin-scoped server id, `aionforge_memory_plugin`, with
-`bearer_token_env_var` auth instead of also loading a second unauthenticated or
-header-style entry from a generic MCP manifest. Standalone Codex config examples
-continue to use `aionforge_memory`; the different names prevent plugin MCP from
-overwriting a user-managed server entry.
-
-Use `plugins/aionforge-memory/codex.plugin-policy.example.toml` as the Codex
-config shape when you want plugin-scoped MCP policy. It keeps read-like tools
-approved and mutating tools prompted under
-`plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory_plugin`.
+The Codex plugin does not register its own MCP server. Configure the Aionforge
+MCP endpoint separately as `[mcp_servers.aionforge_memory]`; that standalone MCP
+entry owns auth, login, tool policy, and transport settings. The plugin skills
+declare a dependency on that canonical server id instead of creating a second
+plugin-scoped server.
 
 Claude Code can test the package directly:
 

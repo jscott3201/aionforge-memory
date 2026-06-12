@@ -1,6 +1,7 @@
 # Aionforge Memory Plugin
 
-This plugin packages the Aionforge Memory MCP configuration with four small Agent Skills:
+This plugin packages four small Agent Skills for an existing Aionforge Memory
+MCP server:
 
 - `memory-loop`: use memory through a whole task: recall first, capture useful state during work, and finish with a handoff.
 - `memory-recall`: search durable memory before planning, coding, review, debugging, release, or support work.
@@ -32,9 +33,16 @@ aionforge serve http --listen 127.0.0.1:3918 \
 
 ## Install Notes
 
-Codex can discover this repo plugin through `.agents/plugins/marketplace.json`. The Codex manifest is at `.codex-plugin/plugin.json` and points to `.mcp.json`, which uses the plugin-scoped `aionforge_memory_plugin` server id and Codex's `bearer_token_env_var` auth field. The separate standalone config examples keep the `aionforge_memory` id, so installing the plugin does not overwrite a user-managed MCP server with the same name.
+Codex can discover this repo plugin through `.agents/plugins/marketplace.json`.
+The Codex manifest at `.codex-plugin/plugin.json` does not register an MCP
+server. Configure the Aionforge MCP server separately as
+`[mcp_servers.aionforge_memory]`; that standalone MCP entry is the canonical
+transport and policy owner. The plugin skills assume that server exists and only
+add memory workflow instructions.
 
-After installing the plugin, use `codex plugin list` to confirm the marketplace-qualified plugin id. The repo marketplace id is `aionforge-memory@aionforge-plugins`. For a safer default tool posture, copy the policy shape from `codex.plugin-policy.example.toml` into `~/.codex/config.toml`: read-like tools are approved, and mutating tools stay prompted.
+After installing the plugin, use `codex plugin list` to confirm the
+marketplace-qualified plugin id. The repo marketplace id is
+`aionforge-memory@aionforge-plugins`.
 
 Claude Code can test the plugin directly:
 

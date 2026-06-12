@@ -1,7 +1,7 @@
 {
   "name": "aionforge-memory",
-  "version": "0.1.0+codex.20260612024135",
-  "description": "Agent skills and MCP configuration for using Aionforge Memory as durable project memory.",
+  "version": "0.1.0+codex.20260612030047",
+  "description": "Agent skills for using an externally configured Aionforge Memory MCP server as durable project memory.",
   "author": {
     "name": "Aionforge Labs",
     "url": "https://github.com/Aionforge-Labs"
@@ -9,16 +9,23 @@
   "homepage": "https://github.com/Aionforge-Labs/aionforge-memory/tree/development/plugins/aionforge-memory",
   "repository": "https://github.com/Aionforge-Labs/aionforge-memory",
   "license": "MIT OR Apache-2.0",
-  "keywords": ["memory", "mcp", "agent-skills", "retrieval"],
+  "keywords": [
+    "memory",
+    "mcp",
+    "agent-skills",
+    "retrieval"
+  ],
   "skills": "./skills/",
-  "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "Aionforge Memory",
     "shortDescription": "Durable memory workflows for agent sessions",
-    "longDescription": "Use Aionforge Memory through MCP with small skills for recall, capture, and session handoff.",
+    "longDescription": "Use Aionforge Memory through an existing MCP server with small skills for recall, capture, and session handoff.",
     "developerName": "Aionforge Labs",
     "category": "Productivity",
-    "capabilities": ["Read", "Write"],
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
     "websiteURL": "https://github.com/Aionforge-Labs/aionforge-memory",
     "privacyPolicyURL": "https://github.com/Aionforge-Labs/aionforge-memory/blob/development/docs/security-model.md",
     "termsOfServiceURL": "https://github.com/Aionforge-Labs/aionforge-memory/blob/development/LICENSE-MIT",
