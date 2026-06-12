@@ -2463,42 +2463,6 @@ DEALINGS IN THE SOFTWARE.
 ## MIT License (MIT)
 
 Used by:
-- heapless v0.7.17 — https://github.com/japaric/heapless
-
-```
-Copyright (c) 2017 Jorge Aparicio
-
-Permission is hereby granted, free of charge, to any
-person obtaining a copy of this software and associated
-documentation files (the &quot;Software&quot;), to deal in the
-Software without restriction, including without
-limitation the rights to use, copy, modify, merge,
-publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software
-is furnished to do so, subject to the following
-conditions:
-
-The above copyright notice and this permission notice
-shall be included in all copies or substantial portions
-of the Software.
-
-THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF
-ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
-TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
-IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-DEALINGS IN THE SOFTWARE.
-
-```
-
----
-
-## MIT License (MIT)
-
-Used by:
 - redox_syscall v0.5.18 — https://gitlab.redox-os.org/redox-os/syscall
 
 ```
@@ -2787,42 +2751,6 @@ Used by:
 
 ```
 Copyright (c) 2018 Developers of the Rand project
-
-Permission is hereby granted, free of charge, to any
-person obtaining a copy of this software and associated
-documentation files (the &quot;Software&quot;), to deal in the
-Software without restriction, including without
-limitation the rights to use, copy, modify, merge,
-publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software
-is furnished to do so, subject to the following
-conditions:
-
-The above copyright notice and this permission notice
-shall be included in all copies or substantial portions
-of the Software.
-
-THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF
-ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
-TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
-IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-DEALINGS IN THE SOFTWARE.
-
-```
-
----
-
-## MIT License (MIT)
-
-Used by:
-- hash32 v0.2.1 — https://github.com/japaric/hash32
-
-```
-Copyright (c) 2018 Jorge Aparicio
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated
@@ -3629,42 +3557,6 @@ DEALINGS IN THE SOFTWARE.
 ## MIT License (MIT)
 
 Used by:
-- atomic-polyfill v1.0.3 — https://github.com/embassy-rs/atomic-polyfill
-
-```
-Copyright (c) 2020 Dario Nieuwenhuis
-
-Permission is hereby granted, free of charge, to any
-person obtaining a copy of this software and associated
-documentation files (the &quot;Software&quot;), to deal in the
-Software without restriction, including without
-limitation the rights to use, copy, modify, merge,
-publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software
-is furnished to do so, subject to the following
-conditions:
-
-The above copyright notice and this permission notice
-shall be included in all copies or substantial portions
-of the Software.
-
-THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF
-ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
-TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
-IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-DEALINGS IN THE SOFTWARE.
-
-```
-
----
-
-## MIT License (MIT)
-
-Used by:
 - cpufeatures v0.2.17 — https://github.com/RustCrypto/utils
 - cpufeatures v0.3.0 — https://github.com/RustCrypto/utils
 
@@ -3736,42 +3628,6 @@ Used by:
 
 ```
 Copyright (c) 2021 RustCrypto Developers
-
-Permission is hereby granted, free of charge, to any
-person obtaining a copy of this software and associated
-documentation files (the &quot;Software&quot;), to deal in the
-Software without restriction, including without
-limitation the rights to use, copy, modify, merge,
-publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software
-is furnished to do so, subject to the following
-conditions:
-
-The above copyright notice and this permission notice
-shall be included in all copies or substantial portions
-of the Software.
-
-THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF
-ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
-TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
-IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-DEALINGS IN THE SOFTWARE.
-
-```
-
----
-
-## MIT License (MIT)
-
-Used by:
-- critical-section v1.2.0 — https://github.com/rust-embedded/critical-section
-
-```
-Copyright (c) 2022 The critical-section authors
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated
@@ -4728,11 +4584,11 @@ SOFTWARE.
 ## MIT License (MIT)
 
 Used by:
-- selene-algorithms v1.1.0 — https://github.com/jscott3201/selene-db
-- selene-core v1.1.0 — https://github.com/jscott3201/selene-db
-- selene-gql v1.1.0 — https://github.com/jscott3201/selene-db
-- selene-graph v1.1.0 — https://github.com/jscott3201/selene-db
-- selene-persist v1.1.0 — https://github.com/jscott3201/selene-db
+- selene-algorithms v1.1.0 — https://github.com/Aionforge-Labs/selene-db
+- selene-core v1.1.0 — https://github.com/Aionforge-Labs/selene-db
+- selene-gql v1.1.0 — https://github.com/Aionforge-Labs/selene-db
+- selene-graph v1.1.0 — https://github.com/Aionforge-Labs/selene-db
+- selene-persist v1.1.0 — https://github.com/Aionforge-Labs/selene-db
 - aionforge v0.1.0 — https://github.com/Aionforge-Labs/aionforge-memory
 - aionforge-capture v0.1.0 — https://github.com/Aionforge-Labs/aionforge-memory
 - aionforge-chat v0.1.0 — https://github.com/Aionforge-Labs/aionforge-memory
@@ -5174,37 +5030,6 @@ COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
 IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-```
-
----
-
-## MIT License (MIT)
-
-Used by:
-- spin v0.9.8 — https://github.com/mvdnes/spin-rs.git
-
-```
-The MIT License (MIT)
-
-Copyright (c) 2014 Mathijs van de Nes
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the &quot;Software&quot;), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
 ```
 
 ---
