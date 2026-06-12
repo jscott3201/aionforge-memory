@@ -9,3 +9,4 @@
 {"id":"pq-0009","query":"local OCI runtime smoke standard Docker build","embedding":"container","expected_top":"pm-0010","source":"sanitized-project-memory-pattern"}
 {"id":"pq-0010","query":"rotate MCP bearer token update clients remove retired binding","embedding":"auth","expected_top":"pm-0011","source":"sanitized-project-memory-pattern"}
 {"id":"pq-0011","query":"public PR summary code behavior changes local filesystem paths secret-shaped values","embedding":"public_docs","expected_top":"pm-0012","source":"sanitized-project-memory-pattern"}
+{"id":"pq-0012","query":"docs/mcp-clients.md host verified principal identity connection","embedding":"public_docs","expected_top":"pm-0013","source":"sanitized-project-memory-pattern"}

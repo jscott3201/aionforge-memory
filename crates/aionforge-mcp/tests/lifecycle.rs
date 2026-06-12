@@ -97,7 +97,8 @@ fn forgetting_memory() -> Arc<Memory<FakeEmbedder>> {
 fn capture_params(content: &str, agent_id: &str) -> CaptureToolParams {
     CaptureToolParams {
         content: content.to_string(),
-        agent_id: agent_id.to_string(),
+        agent_id: Some(agent_id.to_string()),
+        principal: None,
         teams: Vec::new(),
         target_namespace: None,
         role: None,
@@ -129,7 +130,8 @@ fn first_search_memory_id(output: &str) -> String {
 fn lifecycle_params(memory_id: &str, agent: Id) -> MemoryLifecycleToolParams {
     MemoryLifecycleToolParams {
         memory_id: memory_id.to_string(),
-        viewer: format!("agent:{agent}"),
+        viewer: Some(format!("agent:{agent}")),
+        principal: None,
         teams: Vec::new(),
     }
 }
@@ -137,17 +139,20 @@ fn lifecycle_params(memory_id: &str, agent: Id) -> MemoryLifecycleToolParams {
 fn search_params(query: &str, agent: Id) -> SearchToolParams {
     SearchToolParams {
         query: query.to_string(),
-        viewer: format!("agent:{agent}"),
+        viewer: Some(format!("agent:{agent}")),
+        principal: None,
         teams: Vec::new(),
         limit: None,
         verbose: None,
+        include_superseded: None,
     }
 }
 
 fn read_params(memory_id: &str, agent: Id) -> ReadMemoryToolParams {
     ReadMemoryToolParams {
         memory_id: memory_id.to_string(),
-        viewer: format!("agent:{agent}"),
+        viewer: Some(format!("agent:{agent}")),
+        principal: None,
         teams: Vec::new(),
         verbose: None,
     }
@@ -156,9 +161,12 @@ fn read_params(memory_id: &str, agent: Id) -> ReadMemoryToolParams {
 fn manifest_params(session_id: Id, agent: Id) -> SessionManifestToolParams {
     SessionManifestToolParams {
         session_id: session_id.to_string(),
-        viewer: format!("agent:{agent}"),
+        viewer: Some(format!("agent:{agent}")),
+        principal: None,
         teams: Vec::new(),
         limit: None,
+        after: None,
+        include_superseded: None,
         verbose: None,
     }
 }
@@ -485,7 +493,8 @@ async fn forget_and_unforget_are_scoped_and_audited() -> TestResult {
         &memory,
         AuditHistoryToolParams {
             subject_id: Some(memory_id.clone()),
-            viewer: format!("agent:{alice}"),
+            viewer: Some(format!("agent:{alice}")),
+            principal: None,
             teams: Vec::new(),
             kind: Some("forget".to_string()),
             after: None,
@@ -542,7 +551,8 @@ async fn audit_history_can_scan_visible_events_by_kind_without_subject() -> Test
         &memory,
         AuditHistoryToolParams {
             subject_id: None,
-            viewer: format!("agent:{alice}"),
+            viewer: Some(format!("agent:{alice}")),
+            principal: None,
             teams: Vec::new(),
             kind: Some("forget".to_string()),
             after: None,
@@ -572,7 +582,8 @@ async fn audit_history_rejects_unknown_kind() -> TestResult {
         &memory,
         AuditHistoryToolParams {
             subject_id: Some(agent.to_string()),
-            viewer: format!("agent:{agent}"),
+            viewer: Some(format!("agent:{agent}")),
+            principal: None,
             teams: Vec::new(),
             kind: Some("not_a_kind".to_string()),
             after: None,
@@ -593,7 +604,8 @@ async fn audit_history_requires_subject_or_kind() -> TestResult {
         &memory,
         AuditHistoryToolParams {
             subject_id: None,
-            viewer: format!("agent:{agent}"),
+            viewer: Some(format!("agent:{agent}")),
+            principal: None,
             teams: Vec::new(),
             kind: None,
             after: None,
@@ -614,7 +626,8 @@ async fn audit_history_rejects_blank_subject_even_with_kind() -> TestResult {
         &memory,
         AuditHistoryToolParams {
             subject_id: Some(" ".to_string()),
-            viewer: format!("agent:{agent}"),
+            viewer: Some(format!("agent:{agent}")),
+            principal: None,
             teams: Vec::new(),
             kind: Some("forget".to_string()),
             after: None,

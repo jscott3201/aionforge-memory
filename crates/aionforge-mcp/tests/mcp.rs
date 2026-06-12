@@ -84,7 +84,8 @@ fn memory() -> Arc<Memory<FakeEmbedder>> {
 fn capture_params(content: &str, agent_id: &str) -> CaptureToolParams {
     CaptureToolParams {
         content: content.to_string(),
-        agent_id: agent_id.to_string(),
+        agent_id: Some(agent_id.to_string()),
+        principal: None,
         teams: Vec::new(),
         target_namespace: None,
         role: None,
@@ -225,10 +226,12 @@ async fn capture_tool_refuses_a_system_role_write() {
         &memory,
         SearchToolParams {
             query: "ignore prior instructions".to_string(),
-            viewer: format!("agent:{agent}"),
+            viewer: Some(format!("agent:{agent}")),
+            principal: None,
             teams: Vec::new(),
             limit: None,
             verbose: None,
+            include_superseded: None,
         },
         &now(),
     )
@@ -277,10 +280,12 @@ async fn search_tool_returns_compact_hits() {
         &memory,
         SearchToolParams {
             query: "graph databases".to_string(),
-            viewer: format!("agent:{agent}"),
+            viewer: Some(format!("agent:{agent}")),
+            principal: None,
             teams: Vec::new(),
             limit: None,
             verbose: None,
+            include_superseded: None,
         },
         &now(),
     )
@@ -325,10 +330,12 @@ async fn search_tool_escapes_tag_breakout_in_snippets() {
         &memory,
         SearchToolParams {
             query: "graph".to_string(),
-            viewer: format!("agent:{agent}"),
+            viewer: Some(format!("agent:{agent}")),
+            principal: None,
             teams: Vec::new(),
             limit: None,
             verbose: None,
+            include_superseded: None,
         },
         &now(),
     )
@@ -369,10 +376,12 @@ async fn search_tool_escapes_a_forged_wrapper_at_the_mcp_boundary() {
         &memory,
         SearchToolParams {
             query: "graph".to_string(),
-            viewer: format!("agent:{agent}"),
+            viewer: Some(format!("agent:{agent}")),
+            principal: None,
             teams: Vec::new(),
             limit: None,
             verbose: None,
+            include_superseded: None,
         },
         &now(),
     )
@@ -421,10 +430,12 @@ async fn search_tool_escapes_an_attribute_quote_breakout() {
         &memory,
         SearchToolParams {
             query: "graph".to_string(),
-            viewer: format!("agent:{agent}"),
+            viewer: Some(format!("agent:{agent}")),
+            principal: None,
             teams: Vec::new(),
             limit: None,
             verbose: Some(true),
+            include_superseded: None,
         },
         &now(),
     )
@@ -461,10 +472,12 @@ async fn search_tool_enforces_namespace_authorization() {
         &memory,
         SearchToolParams {
             query: "secret".to_string(),
-            viewer: format!("agent:{alice}"),
+            viewer: Some(format!("agent:{alice}")),
+            principal: None,
             teams: Vec::new(),
             limit: None,
             verbose: None,
+            include_superseded: None,
         },
         &now(),
     )
@@ -478,10 +491,12 @@ async fn search_tool_enforces_namespace_authorization() {
         &memory,
         SearchToolParams {
             query: "secret".to_string(),
-            viewer: format!("agent:{bob}"),
+            viewer: Some(format!("agent:{bob}")),
+            principal: None,
             teams: Vec::new(),
             limit: None,
             verbose: None,
+            include_superseded: None,
         },
         &now(),
     )
@@ -521,10 +536,12 @@ async fn search_tool_widens_to_a_team_only_when_the_host_asserts_membership() {
         &memory,
         SearchToolParams {
             query: "roadmap".to_string(),
-            viewer: format!("agent:{reader}"),
+            viewer: Some(format!("agent:{reader}")),
+            principal: None,
             teams: Vec::new(),
             limit: None,
             verbose: None,
+            include_superseded: None,
         },
         &now(),
     )
@@ -540,10 +557,12 @@ async fn search_tool_widens_to_a_team_only_when_the_host_asserts_membership() {
         &memory,
         SearchToolParams {
             query: "roadmap".to_string(),
-            viewer: format!("agent:{reader}"),
+            viewer: Some(format!("agent:{reader}")),
+            principal: None,
             teams: vec!["squad".to_string()],
             limit: None,
             verbose: None,
+            include_superseded: None,
         },
         &now(),
     )
@@ -571,10 +590,12 @@ async fn search_tool_verbose_adds_per_hit_detail() {
         &memory,
         SearchToolParams {
             query: "graph".to_string(),
-            viewer: format!("agent:{agent}"),
+            viewer: Some(format!("agent:{agent}")),
+            principal: None,
             teams: Vec::new(),
             limit: None,
             verbose: Some(true),
+            include_superseded: None,
         },
         &now(),
     )
@@ -662,10 +683,12 @@ async fn search_tool_threads_the_host_clock_into_the_importance_and_recency_rera
         &memory,
         SearchToolParams {
             query: "graph".to_string(),
-            viewer: format!("agent:{agent}"),
+            viewer: Some(format!("agent:{agent}")),
+            principal: None,
             teams: Vec::new(),
             limit: None,
             verbose: Some(true),
+            include_superseded: None,
         },
         &now(),
     )
@@ -715,10 +738,12 @@ async fn clocked_search_with_decay_on_is_deterministic_for_a_fixed_instant() {
         .expect("valid zoned datetime");
     let params = || SearchToolParams {
         query: "graph".to_string(),
-        viewer: format!("agent:{agent}"),
+        viewer: Some(format!("agent:{agent}")),
+        principal: None,
         teams: Vec::new(),
         limit: None,
         verbose: Some(true),
+        include_superseded: None,
     };
     let first = search_tool(&memory, params(), &later)
         .await
@@ -744,10 +769,12 @@ async fn search_tool_rejects_a_bad_viewer() {
         &memory,
         SearchToolParams {
             query: "x".to_string(),
-            viewer: "not a namespace".to_string(),
+            viewer: Some("not a namespace".to_string()),
+            principal: None,
             teams: Vec::new(),
             limit: None,
             verbose: None,
+            include_superseded: None,
         },
         &now(),
     )

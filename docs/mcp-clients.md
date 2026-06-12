@@ -68,18 +68,29 @@ Default HTTP posture:
 
 Aionforge namespaces memory by agent id. Use one stable UUID per agent workflow
 when you want the same private memory namespace across sessions. Clients should
-pass the raw UUID to `capture.agent_id` and `agent:<uuid>` to `search.viewer`,
-`read_memory.viewer`, `session_manifest.viewer`, `forget.viewer`,
-`unforget.viewer`, and `audit_history.viewer`.
+pass either:
+
+- `principal: { "agent_id": "<uuid>", "teams": [...] }`, for hosts that have
+  already authenticated the caller, or
+- the legacy shorthand fields: raw UUID in `capture.agent_id` and
+  `agent:<uuid>` in `search.viewer`, `read_memory.viewer`,
+  `session_manifest.viewer`, `forget.viewer`, `unforget.viewer`, and
+  `audit_history.viewer`.
+
+If both shapes are present they must agree. The server rejects mismatched
+`agent_id`/`viewer` and `principal.agent_id` values, and rejects conflicting
+top-level `teams` versus `principal.teams`. It never silently merges identity
+sources and never derives a principal from a connection, HTTP header, bearer
+token, or session id on its own.
 
 Team visibility is host-asserted through the optional `teams` array. A local
-client should only provide teams it is allowed to assert. The MCP server does
-not derive a default principal from the connection or token, and the current MCP
-`capture` tool writes to the authoring agent's private namespace unless the host
-explicitly supplies `target_namespace`. Shared team/project writes use
-`target_namespace="team:<name>"` plus a matching host-asserted `teams` entry; a
-missing membership assertion is rejected. Transport-derived identity for remote
-deployments is deferred until the platform OAuth/identity layer exists.
+client should only provide teams it is allowed to assert. OAuth-capable hosts
+should validate tokens at the perimeter, map the verified subject and team
+claims into the explicit `principal` object, and pass only those derived values
+to Aionforge. The MCP `capture` tool writes to the authoring agent's private
+namespace unless the host explicitly supplies `target_namespace`. Shared
+team/project writes use `target_namespace="team:<name>"` plus a matching
+host-asserted team membership; a missing membership assertion is rejected.
 
 Private namespaces are intentionally private. An agent cannot inspect another
 agent's private capture receipt by id unless the host gives it a shared team
@@ -249,6 +260,8 @@ rules for this server:
   "permission": {
     "aionforge-memory_server_status": "allow",
     "aionforge-memory_search": "allow",
+    "aionforge-memory_read_memory": "allow",
+    "aionforge-memory_session_manifest": "allow",
     "aionforge-memory_consolidation_status": "allow",
     "aionforge-memory_audit_history": "allow",
     "aionforge-memory_capture": "ask",
@@ -321,7 +334,22 @@ Compact `search` memory lines include `score="<raw-rrf>"` and
 `score_band="<high|medium|low>"` for ranked hits. The band is relative to the
 top hit in that response and is meant for quick agent triage; it is not a global
 confidence value. Episode lines may include `supersedes` or `superseded_by`
-attributes when a live capture claims a replacement relationship.
+attributes when a live capture claims a replacement relationship. To ask for a
+current-only raw-episode view, set `search.include_superseded=false`; this hides
+older episodes with a live replacement claim but does not delete them and does
+not change semantic fact history.
+
+`session_manifest` is keyset-paginated in the same deterministic order it
+renders: `ingested_at`, then memory id. The summary line includes `next=none`
+when the page is complete or a compact JSON cursor when another page is
+available:
+
+```text
+[session_manifest] session=<id> count=<n> limit=<limit> next={"ingested_at":"...","id":"..."}
+```
+
+Pass that object back as `session_manifest.after`. The tool also accepts
+`include_superseded=false` for current-only handoff manifests.
 
 `aionforge://manifest/tools.json` is the lowest-token machine-readable contract
 for agents. It lists the server version, tool classes, recommended approval
@@ -347,8 +375,10 @@ visible audit rows, and preserve capture receipt ids in handoffs when later
 audit or supersession work is likely.
 
 `supersedes` on capture is evidence for consolidation and recall annotation, not
-an immediate hide/delete operation. A refreshed memory can rank above the older
-one while the older evidence still appears lower with `superseded_by=<id>`.
+an immediate delete operation. A refreshed memory can rank above the older one
+while the older evidence still appears lower with `superseded_by=<id>`, unless a
+caller explicitly sets `include_superseded=false` on a recall or session
+manifest.
 
 The repo also ships an installable plugin package at
 [`plugins/aionforge-memory`](../plugins/aionforge-memory). The MCP resource

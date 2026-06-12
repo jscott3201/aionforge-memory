@@ -17,6 +17,7 @@ mod http_body_limit;
 mod http_transport;
 mod inspect;
 mod lifecycle;
+mod principal;
 mod prompt;
 mod resources;
 mod status;
@@ -31,13 +32,15 @@ pub use http_transport::{
     streamable_http_service,
 };
 pub use inspect::{
-    ReadMemoryToolParams, SessionManifestToolParams, read_memory_tool, session_manifest_tool,
+    ReadMemoryToolParams, SessionManifestCursorToolParam, SessionManifestToolParams,
+    read_memory_tool, session_manifest_tool,
 };
 pub use lifecycle::{
     AuditCursorToolParam, AuditHistoryToolParams, ConsolidationRunToolParams,
     ConsolidationStatusToolParams, MemoryLifecycleToolParams, audit_history_tool, consolidate_tool,
     consolidation_status_tool, forget_tool, unforget_tool,
 };
+pub use principal::HostPrincipalToolParam;
 pub use prompt::{
     RECALL_UNTRUSTED_DATA_PROMPT, RECALL_UNTRUSTED_DATA_PROMPT_NAME,
     RECALL_UNTRUSTED_DATA_PROMPT_RESOURCE_URI, RECALL_WRAPPER_TAG,

@@ -174,7 +174,10 @@ fn quote_is_lexical_only() {
     assert!(p.quote_phrase);
     assert!(p.weights.lexical > 0.0);
     assert_eq!(p.weights.dense, 0.0, "quote suppresses dense");
-    assert_eq!(p.weights.lexical_anchor, 0.0, "quote has no factual anchor");
+    assert!(
+        p.weights.lexical_anchor > 0.0,
+        "quote/source lookup anchors the highest lexical matches"
+    );
     assert_eq!(p.weights.graph, 0.0, "quote suppresses graph");
     assert_eq!(p.weights.recency, 0.0);
     assert_eq!(p.weights.trust, 0.0);

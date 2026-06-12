@@ -2,6 +2,7 @@
 //! parameter-bound GQL.
 
 use std::{
+    collections::{HashMap, HashSet, hash_map::Entry},
     path::Path,
     sync::Arc,
     time::{Duration, Instant},
@@ -366,12 +367,34 @@ impl Store {
     /// # Errors
     /// Returns [`StoreError`] if episode decode fails.
     pub fn live_episode_superseded_by(&self, id: &Id) -> Result<Option<Id>, StoreError> {
+        let mut by_target = self.live_episode_superseded_by_many([id])?;
+        Ok(by_target.remove(id))
+    }
+
+    /// The newest live episode that explicitly supersedes each target id.
+    ///
+    /// This is the recall-scale reverse lookup for episode supersession metadata. It
+    /// scans the live episode label set once, records only claims whose `origin.supersedes`
+    /// points at one of the requested targets, and keeps the newest replacement per target.
+    /// Callers that need annotations for many candidates should use this instead of N
+    /// calls to [`Store::live_episode_superseded_by`].
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if episode decode fails.
+    pub fn live_episode_superseded_by_many<'a>(
+        &self,
+        ids: impl IntoIterator<Item = &'a Id>,
+    ) -> Result<HashMap<Id, Id>, StoreError> {
+        let targets: HashSet<Id> = ids.into_iter().copied().collect();
+        if targets.is_empty() {
+            return Ok(HashMap::new());
+        }
         let snapshot = self.graph.read();
         let label = db_string(Episode::LABEL)?;
         let Some(rows) = snapshot.nodes_with_label(&label) else {
-            return Ok(None);
+            return Ok(HashMap::new());
         };
-        let mut newest: Option<Episode> = None;
+        let mut newest: HashMap<Id, Episode> = HashMap::new();
         for row in rows.iter() {
             let Some(node) = snapshot.node_id_for_row(selene_graph::RowIndex::new(row)) else {
                 continue;
@@ -383,17 +406,27 @@ impl Store {
             if episode.identity.expired_at.is_some() {
                 continue;
             }
-            if episode.origin.as_ref().and_then(|origin| origin.supersedes) != Some(*id) {
+            let Some(target) = episode.origin.as_ref().and_then(|origin| origin.supersedes) else {
+                continue;
+            };
+            if !targets.contains(&target) {
                 continue;
             }
-            if newest
-                .as_ref()
-                .is_none_or(|current| episode_is_newer(&episode, current))
-            {
-                newest = Some(episode);
+            match newest.entry(target) {
+                Entry::Vacant(slot) => {
+                    slot.insert(episode);
+                }
+                Entry::Occupied(mut slot) => {
+                    if episode_is_newer(&episode, slot.get()) {
+                        slot.insert(episode);
+                    }
+                }
             }
         }
-        Ok(newest.map(|episode| episode.identity.id))
+        Ok(newest
+            .into_iter()
+            .map(|(target, replacement)| (target, replacement.identity.id))
+            .collect())
     }
 
     /// Whether any episode — live or soft-forgotten — already carries this domain id.

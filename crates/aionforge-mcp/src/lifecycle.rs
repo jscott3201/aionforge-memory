@@ -18,11 +18,12 @@ use aionforge_domain::nodes::semantic::{Entity, Fact};
 use aionforge_domain::time::Timestamp;
 use aionforge_engine::{
     AuditCursor, AuditPage, AuditRecord, AuditVerification, ConsolidationConfig, Memory,
-    PassConfig, PointForget, PointUnforget, Principal, RuleExtractor, RuleInducer, RuleSummarizer,
-    TickReport,
+    PassConfig, PointForget, PointUnforget, RuleExtractor, RuleInducer, RuleSummarizer, TickReport,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
+
+use crate::principal::{HostPrincipalToolParam, resolve_reader};
 
 const DEFAULT_CONSOLIDATION_MAX_TICKS: usize = 1;
 const MAX_CONSOLIDATION_MAX_TICKS: usize = 5;
@@ -65,10 +66,15 @@ pub struct MemoryLifecycleToolParams {
     #[schemars(description = "The memory id to mutate.")]
     pub memory_id: String,
     /// The acting agent namespace, `agent:<id>`. The memory must be in this agent's writable set.
+    #[serde(default)]
     #[schemars(
-        description = "The acting agent namespace, agent:<id>. The target memory must be in this agent's writable set."
+        description = "The acting agent namespace, agent:<id>. Legacy shorthand for principal.agent_id."
     )]
-    pub viewer: String,
+    pub viewer: Option<String>,
+    /// Explicit host-verified principal. OAuth-capable hosts can pass the verified
+    /// token subject and teams here instead of asking the server to infer them.
+    #[schemars(description = "Explicit host-verified principal. Optional.")]
+    pub principal: Option<HostPrincipalToolParam>,
     /// Teams the host asserts this reader belongs to.
     #[serde(default)]
     #[schemars(description = "Teams the host asserts this reader belongs to. Optional.")]
@@ -96,8 +102,13 @@ pub struct AuditHistoryToolParams {
     )]
     pub subject_id: Option<String>,
     /// The reading agent namespace, `agent:<id>`.
+    #[serde(default)]
     #[schemars(description = "The reading agent namespace, agent:<id>.")]
-    pub viewer: String,
+    pub viewer: Option<String>,
+    /// Explicit host-verified principal. OAuth-capable hosts can pass the verified
+    /// token subject and teams here instead of asking the server to infer them.
+    #[schemars(description = "Explicit host-verified principal. Optional.")]
+    pub principal: Option<HostPrincipalToolParam>,
     /// Teams the host asserts this reader belongs to.
     #[serde(default)]
     #[schemars(description = "Teams the host asserts this reader belongs to. Optional.")]
@@ -215,7 +226,13 @@ pub fn forget_tool<E: Embedder>(
     params: MemoryLifecycleToolParams,
     now: &Timestamp,
 ) -> Result<String, String> {
-    let target = writable_memory(memory, &params.memory_id, &params.viewer, params.teams)?;
+    let target = writable_memory(
+        memory,
+        &params.memory_id,
+        params.viewer.as_deref(),
+        params.teams,
+        params.principal,
+    )?;
     let outcome = memory
         .forget(&target.id, now)
         .map_err(|error| format!("ERR_FORGET: {error}"))?;
@@ -238,7 +255,13 @@ pub fn unforget_tool<E: Embedder>(
     params: MemoryLifecycleToolParams,
     now: &Timestamp,
 ) -> Result<String, String> {
-    let target = writable_memory(memory, &params.memory_id, &params.viewer, params.teams)?;
+    let target = writable_memory(
+        memory,
+        &params.memory_id,
+        params.viewer.as_deref(),
+        params.teams,
+        params.principal,
+    )?;
     let outcome = memory
         .unforget(&target.id, now)
         .map_err(|error| format!("ERR_UNFORGET: {error}"))?;
@@ -264,7 +287,7 @@ pub fn audit_history_tool<E: Embedder>(
         .as_deref()
         .map(|subject| parse_id(subject.trim(), "SUBJECT_ID"))
         .transpose()?;
-    let principal = parse_principal(&params.viewer, params.teams)?;
+    let principal = resolve_reader(params.viewer.as_deref(), params.teams, params.principal)?;
     let after = params.after.map(parse_audit_cursor).transpose()?;
     let limit = params
         .limit
@@ -319,11 +342,12 @@ fn duration_seconds(duration: Duration) -> u64 {
 fn writable_memory<E: Embedder>(
     memory: &Memory<E>,
     raw_id: &str,
-    raw_viewer: &str,
+    raw_viewer: Option<&str>,
     teams: Vec<String>,
+    principal: Option<HostPrincipalToolParam>,
 ) -> Result<WritableMemory, String> {
     let id = parse_id(raw_id, "MEMORY_ID")?;
-    let principal = parse_principal(raw_viewer, teams)?;
+    let principal = resolve_reader(raw_viewer, teams, principal)?;
     let candidate = memory
         .store()
         .memory_by_id(&id, &MCP_MEMORY_LABELS)
@@ -343,18 +367,6 @@ fn writable_memory<E: Embedder>(
         label: candidate.label,
         namespace: candidate.identity.namespace,
     })
-}
-
-fn parse_principal(raw_viewer: &str, teams: Vec<String>) -> Result<Principal, String> {
-    let viewer: Namespace = raw_viewer
-        .parse()
-        .map_err(|_| "ERR_INVALID_VIEWER: viewer must be agent:<id>".to_string())?;
-    let Namespace::Agent(agent_id) = viewer else {
-        return Err("ERR_INVALID_VIEWER: a reader must be an agent (agent:<id>)".to_string());
-    };
-    let agent = Id::parse(&agent_id)
-        .map_err(|_| "ERR_INVALID_VIEWER: viewer agent id must be a UUID".to_string())?;
-    Ok(Principal::new(agent, teams))
 }
 
 fn parse_id(raw: &str, field: &str) -> Result<Id, String> {

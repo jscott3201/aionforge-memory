@@ -136,3 +136,25 @@ the copied `audit/` directory.
 
 Use `recover`, not `doctor`, as the restore gate. `doctor` can create a fresh store when the WAL
 is missing; `recover` refuses that case and proves the backup is an existing WAL-backed store.
+
+## Legacy 0.1.0 WAL replay incident
+
+The public regression suite covers current-format WAL recovery. A historical `0.1.0`
+incident also found WAL files that were accepted during live appends but failed
+same-version replay after restart. The preserved archive from that incident is not
+committed to this repository because it was captured from a live dogfood store and may
+contain private memory content.
+
+When preserving or reducing a legacy replay failure, keep the fixture public-safe:
+
+1. Reproduce with the exact released binary or image digest that wrote the WAL.
+2. Reduce the WAL to synthetic records, or create a fresh synthetic WAL that fails the
+   same replay path.
+3. Verify the reduced fixture contains no private prompts, host paths, secrets, tokens,
+   or agent-private memory.
+4. Add the fixture and a recovery test that fails on the legacy replay bug and passes on
+   the fixed reader.
+
+Do not copy production or dogfood WAL archives into the public repository. If reduction
+is not possible, keep the incident as an external operator artifact and rely on the
+current-format recovery tests for the public gate.

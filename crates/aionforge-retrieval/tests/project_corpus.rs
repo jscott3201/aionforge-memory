@@ -327,8 +327,8 @@ fn assert_scrubbed(memories: &[MemoryRow], queries: &[QueryRow]) {
 async fn sanitized_project_memory_corpus_recalls_expected_operational_notes() {
     let memories = parse_memories();
     let queries = parse_queries();
-    assert_eq!(memories.len(), 12, "memory fixture count is intentional");
-    assert_eq!(queries.len(), 11, "query fixture count is intentional");
+    assert_eq!(memories.len(), 14, "memory fixture count is intentional");
+    assert_eq!(queries.len(), 12, "query fixture count is intentional");
     assert_scrubbed(&memories, &queries);
 
     let by_id: HashMap<&str, &MemoryRow> =
@@ -394,6 +394,22 @@ async fn sanitized_project_memory_corpus_recalls_expected_operational_notes() {
                     .signals_run
                     .contains(&Signal::LexicalAnchor),
                 "the recall explanation reports lexical-anchor execution"
+            );
+        }
+        if query.id == "pq-0012" && rank == Some(0) {
+            let signals: Vec<Signal> = top
+                .contributions()
+                .iter()
+                .map(|contribution| contribution.signal)
+                .collect();
+            assert!(
+                signals.contains(&Signal::LexicalAnchor),
+                "the source-path fixture pins episode lexical-anchor behavior"
+            );
+            assert_eq!(
+                bundle.explanation.class,
+                aionforge_retrieval::QueryClass::Quote,
+                "source-path queries stay on the exact lexical route"
             );
         }
     }

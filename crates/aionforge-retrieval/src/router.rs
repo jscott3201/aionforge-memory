@@ -191,7 +191,7 @@ pub fn profile_for(class: QueryClass) -> RetrievalProfile {
             class,
             weights: SignalWeights {
                 lexical: HEAVY,
-                lexical_anchor: OFF,
+                lexical_anchor: HEAVY,
                 dense: OFF,
                 support: OFF,
                 graph: OFF,
@@ -280,7 +280,7 @@ pub fn classify(query: &str) -> QueryClass {
     }
 }
 
-fn looks_like_source_anchor(query: &str) -> bool {
+pub(crate) fn looks_like_source_anchor(query: &str) -> bool {
     SOURCE_PATH_MARKERS.is_match(query) || SOURCE_ANCHOR_TOKEN.find_iter(query).take(2).count() >= 2
 }
 

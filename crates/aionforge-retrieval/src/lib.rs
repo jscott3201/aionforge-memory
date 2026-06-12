@@ -18,6 +18,7 @@ mod query;
 mod rerank;
 mod retriever;
 mod router;
+mod selection;
 mod signals;
 mod temporal;
 mod trace;

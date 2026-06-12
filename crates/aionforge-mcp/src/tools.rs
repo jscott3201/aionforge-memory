@@ -18,11 +18,13 @@ use aionforge_domain::namespace::Namespace;
 use aionforge_domain::nodes::episodic::Role;
 use aionforge_domain::time::Timestamp;
 use aionforge_engine::{
-    CaptureReceipt, CaptureRequest, CaptureVerdict, EmbeddingOutcome, Memory, Principal,
-    RecallQuery, WriterContext,
+    CaptureReceipt, CaptureRequest, CaptureVerdict, EmbeddingOutcome, Memory, RecallQuery,
+    WriterContext,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
+
+use crate::principal::{HostPrincipalToolParam, resolve_reader, resolve_writer};
 
 /// The default number of hits a search returns when the caller does not say.
 const DEFAULT_LIMIT: usize = 10;
@@ -35,11 +37,16 @@ pub struct CaptureToolParams {
     /// The raw event content to remember.
     #[schemars(description = "The raw event content to remember.")]
     pub content: String,
-    /// The authoring agent's id (a UUID). By default the memory is private to this agent.
+    /// The authoring agent's id (a UUID). Legacy shorthand for `principal.agent_id`.
+    #[serde(default)]
     #[schemars(
-        description = "The authoring agent's id (a UUID). By default the memory is private to this agent."
+        description = "The authoring agent's id (a UUID). Legacy shorthand for principal.agent_id."
     )]
-    pub agent_id: String,
+    pub agent_id: Option<String>,
+    /// Explicit host-verified principal. OAuth-capable hosts can pass the verified
+    /// token subject and teams here instead of asking the server to infer them.
+    #[schemars(description = "Explicit host-verified principal. Optional.")]
+    pub principal: Option<HostPrincipalToolParam>,
     /// Teams the host asserts this writer belongs to. Only used when `target_namespace`
     /// asks for a team namespace; omitted/empty keeps the capture private.
     #[serde(default)]
@@ -87,13 +94,19 @@ pub struct SearchToolParams {
     /// The natural-language query.
     #[schemars(description = "The natural-language query.")]
     pub query: String,
-    /// The reading agent's namespace, `agent:<id>`. The recall is scoped to this agent's
+    /// The reading agent's namespace, `agent:<id>`. Legacy shorthand for `principal.agent_id`.
+    /// The recall is scoped to this agent's
     /// visible set: the global space, its own private namespace, and any teams the host
     /// asserts for it (see `teams`).
+    #[serde(default)]
     #[schemars(
-        description = "The reading agent's namespace, agent:<id>. Recall is scoped to its visible set."
+        description = "The reading agent's namespace, agent:<id>. Legacy shorthand for principal.agent_id."
     )]
-    pub viewer: String,
+    pub viewer: Option<String>,
+    /// Explicit host-verified principal. OAuth-capable hosts can pass the verified
+    /// token subject and teams here instead of asking the server to infer them.
+    #[schemars(description = "Explicit host-verified principal. Optional.")]
+    pub principal: Option<HostPrincipalToolParam>,
     /// The teams the host asserts this reader belongs to. Recall widens to each team's shared
     /// namespace; omit (or leave empty) for a reader that sees only the global space and its own
     /// private namespace. Host-asserted: the calling host is the team-membership authority (06 §1).
@@ -108,6 +121,13 @@ pub struct SearchToolParams {
     /// Include per-hit detail (namespace, trust, signal contributions).
     #[schemars(description = "Include per-hit detail (namespace, trust, signal contributions).")]
     pub verbose: Option<bool>,
+    /// Include older episodes that have a live replacement claim. Defaults to true so
+    /// recall preserves provenance unless the caller explicitly asks for current-only
+    /// episode evidence.
+    #[schemars(
+        description = "Include episodes that have been superseded by a live replacement (default true)."
+    )]
+    pub include_superseded: Option<bool>,
 }
 
 /// Run the `capture` tool: stamp the event with `now`, capture it, and return a
@@ -120,8 +140,8 @@ pub async fn capture_tool<E: Embedder>(
     params: CaptureToolParams,
     now: &Timestamp,
 ) -> Result<String, String> {
-    let agent_id = Id::parse(&params.agent_id)
-        .map_err(|_| "ERR_INVALID_AGENT_ID: agent_id must be a UUID".to_string())?;
+    let (agent_id, teams) =
+        resolve_writer(params.agent_id.as_deref(), params.teams, params.principal)?;
     let role = parse_role(params.role.as_deref())?;
     let session_id = params
         .session_id
@@ -153,7 +173,7 @@ pub async fn capture_tool<E: Embedder>(
         // target namespace the write remains private even if teams are present; a shared write
         // requires both `target_namespace` and matching host-asserted membership, then the
         // capture funnel authorizer makes the final decision (06 §1).
-        teams: params.teams,
+        teams,
         session_id,
         captured_at,
         ingested_at: now.clone(),
@@ -203,25 +223,18 @@ pub async fn search_tool<E: Embedder>(
     // A reader is an agent: recall scopes to the global space, the reader's own private
     // namespace, and the teams the host asserts. A non-agent viewer has no reader identity,
     // so it is rejected rather than silently widened.
-    let viewer: Namespace = params
-        .viewer
-        .parse()
-        .map_err(|_| "ERR_INVALID_VIEWER: viewer must be agent:<id>".to_string())?;
-    let Namespace::Agent(agent_id) = viewer else {
-        return Err("ERR_INVALID_VIEWER: a reader must be an agent (agent:<id>)".to_string());
-    };
-    let agent = Id::parse(&agent_id)
-        .map_err(|_| "ERR_INVALID_VIEWER: viewer agent id must be a UUID".to_string())?;
-    // The host asserts the reader's team membership (the caller-asserted trust boundary, 06 §1);
-    // those teams widen the visible set to each team's shared namespace. With no teams the reader
-    // is scoped to the global space and its own private namespace. `Principal::new` drops any
-    // empty team name.
-    let principal = Principal::new(agent, params.teams);
+    // The host asserts the reader's principal and team membership (the caller-asserted
+    // trust boundary, 06 §1). OAuth-capable hosts may pass the verified identity in the
+    // explicit `principal` object; older clients keep using `viewer` plus `teams`. If both
+    // are present they must agree, so the MCP server never guesses or silently merges two
+    // authority sources.
+    let principal = resolve_reader(params.viewer.as_deref(), params.teams, params.principal)?;
     let limit = params.limit.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT);
     let verbose = params.verbose.unwrap_or(false);
 
     let mut query = RecallQuery::new(params.query, principal, limit);
     query.options.now = Some(now.clone());
+    query.options.include_superseded = params.include_superseded.unwrap_or(true);
     let bundle = memory
         .search(query)
         .await
