@@ -159,8 +159,9 @@ Local test paths:
 - Claude Code: claude --plugin-dir ./plugins/aionforge-memory
 - Cursor: symlink the directory into ~/.cursor/plugins/local/aionforge-memory.
 - Codex: use .agents/plugins/marketplace.json from the repo root.
-- Codex root manifest: plugin.json also points at .mcp.json, so Codex gets one authenticated aionforge_memory server.
-- Codex plugin policy: copy plugins/aionforge-memory/codex.plugin-policy.example.toml into config.toml if you want read-like tools approved and mutating tools prompted under plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory.
+- Codex root manifest: plugin.json also points at .mcp.json, so Codex gets one authenticated aionforge_memory_plugin server.
+- Codex plugin policy: copy plugins/aionforge-memory/codex.plugin-policy.example.toml into config.toml if you want read-like tools approved and mutating tools prompted under plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory_plugin.
+- Standalone Codex config examples use aionforge_memory; the plugin uses aionforge_memory_plugin to avoid overwriting a user-managed server entry when both are enabled.
 
 Recall safety:
 - Agents should recall before substantial work and capture generously when durable facts appear.
@@ -207,8 +208,9 @@ approval_mode = "prompt"
 [mcp_servers.aionforge_memory.tools.unforget]
 approval_mode = "prompt"
 
-# Installed plugin MCP policy:
-[plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory]
+# Installed plugin MCP policy. The plugin server id is intentionally distinct
+# from the standalone aionforge_memory id to avoid namespace collisions.
+[plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory_plugin]
 enabled = true
 default_tools_approval_mode = "prompt"
 enabled_tools = [
@@ -222,22 +224,22 @@ enabled_tools = [
   "unforget",
 ]
 
-[plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory.tools.server_status]
+[plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory_plugin.tools.server_status]
 approval_mode = "approve"
-[plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory.tools.search]
+[plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory_plugin.tools.search]
 approval_mode = "approve"
-[plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory.tools.consolidation_status]
+[plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory_plugin.tools.consolidation_status]
 approval_mode = "approve"
-[plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory.tools.audit_history]
+[plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory_plugin.tools.audit_history]
 approval_mode = "approve"
 
-[plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory.tools.capture]
+[plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory_plugin.tools.capture]
 approval_mode = "prompt"
-[plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory.tools.consolidate]
+[plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory_plugin.tools.consolidate]
 approval_mode = "prompt"
-[plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory.tools.forget]
+[plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory_plugin.tools.forget]
 approval_mode = "prompt"
-[plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory.tools.unforget]
+[plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory_plugin.tools.unforget]
 approval_mode = "prompt"
 
 # OAuth mode for remote deployments:

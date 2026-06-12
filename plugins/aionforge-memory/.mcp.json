@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "aionforge_memory": {
+    "aionforge_memory_plugin": {
       "url": "http://127.0.0.1:3918/mcp",
       "bearer_token_env_var": "AIONFORGE_MCP_TOKEN",
       "startup_timeout_sec": 10,

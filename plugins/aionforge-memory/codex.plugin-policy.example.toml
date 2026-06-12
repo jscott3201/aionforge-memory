@@ -2,7 +2,7 @@
 # If your marketplace name differs, replace `aionforge-plugins` with the
 # marketplace name shown by `codex plugin list`.
 
-[plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory]
+[plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory_plugin]
 enabled = true
 default_tools_approval_mode = "prompt"
 enabled_tools = [
@@ -16,20 +16,20 @@ enabled_tools = [
   "unforget",
 ]
 
-[plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory.tools.server_status]
+[plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory_plugin.tools.server_status]
 approval_mode = "approve"
-[plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory.tools.search]
+[plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory_plugin.tools.search]
 approval_mode = "approve"
-[plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory.tools.consolidation_status]
+[plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory_plugin.tools.consolidation_status]
 approval_mode = "approve"
-[plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory.tools.audit_history]
+[plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory_plugin.tools.audit_history]
 approval_mode = "approve"
 
-[plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory.tools.capture]
+[plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory_plugin.tools.capture]
 approval_mode = "prompt"
-[plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory.tools.consolidate]
+[plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory_plugin.tools.consolidate]
 approval_mode = "prompt"
-[plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory.tools.forget]
+[plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory_plugin.tools.forget]
 approval_mode = "prompt"
-[plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory.tools.unforget]
+[plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory_plugin.tools.unforget]
 approval_mode = "prompt"

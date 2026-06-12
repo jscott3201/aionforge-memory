@@ -224,10 +224,12 @@ approval_mode = "prompt"
 ```
 
 When the MCP server comes from the installed Codex plugin rather than a
-standalone `[mcp_servers]` entry, keep policy under the plugin-scoped table:
+standalone `[mcp_servers]` entry, keep policy under the plugin-scoped table. The
+plugin server id is `aionforge_memory_plugin` so it does not collide with a
+standalone `aionforge_memory` server in the same Codex config:
 
 ```toml
-[plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory]
+[plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory_plugin]
 enabled = true
 default_tools_approval_mode = "prompt"
 enabled_tools = [
@@ -240,21 +242,21 @@ enabled_tools = [
   "forget",
   "unforget",
 ]
-[plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory.tools.server_status]
+[plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory_plugin.tools.server_status]
 approval_mode = "approve"
-[plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory.tools.search]
+[plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory_plugin.tools.search]
 approval_mode = "approve"
-[plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory.tools.consolidation_status]
+[plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory_plugin.tools.consolidation_status]
 approval_mode = "approve"
-[plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory.tools.audit_history]
+[plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory_plugin.tools.audit_history]
 approval_mode = "approve"
-[plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory.tools.capture]
+[plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory_plugin.tools.capture]
 approval_mode = "prompt"
-[plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory.tools.consolidate]
+[plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory_plugin.tools.consolidate]
 approval_mode = "prompt"
-[plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory.tools.forget]
+[plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory_plugin.tools.forget]
 approval_mode = "prompt"
-[plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory.tools.unforget]
+[plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory_plugin.tools.unforget]
 approval_mode = "prompt"
 ```
 

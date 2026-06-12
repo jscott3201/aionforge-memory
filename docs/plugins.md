@@ -55,14 +55,16 @@ marketplace-qualified plugin id. For the repo marketplace, the id is
 `aionforge-memory@aionforge-plugins`.
 
 The package root `plugin.json` also points at `.mcp.json`. That keeps Codex on
-one server id, `aionforge_memory`, with `bearer_token_env_var` auth instead of
-also loading a second unauthenticated or header-style entry from a generic MCP
-manifest.
+one plugin-scoped server id, `aionforge_memory_plugin`, with
+`bearer_token_env_var` auth instead of also loading a second unauthenticated or
+header-style entry from a generic MCP manifest. Standalone Codex config examples
+continue to use `aionforge_memory`; the different names prevent plugin MCP from
+overwriting a user-managed server entry.
 
 Use `plugins/aionforge-memory/codex.plugin-policy.example.toml` as the Codex
 config shape when you want plugin-scoped MCP policy. It keeps read-like tools
 approved and mutating tools prompted under
-`plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory`.
+`plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory_plugin`.
 
 Claude Code can test the package directly:
 

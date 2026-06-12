@@ -1,6 +1,6 @@
 {
   "name": "aionforge-memory",
-  "version": "0.1.0+codex.20260611232718",
+  "version": "0.1.0+codex.20260612024135",
   "description": "Agent skills and MCP configuration for using Aionforge Memory as durable project memory.",
   "author": {
     "name": "Aionforge Labs",
