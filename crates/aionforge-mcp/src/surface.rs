@@ -103,7 +103,7 @@ pub(crate) const TOOLS: &[ToolSurface] = &[
     ToolSurface {
         name: "capture",
         class: ToolClass::Mutating,
-        default_output: "one compact [capture] receipt line",
+        default_output: "one compact [capture] receipt line with marker ids when flags fire",
         verbose: false,
         read_only_hint: false,
         destructive_hint: false,
@@ -131,7 +131,7 @@ pub(crate) const TOOLS: &[ToolSurface] = &[
     ToolSurface {
         name: "forget",
         class: ToolClass::Mutating,
-        default_output: "one compact [forget] outcome line",
+        default_output: "one compact [forget] outcome line with disabled config reason when off",
         verbose: false,
         read_only_hint: false,
         destructive_hint: true,
@@ -148,7 +148,7 @@ pub(crate) const TOOLS: &[ToolSurface] = &[
     ToolSurface {
         name: "unforget",
         class: ToolClass::Mutating,
-        default_output: "one compact [unforget] outcome line",
+        default_output: "one compact [unforget] outcome line with disabled config reason when off",
         verbose: false,
         read_only_hint: false,
         destructive_hint: false,
