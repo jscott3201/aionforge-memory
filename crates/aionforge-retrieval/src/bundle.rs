@@ -258,7 +258,7 @@ const COMPACT_SNIPPET_CHARS: usize = 160;
 
 impl RecallBundle {
     /// Render a token-thrifty view: a one-line summary, then one line per memory
-    /// (serialization id, role, score, snippet). `verbose` adds a trusted route/signal
+    /// (serialization id, role, score, score band, snippet). `verbose` adds a trusted route/signal
     /// explanation plus the namespace, trust, and per-signal contributions as attributes
     /// on each memory line.
     ///
@@ -306,6 +306,12 @@ impl RecallBundle {
 
         out.push_str(RECALLED_MEMORY_CONTEXT_OPEN);
         out.push('\n');
+        let max_ranked_score = self
+            .structured
+            .iter()
+            .filter(|entry| !matches!(entry, StructuredEntry::CoreBlock(_)))
+            .map(StructuredEntry::score)
+            .fold(0.0_f64, f64::max);
         for entry in &self.structured {
             let id = entry.id();
             let sid = entry.serialization_id();
@@ -334,7 +340,11 @@ impl RecallBundle {
             // instead of a score, so a 0.0000 cannot read as "barely relevant".
             match entry {
                 StructuredEntry::CoreBlock(_) => out.push_str(" always=\"true\""),
-                _ => out.push_str(&format!(" score=\"{:.4}\"", entry.score())),
+                _ => out.push_str(&format!(
+                    " score=\"{:.4}\" score_band=\"{}\"",
+                    entry.score(),
+                    score_band(entry.score(), max_ranked_score),
+                )),
             }
             if verbose {
                 let via = entry
@@ -426,6 +436,20 @@ fn weight_list(weights: &SignalWeights, signals_run: &[Signal]) -> String {
         "none".to_string()
     } else {
         rendered.join(",")
+    }
+}
+
+fn score_band(score: f64, max_score: f64) -> &'static str {
+    if max_score <= 0.0 || score <= 0.0 {
+        return "low";
+    }
+    let ratio = score / max_score;
+    if ratio >= 0.85 {
+        "high"
+    } else if ratio >= 0.50 {
+        "medium"
+    } else {
+        "low"
     }
 }
 
@@ -610,5 +634,18 @@ mod tests {
             verbose.contains("via=\"lexical#0 dense#1\""),
             "verbose memory lines keep per-hit contributions: {verbose}"
         );
+        assert!(
+            verbose.contains("score=\"1.0000\" score_band=\"high\""),
+            "ranked hits expose a coarse score band next to the raw RRF score: {verbose}"
+        );
+    }
+
+    #[test]
+    fn score_bands_are_relative_to_the_top_ranked_hit() {
+        assert_eq!(score_band(0.85, 1.0), "high");
+        assert_eq!(score_band(0.50, 1.0), "medium");
+        assert_eq!(score_band(0.49, 1.0), "low");
+        assert_eq!(score_band(0.0, 1.0), "low");
+        assert_eq!(score_band(1.0, 0.0), "low");
     }
 }

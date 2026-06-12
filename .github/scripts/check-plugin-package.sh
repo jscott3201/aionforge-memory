@@ -114,6 +114,7 @@ for file in \
   "$plugin_dir/cursor.mcp.json" \
   "$plugin_dir/settings.json" \
   ".agents/plugins/marketplace.json" \
+  ".claude-plugin/marketplace.json" \
   ".cursor-plugin/marketplace.json"
 do
   require_file "$file"
@@ -162,7 +163,7 @@ if [ -e "$plugin_dir/mcp.json" ]; then
   fail "legacy generic MCP manifest remains at $plugin_dir/mcp.json"
 fi
 
-if grep -RIEq 'sk-[A-Za-z0-9_-]{16,}|Bearer [A-Za-z0-9_-]{16,}' "$plugin_dir" .agents/plugins .cursor-plugin; then
+if grep -RIEq 'sk-[A-Za-z0-9_-]{16,}|Bearer [A-Za-z0-9_-]{16,}' "$plugin_dir" .agents/plugins .claude-plugin .cursor-plugin; then
   fail "plugin package appears to contain a literal secret"
 fi
 

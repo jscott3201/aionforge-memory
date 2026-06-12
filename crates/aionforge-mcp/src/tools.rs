@@ -255,14 +255,25 @@ fn format_receipt(receipt: &CaptureReceipt) -> String {
         "[capture] {id} verdict={verdict} redactions={redactions} flags={flags} emb={embedding} ns={ns}{supersedes}",
         id = receipt.episode_id,
         redactions = receipt.redactions.len(),
-        flags = receipt.injection_flags.len(),
+        flags = format_injection_flags(&receipt.injection_flags),
         ns = receipt.namespace,
     )
 }
 
+fn format_injection_flags(flags: &[String]) -> String {
+    if flags.is_empty() {
+        return "0".to_string();
+    }
+    format!("{}[{}]", flags.len(), flags.join(","))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::parse_captured_at;
+    use aionforge_domain::ids::Id;
+    use aionforge_domain::namespace::Namespace;
+    use aionforge_engine::{CaptureReceipt, CaptureVerdict, EmbeddingOutcome};
+
+    use super::{format_injection_flags, format_receipt, parse_captured_at};
 
     #[test]
     fn parses_rfc3339_with_zulu_and_offset_to_the_same_instant() {
@@ -283,5 +294,36 @@ mod tests {
         );
         // A bare date is not a full RFC3339 instant.
         assert!(parse_captured_at("2026-06-07").is_err());
+    }
+
+    #[test]
+    fn capture_receipt_names_injection_flags_when_present() {
+        assert_eq!(format_injection_flags(&[]), "0");
+        assert_eq!(
+            format_injection_flags(&[
+                "ignore_or_forget_context".to_string(),
+                "system_prompt".to_string(),
+            ]),
+            "2[ignore_or_forget_context,system_prompt]"
+        );
+
+        let receipt = CaptureReceipt {
+            episode_id: Id::generate(),
+            verdict: CaptureVerdict::New,
+            audit_id: Some(Id::generate()),
+            namespace: Namespace::Agent("0198b7d6-4d40-7000-8000-000000000001".to_string()),
+            redactions: Vec::new(),
+            injection_flags: vec![
+                "ignore_or_forget_context".to_string(),
+                "system_prompt".to_string(),
+            ],
+            embedding: EmbeddingOutcome::Embedded,
+            supersedes: None,
+        };
+        let line = format_receipt(&receipt);
+        assert!(
+            line.contains("flags=2[ignore_or_forget_context,system_prompt]"),
+            "{line}"
+        );
     }
 }

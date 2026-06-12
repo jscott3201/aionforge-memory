@@ -59,7 +59,9 @@ entry owns tool policy and transport settings. The plugin skills declare a
 dependency on that canonical server id instead of creating a second
 plugin-scoped server.
 
-Claude Code can test the package directly:
+Claude Code marketplace installs can discover the same package from the
+repo-scoped `.claude-plugin/marketplace.json`. Direct local testing still works
+without the marketplace file:
 
 ```bash
 claude --plugin-dir ./plugins/aionforge-memory

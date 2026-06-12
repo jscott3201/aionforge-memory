@@ -89,6 +89,12 @@ and leaves no trace in a candidate's `contributions`. A negative weight has no r
 meaning (there is no anti-ranking) and is a caller error, caught by `debug_assert!` since
 the only caller is the in-process router.
 
+Compact recall output shows both the raw fused score and a coarse `score_band`.
+The band is relative to the top ranked hit in the same response (`high`,
+`medium`, or `low`), not a global confidence or probability. Keep the raw score
+for debugging rank-fusion details; use the band when an agent only needs to know
+whether a hit is near the top of this recall result.
+
 Fusion is deterministic, and that is a hard requirement, not a nicety. Identical inputs
 and graph state yield identical output, and any permutation of the input rankings yields
 byte-identical output. Two things make that hold even though floating-point addition is

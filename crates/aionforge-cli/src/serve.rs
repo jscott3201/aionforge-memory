@@ -66,6 +66,8 @@ async fn serve_http(
 
     let listener = TcpListener::bind(args.listen).await?;
     let builder = AutoHttpBuilder::new(TokioExecutor::new());
+    let shutdown = shutdown_signal();
+    tokio::pin!(shutdown);
     loop {
         tokio::select! {
             accepted = listener.accept() => {
@@ -81,13 +83,31 @@ async fn serve_http(
                     let _ = builder.serve_connection(io, hyper_service).await;
                 });
             }
-            interrupted = tokio::signal::ctrl_c() => {
-                interrupted?;
+            shutdown = &mut shutdown => {
+                shutdown?;
+                report_shutdown_signal();
                 break;
             }
         }
     }
     Ok(())
+}
+
+async fn shutdown_signal() -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        let mut terminate =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+        tokio::select! {
+            interrupted = tokio::signal::ctrl_c() => interrupted,
+            _ = terminate.recv() => Ok(()),
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        tokio::signal::ctrl_c().await
+    }
 }
 
 fn report_startup_embedder(status: &StartupEmbedderStatus) {
@@ -97,6 +117,11 @@ fn report_startup_embedder(status: &StartupEmbedderStatus) {
         "aionforge serve: {}",
         render_startup_embedder_status(status),
     );
+}
+
+fn report_shutdown_signal() {
+    let mut stderr = std::io::stderr().lock();
+    let _ = writeln!(stderr, "aionforge serve: shutdown signal received");
 }
 
 #[derive(Clone)]

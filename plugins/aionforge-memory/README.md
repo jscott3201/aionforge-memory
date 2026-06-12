@@ -45,6 +45,9 @@ After installing the plugin, use `codex plugin list` to confirm the
 marketplace-qualified plugin id. The repo marketplace id is
 `aionforge-memory@aionforge-plugins`.
 
+Claude Code marketplace installs can discover this repo plugin through
+`.claude-plugin/marketplace.json`.
+
 Claude Code can test the plugin directly:
 
 ```bash
@@ -59,11 +62,16 @@ Cursor can load it as a local plugin by symlinking or copying this directory int
 
 ## Identity
 
-Aionforge namespaces memory by agent id. Use the same UUID across sessions when you want the same private memory namespace. If the client cannot read `AIONFORGE_AGENT_ID`, place the UUID in that client's standing instructions and have the skills use it as:
+Aionforge namespaces memory by agent id. Use the same UUID across sessions when
+you want the same private memory namespace. The MCP `capture` tool takes the raw
+UUID as `agent_id`; recall, audit, forget, and unforget take the namespace form:
 
 ```text
 agent:<uuid>
 ```
+
+If the client cannot read `AIONFORGE_AGENT_ID`, place the UUID in that client's
+standing instructions and have the skills use those two forms consistently.
 
 ## Safety
 

@@ -72,11 +72,19 @@ pass the raw UUID to `capture.agent_id` and `agent:<uuid>` to `search.viewer`,
 `forget.viewer`, `unforget.viewer`, and `audit_history.viewer`.
 
 Team visibility is host-asserted through the optional `teams` array. A local
-client should only provide teams it is allowed to assert. Transport-derived
-identity for remote deployments is deferred until the platform OAuth/identity
-layer exists.
+client should only provide teams it is allowed to assert. The MCP server does
+not derive a default principal from the connection or token, and the current MCP
+`capture` tool writes only to the authoring agent's private namespace. Shared
+team or project writes belong behind a host that asserts those authorities
+explicitly. Transport-derived identity for remote deployments is deferred until
+the platform OAuth/identity layer exists.
 
-## OAuth readiness
+Private namespaces are intentionally private. An agent cannot inspect another
+agent's private capture receipt by id unless the host gives it a shared team or
+system visibility path. Use team namespaces or a shared host-level workflow for
+cross-agent project bootstraps rather than exchanging private receipt ids.
+
+## OAuth Readiness
 
 The built-in HTTP server is not an OAuth resource server. For remote multi-user
 deployments, mount an OAuth verifier at the HTTP boundary that validates issuer,
@@ -285,7 +293,24 @@ sampling posture, and mutating-tool count. `consolidate` runs bounded foreground
 ticks with server-owned deterministic rules only and returns
 `ERR_CONSOLIDATE_BUSY` if another foreground run is active. `forget` and
 `unforget` require a `viewer` and enforce the viewer's writable namespace set at
-the server boundary.
+the server boundary. When active forgetting is disabled, point lifecycle receipts
+include `outcome=disabled reason=forgetting.enabled=false` so an agent can tell
+the operator which config gate to change before retrying.
+
+Capture receipts keep their compact shape:
+
+```text
+[capture] <id> verdict=<new|exact_duplicate|near_duplicate(d)> redactions=<n> flags=<n-or-n[id,...]> emb=<embedded|not_requested> ns=<namespace>
+```
+
+`flags=0` means no injection marker fired. When one or more markers fire, the
+receipt names the marker ids as `flags=N[id,...]`; the detailed audit and
+episode origin keep the same ids for later provenance reads.
+
+Compact `search` memory lines include `score="<raw-rrf>"` and
+`score_band="<high|medium|low>"` for ranked hits. The band is relative to the
+top hit in that response and is meant for quick agent triage; it is not a global
+confidence value.
 
 `aionforge://manifest/tools.json` is the lowest-token machine-readable contract
 for agents. It lists the server version, tool classes, recommended approval
@@ -296,6 +321,23 @@ for `forget`; treat those as client-routing hints and keep the approval policy a
 the enforcement rule. The other compact resources intentionally mirror this
 section; keep them short because they are meant for agent context, not exhaustive
 documentation.
+
+`consolidation_status` reports the service-wide backlog, not a caller-private
+queue. In deployments where multiple agents capture concurrently, the pending
+count can move between status and foreground `consolidate` calls. Its lag value
+is based on the stored memory timestamp; historical backfills that preserve old
+event times can therefore show large lag even when the newly enqueued work is
+fresh.
+
+`capture` receipts are the first provenance handle for a new write. Capture
+audit rows are system-authored and principal-scoped audit reads may not expose
+them to ordinary agent viewers; use `audit_history` for lifecycle and other
+visible audit rows, and preserve capture receipt ids in handoffs when later
+audit or supersession work is likely.
+
+`supersedes` on capture is evidence for consolidation, not an immediate recall
+filter. A refreshed memory can rank above the older one while the older evidence
+still appears lower in ordinary search results.
 
 The repo also ships an installable plugin package at
 [`plugins/aionforge-memory`](../plugins/aionforge-memory). The MCP resource

@@ -449,7 +449,7 @@ fn point_forget_outcome(outcome: PointForget) -> String {
         PointForget::AlreadyForgotten => "already_forgotten".to_string(),
         PointForget::NotFound => "not_found".to_string(),
         PointForget::Protected(reason) => format!("protected({reason:?})"),
-        PointForget::Disabled => "disabled".to_string(),
+        PointForget::Disabled => "disabled reason=forgetting.enabled=false".to_string(),
     }
 }
 
@@ -459,7 +459,7 @@ fn point_unforget_outcome(outcome: PointUnforget) -> String {
         PointUnforget::NotForgotten => "not_forgotten".to_string(),
         PointUnforget::NotFound => "not_found".to_string(),
         PointUnforget::Protected(reason) => format!("protected({reason:?})"),
-        PointUnforget::Disabled => "disabled".to_string(),
+        PointUnforget::Disabled => "disabled reason=forgetting.enabled=false".to_string(),
     }
 }
 

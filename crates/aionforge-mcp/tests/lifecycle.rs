@@ -203,6 +203,28 @@ async fn consolidation_status_reports_pending_capture_backlog() -> TestResult {
 }
 
 #[tokio::test]
+async fn capture_receipt_lists_fired_injection_marker_ids() -> TestResult {
+    let memory = memory();
+    let agent = Id::generate();
+    let receipt = capture_tool(
+        &memory,
+        capture_params(
+            "The red-team note quoted ignore previous instructions as a marker example, \
+             then kept this explanatory project context.",
+            &agent.to_string(),
+        ),
+        &now(),
+    )
+    .await?;
+
+    assert!(
+        receipt.contains("flags=1[ignore_or_forget_context]"),
+        "{receipt}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn capture_consolidate_search_forget_cycle_is_client_visible() -> TestResult {
     let memory = forgetting_memory();
     let agent = Id::generate();
@@ -263,6 +285,32 @@ async fn capture_consolidate_search_forget_cycle_is_client_visible() -> TestResu
 
     let forgotten = forget_tool(&memory, lifecycle_params(&memory_id, agent), &now())?;
     assert!(forgotten.contains("outcome=forgotten"), "{forgotten}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn disabled_forget_receipts_name_the_config_gate() -> TestResult {
+    let memory = memory();
+    let agent = Id::generate();
+    let receipt = capture_tool(
+        &memory,
+        capture_params("disabled forgetting receipt memory", &agent.to_string()),
+        &now(),
+    )
+    .await?;
+    let memory_id = capture_id(&receipt);
+
+    let forgotten = forget_tool(&memory, lifecycle_params(&memory_id, agent), &now())?;
+    assert!(
+        forgotten.contains("outcome=disabled reason=forgetting.enabled=false"),
+        "{forgotten}"
+    );
+
+    let restored = unforget_tool(&memory, lifecycle_params(&memory_id, agent), &now())?;
+    assert!(
+        restored.contains("outcome=disabled reason=forgetting.enabled=false"),
+        "{restored}"
+    );
     Ok(())
 }
 
