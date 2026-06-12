@@ -25,4 +25,4 @@ EXPOSE 3918
 STOPSIGNAL SIGTERM
 
 ENTRYPOINT ["/usr/local/bin/aionforge"]
-CMD ["serve", "http", "--listen", "0.0.0.0:3918", "--data-dir", "/data", "--bearer-token-agent-env", "AIONFORGE_AGENT_ID=AIONFORGE_MCP_TOKEN"]
+CMD ["serve", "http", "--listen", "0.0.0.0:3918", "--data-dir", "/data"]

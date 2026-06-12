@@ -76,18 +76,6 @@ pub(crate) struct ServeArgs {
     /// Address for Streamable HTTP. Ignored for stdio.
     #[arg(long, default_value = "127.0.0.1:3918")]
     pub(crate) listen: SocketAddr,
-    /// Principal-bound bearer token in AGENT_ID_ENV=TOKEN_ENV form. Repeat for each HTTP agent.
-    #[arg(long = "bearer-token-agent-env", value_name = "AGENT_ID_ENV=TOKEN_ENV")]
-    pub(crate) bearer_token_agent_env: Vec<String>,
-    /// Public MCP endpoint URL used in OAuth resource metadata. Ignored for stdio.
-    #[arg(long, value_name = "URL")]
-    pub(crate) public_url: Option<String>,
-    /// OAuth authorization server issuer accepted by an upstream verifier. Repeatable.
-    #[arg(long = "oauth-issuer", value_name = "ISSUER")]
-    pub(crate) oauth_issuers: Vec<String>,
-    /// OAuth scope advertised for the protected MCP resource. Repeatable.
-    #[arg(long = "oauth-scope", value_name = "SCOPE")]
-    pub(crate) oauth_scopes: Vec<String>,
     /// Allowed HTTP Host header. Repeat to override the loopback defaults.
     #[arg(long = "allowed-host", value_name = "HOST")]
     pub(crate) allowed_hosts: Vec<String>,
@@ -171,18 +159,10 @@ mod tests {
             "http",
             "--listen",
             "127.0.0.1:4927",
-            "--bearer-token-agent-env",
-            "AIONFORGE_AGENT_ID=AIONFORGE_MCP_TOKEN",
             "--allowed-host",
             "localhost",
             "--allowed-origin",
             "http://localhost:3000",
-            "--public-url",
-            "https://memory.example.com/mcp",
-            "--oauth-issuer",
-            "https://auth.example.com",
-            "--oauth-scope",
-            "memory.read",
             "--stateless",
             "--json-response",
             "--max-request-body-bytes",
@@ -198,18 +178,8 @@ mod tests {
             args.listen,
             "127.0.0.1:4927".parse::<SocketAddr>().expect("addr")
         );
-        assert_eq!(
-            args.bearer_token_agent_env,
-            vec!["AIONFORGE_AGENT_ID=AIONFORGE_MCP_TOKEN"]
-        );
         assert_eq!(args.allowed_hosts, vec!["localhost"]);
         assert_eq!(args.allowed_origins, vec!["http://localhost:3000"]);
-        assert_eq!(
-            args.public_url.as_deref(),
-            Some("https://memory.example.com/mcp")
-        );
-        assert_eq!(args.oauth_issuers, vec!["https://auth.example.com"]);
-        assert_eq!(args.oauth_scopes, vec!["memory.read"]);
         assert!(args.stateless);
         assert!(args.json_response);
         assert_eq!(args.max_request_body_bytes, Some(4096));

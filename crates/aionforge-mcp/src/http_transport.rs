@@ -1,25 +1,17 @@
 //! Streamable HTTP helpers for mounting the MCP server in host applications.
 
 use std::convert::Infallible;
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::Arc;
-use std::task::{Context, Poll};
 
 use aionforge_domain::contracts::Embedder;
-use aionforge_domain::ids::Id;
 use aionforge_engine::Memory;
 use bytes::Bytes;
-use http::header::{AUTHORIZATION, WWW_AUTHENTICATE};
-use http::{HeaderMap, Request, Response, StatusCode};
-use http_body_util::{BodyExt, Full, combinators::BoxBody};
-use rmcp::RoleServer;
-use rmcp::service::RequestContext;
+use http::Response;
+use http_body_util::combinators::BoxBody;
 use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
 };
 use serde::Serialize;
-use tower_service::Service;
 
 use crate::AionforgeMcp;
 use crate::http_body_limit::{
@@ -41,10 +33,6 @@ type AionforgeRawStreamableHttpService<E> =
 /// The rmcp Streamable HTTP service for Aionforge Memory.
 pub type AionforgeStreamableHttpService<E> =
     RequestBodyLimitService<AionforgeRawStreamableHttpService<E>>;
-
-/// The bearer-authenticated Streamable HTTP service for Aionforge Memory.
-pub type AionforgeAuthenticatedStreamableHttpService<E> =
-    BearerAuthService<AionforgeStreamableHttpService<E>>;
 
 /// Return the RFC 9728 well-known path for an MCP endpoint path.
 ///
@@ -252,10 +240,6 @@ pub enum StreamableHttpConfigError {
         /// The zero-based index of the bad origin entry.
         index: usize,
     },
-    /// At least one principal-bound bearer token must be configured.
-    EmptyBearerTokenSet,
-    /// The configured bearer token is empty or whitespace.
-    EmptyBearerToken,
     /// The configured request body limit is zero.
     ZeroMaxRequestBodyBytes,
 }
@@ -273,10 +257,6 @@ impl std::fmt::Display for StreamableHttpConfigError {
                     "streamable HTTP allowed_origins[{index}] cannot be blank"
                 )
             }
-            Self::EmptyBearerTokenSet => {
-                f.write_str("streamable HTTP bearer token set cannot be empty")
-            }
-            Self::EmptyBearerToken => f.write_str("streamable HTTP bearer token cannot be empty"),
             Self::ZeroMaxRequestBodyBytes => {
                 f.write_str("streamable HTTP max_request_body_bytes cannot be zero")
             }
@@ -305,306 +285,6 @@ fn validate_non_empty_entries(
         }
     }
     Ok(())
-}
-
-/// A bearer token for Streamable HTTP authentication.
-#[derive(Clone, PartialEq, Eq)]
-pub struct BearerToken(String);
-
-impl BearerToken {
-    /// Build a bearer token from host configuration.
-    ///
-    /// # Errors
-    /// Returns [`StreamableHttpConfigError::EmptyBearerToken`] when `raw` is empty
-    /// or whitespace.
-    pub fn new(raw: impl Into<String>) -> Result<Self, StreamableHttpConfigError> {
-        let raw = raw.into();
-        let trimmed = raw.trim();
-        if trimmed.is_empty() {
-            return Err(StreamableHttpConfigError::EmptyBearerToken);
-        }
-        Ok(Self(trimmed.to_string()))
-    }
-}
-
-impl std::fmt::Debug for BearerToken {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("BearerToken(<redacted>)")
-    }
-}
-
-/// The authenticated principal bound to a static bearer token.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BearerPrincipal {
-    agent_id: Id,
-}
-
-impl BearerPrincipal {
-    /// Bind a token to one acting agent id.
-    #[must_use]
-    pub fn agent(agent_id: Id) -> Self {
-        Self { agent_id }
-    }
-
-    /// The acting agent id for this token.
-    #[must_use]
-    pub fn agent_id(&self) -> Id {
-        self.agent_id
-    }
-
-    /// The canonical viewer namespace this token may assert at the tool boundary.
-    #[must_use]
-    pub fn viewer(&self) -> String {
-        format!("agent:{}", self.agent_id)
-    }
-}
-
-/// A successful HTTP bearer authentication, inserted into request extensions.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AuthenticatedBearer {
-    principal: BearerPrincipal,
-}
-
-impl AuthenticatedBearer {
-    /// Build an authenticated-bearer marker for the matched token principal.
-    #[must_use]
-    pub fn new(principal: BearerPrincipal) -> Self {
-        Self { principal }
-    }
-
-    /// The principal bound to the matched bearer token.
-    #[must_use]
-    pub fn principal(&self) -> &BearerPrincipal {
-        &self.principal
-    }
-}
-
-/// One static bearer token and the principal it authenticates.
-#[derive(Clone, PartialEq, Eq)]
-pub struct BearerTokenCredential {
-    token: BearerToken,
-    principal: BearerPrincipal,
-}
-
-impl BearerTokenCredential {
-    /// Bind a bearer token to one acting principal.
-    #[must_use]
-    pub fn new(token: BearerToken, principal: BearerPrincipal) -> Self {
-        Self { token, principal }
-    }
-
-    /// Build a token credential for one agent.
-    #[must_use]
-    pub fn agent(token: BearerToken, agent_id: Id) -> Self {
-        Self::new(token, BearerPrincipal::agent(agent_id))
-    }
-
-    /// The principal authenticated by this credential.
-    #[must_use]
-    pub fn principal(&self) -> &BearerPrincipal {
-        &self.principal
-    }
-}
-
-impl std::fmt::Debug for BearerTokenCredential {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("BearerTokenCredential")
-            .field("token", &self.token)
-            .field("principal", &self.principal)
-            .finish()
-    }
-}
-
-/// Static bearer credentials accepted by the HTTP transport.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BearerTokenSet {
-    credentials: Vec<BearerTokenCredential>,
-}
-
-impl BearerTokenSet {
-    /// Build a non-empty token set.
-    ///
-    /// # Errors
-    /// Returns [`StreamableHttpConfigError::EmptyBearerTokenSet`] when no credentials
-    /// are provided.
-    pub fn new(
-        credentials: impl IntoIterator<Item = BearerTokenCredential>,
-    ) -> Result<Self, StreamableHttpConfigError> {
-        let credentials: Vec<_> = credentials.into_iter().collect();
-        if credentials.is_empty() {
-            return Err(StreamableHttpConfigError::EmptyBearerTokenSet);
-        }
-        Ok(Self { credentials })
-    }
-
-    /// Accepted credential count.
-    #[must_use]
-    pub fn len(&self) -> usize {
-        self.credentials.len()
-    }
-
-    /// Whether the token set is empty. A valid token set never is.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.credentials.is_empty()
-    }
-
-    /// Return authentication metadata for a matching Authorization header.
-    #[must_use]
-    pub fn authenticate_headers(&self, headers: &HeaderMap) -> Option<AuthenticatedBearer> {
-        let token = bearer_token_from_headers(headers)?;
-        let mut matched = None;
-        for credential in &self.credentials {
-            let is_match = constant_time_eq(token, &credential.token.0);
-            if is_match && matched.is_none() {
-                matched = Some(AuthenticatedBearer::new(credential.principal.clone()));
-            }
-        }
-        matched
-    }
-}
-
-/// Return the authenticated bearer attached to an rmcp request context, if this
-/// request came through the Aionforge HTTP bearer wrapper.
-#[must_use]
-pub fn authenticated_bearer_from_context(
-    context: &RequestContext<RoleServer>,
-) -> Option<AuthenticatedBearer> {
-    let parts = context.extensions.get::<http::request::Parts>()?;
-    parts.extensions.get::<AuthenticatedBearer>().cloned()
-}
-
-fn bearer_token_from_headers(headers: &HeaderMap) -> Option<&str> {
-    let value = headers.get(AUTHORIZATION)?;
-    let raw = value.to_str().ok()?;
-    let (scheme, token) = raw.split_once(' ')?;
-    scheme
-        .eq_ignore_ascii_case("Bearer")
-        .then(|| token.trim())
-        .filter(|token| !token.is_empty())
-}
-
-/// `WWW-Authenticate: Bearer` challenge metadata for protected HTTP deployments.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BearerAuthChallenge {
-    realm: String,
-    resource_metadata_url: Option<String>,
-    scope: Option<String>,
-}
-
-impl Default for BearerAuthChallenge {
-    fn default() -> Self {
-        Self {
-            realm: "aionforge-mcp".to_string(),
-            resource_metadata_url: None,
-            scope: None,
-        }
-    }
-}
-
-impl BearerAuthChallenge {
-    /// Set the bearer realm.
-    #[must_use]
-    pub fn with_realm(mut self, realm: impl Into<String>) -> Self {
-        self.realm = realm.into();
-        self
-    }
-
-    /// Advertise the RFC 9728 Protected Resource Metadata URL.
-    #[must_use]
-    pub fn with_resource_metadata_url(mut self, url: impl Into<String>) -> Self {
-        self.resource_metadata_url = Some(url.into());
-        self
-    }
-
-    /// Advertise the minimum scopes required for the current protected resource.
-    #[must_use]
-    pub fn with_scope(mut self, scope: impl Into<String>) -> Self {
-        self.scope = Some(scope.into());
-        self
-    }
-
-    /// Render the value for a `WWW-Authenticate` response header.
-    #[must_use]
-    pub fn header_value(&self) -> String {
-        let mut out = format!("Bearer realm={}", quoted_auth_param(&self.realm));
-        if let Some(url) = &self.resource_metadata_url {
-            out.push_str(", resource_metadata=");
-            out.push_str(&quoted_auth_param(url));
-        }
-        if let Some(scope) = &self.scope {
-            out.push_str(", scope=");
-            out.push_str(&quoted_auth_param(scope));
-        }
-        out
-    }
-}
-
-/// Tower service wrapper that requires `Authorization: Bearer <token>`.
-#[derive(Clone)]
-pub struct BearerAuthService<S> {
-    inner: S,
-    tokens: BearerTokenSet,
-    challenge: BearerAuthChallenge,
-}
-
-impl<S> BearerAuthService<S> {
-    /// Wrap an HTTP service with static bearer-token authentication.
-    #[must_use]
-    pub fn new(inner: S, tokens: BearerTokenSet) -> Self {
-        Self::with_challenge(inner, tokens, BearerAuthChallenge::default())
-    }
-
-    /// Wrap an HTTP service with static bearer-token authentication and a custom challenge.
-    #[must_use]
-    pub fn with_challenge(
-        inner: S,
-        tokens: BearerTokenSet,
-        challenge: BearerAuthChallenge,
-    ) -> Self {
-        Self {
-            inner,
-            tokens,
-            challenge,
-        }
-    }
-
-    /// Consume the wrapper and return the inner service.
-    #[must_use]
-    pub fn into_inner(self) -> S {
-        self.inner
-    }
-
-    /// Check whether a request header map carries the configured bearer token.
-    #[must_use]
-    pub fn is_authorized_headers(&self, headers: &HeaderMap) -> bool {
-        self.tokens.authenticate_headers(headers).is_some()
-    }
-}
-
-impl<S, B> Service<Request<B>> for BearerAuthService<S>
-where
-    S: Service<Request<B>, Response = HttpResponse, Error = Infallible> + Send + 'static,
-    S::Future: Send + 'static,
-    B: Send + 'static,
-{
-    type Response = HttpResponse;
-    type Error = Infallible;
-    type Future =
-        Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send + 'static>>;
-
-    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.inner.poll_ready(cx)
-    }
-
-    fn call(&mut self, mut request: Request<B>) -> Self::Future {
-        let Some(authenticated) = self.tokens.authenticate_headers(request.headers()) else {
-            let challenge = self.challenge.clone();
-            return Box::pin(async move { Ok(unauthorized_response(&challenge)) });
-        };
-        request.extensions_mut().insert(authenticated);
-        Box::pin(self.inner.call(request))
-    }
 }
 
 /// Build rmcp's Streamable HTTP config from Aionforge options.
@@ -636,76 +316,4 @@ pub fn streamable_http_service<E: Embedder + 'static>(
         config,
     );
     RequestBodyLimitService::new(service, max_request_body_bytes)
-}
-
-/// Build a bearer-authenticated Streamable HTTP service.
-///
-/// Mount the returned service under [`STREAMABLE_HTTP_ENDPOINT`].
-///
-/// # Errors
-/// Returns [`StreamableHttpConfigError`] when the options are invalid.
-pub fn streamable_http_service_with_auth<E: Embedder + 'static>(
-    memory: Arc<Memory<E>>,
-    options: StreamableHttpOptions,
-    tokens: BearerTokenSet,
-) -> Result<AionforgeAuthenticatedStreamableHttpService<E>, StreamableHttpConfigError> {
-    streamable_http_service_with_auth_challenge(
-        memory,
-        options,
-        tokens,
-        BearerAuthChallenge::default(),
-    )
-}
-
-/// Build a bearer-authenticated Streamable HTTP service with a custom challenge.
-///
-/// Mount the returned service under [`STREAMABLE_HTTP_ENDPOINT`].
-///
-/// # Errors
-/// Returns [`StreamableHttpConfigError`] when the options are invalid.
-pub fn streamable_http_service_with_auth_challenge<E: Embedder + 'static>(
-    memory: Arc<Memory<E>>,
-    options: StreamableHttpOptions,
-    tokens: BearerTokenSet,
-    challenge: BearerAuthChallenge,
-) -> Result<AionforgeAuthenticatedStreamableHttpService<E>, StreamableHttpConfigError> {
-    Ok(BearerAuthService::with_challenge(
-        streamable_http_service(memory, options)?,
-        tokens,
-        challenge,
-    ))
-}
-
-fn unauthorized_response(challenge: &BearerAuthChallenge) -> HttpResponse {
-    Response::builder()
-        .status(StatusCode::UNAUTHORIZED)
-        .header(WWW_AUTHENTICATE, challenge.header_value())
-        .body(Full::new(Bytes::from_static(b"Unauthorized: bearer token required")).boxed())
-        .expect("valid unauthorized response")
-}
-
-fn quoted_auth_param(value: &str) -> String {
-    let mut out = String::with_capacity(value.len() + 2);
-    out.push('"');
-    for ch in value.chars().filter(|ch| !ch.is_ascii_control()) {
-        if ch == '"' || ch == '\\' {
-            out.push('\\');
-        }
-        out.push(ch);
-    }
-    out.push('"');
-    out
-}
-
-fn constant_time_eq(left: &str, right: &str) -> bool {
-    let left = left.as_bytes();
-    let right = right.as_bytes();
-    let len = left.len().max(right.len());
-    let mut diff = left.len() ^ right.len();
-    for i in 0..len {
-        let a = left.get(i).copied().unwrap_or(0);
-        let b = right.get(i).copied().unwrap_or(0);
-        diff |= usize::from(a ^ b);
-    }
-    diff == 0
 }

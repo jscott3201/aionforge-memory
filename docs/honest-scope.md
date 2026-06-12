@@ -39,7 +39,7 @@ The table below lists deferred work and the current safe posture.
 | Erasure residency | Hard purge removes live graph reachability, but purged values can remain in the WAL until snapshot publication exists. | Compaction-backed residency guarantees. |
 | Pi support | Intentionally deferred. | Read Pi's packaging/extension model and design a native integration. |
 | Semantic contradiction cooling | Drift cooling uses deterministic vector proximity to buy the detector time. | Any LLM contradiction classifier must stay off-cursor and opt-in. |
-| OAuth verifier | The server publishes protected-resource metadata and bearer challenges. | Full remote deployments must add an upstream OAuth verifier. |
+| OAuth verifier | The crate has protected-resource metadata helpers, but the built-in HTTP server does not validate OAuth tokens. | Full remote deployments must add an upstream OAuth verifier. |
 
 ## Determinism boundary
 

@@ -47,12 +47,13 @@ provider inventory, embedder dimension consistency, consolidation lag, and graph
 Start the MCP server from the same single binary:
 
 ```bash
-AIONFORGE_AGENT_ID=018f0cc0-40f3-7cc4-b8b4-9ca41f88d012 \
-AIONFORGE_MCP_TOKEN=change-me \
-  aionforge --config /etc/aionforge/config.toml \
-  serve http --listen 127.0.0.1:3918 \
-  --bearer-token-agent-env AIONFORGE_AGENT_ID=AIONFORGE_MCP_TOKEN
+aionforge --config /etc/aionforge/config.toml \
+  serve http --listen 127.0.0.1:3918
 ```
+
+Keep the built-in HTTP server on loopback. For remote or shared deployments,
+place an OAuth resource-server verifier or equivalent perimeter in front of the
+MCP endpoint before exposing it.
 
 ## Recovery validation
 
@@ -128,10 +129,10 @@ docker run --rm \
 ```
 
 After restoring a Docker volume, start the container with the restored volume and the same config
-and environment used by the source service. That includes the embedder model and dimension,
-bearer-token principal mapping, and audit-signing seed custody. If `security.audit_key_env` names
-an environment-held audit seed, the restored service must receive the same environment value; if
-the seed is file-backed, it is inside the copied `audit/` directory.
+and environment used by the source service. That includes the embedder model and dimension and
+audit-signing seed custody. If `security.audit_key_env` names an environment-held audit seed, the
+restored service must receive the same environment value; if the seed is file-backed, it is inside
+the copied `audit/` directory.
 
 Use `recover`, not `doctor`, as the restore gate. `doctor` can create a fresh store when the WAL
 is missing; `recover` refuses that case and proves the backup is an existing WAL-backed store.

@@ -145,8 +145,10 @@ require_grep "$plugin_dir/.cursor-plugin/plugin.json" '"mcpServers": "\./cursor\
 reject_grep "$plugin_dir/plugin.json" '"mcpServers"' "root MCP path"
 
 require_grep "$plugin_dir/settings.json" '"agent": "aionforge-memory-steward"' "Claude default agent setting"
-require_grep "$plugin_dir/claude.mcp.json" '"Authorization": "Bearer \$\{AIONFORGE_MCP_TOKEN\}"' "Claude bearer header"
-require_grep "$plugin_dir/cursor.mcp.json" '"Authorization": "Bearer \$\{env:AIONFORGE_MCP_TOKEN\}"' "Cursor bearer header"
+reject_grep "$plugin_dir/claude.mcp.json" '"Authorization"' "Claude static auth header"
+reject_grep "$plugin_dir/claude.mcp.json" 'AIONFORGE_MCP_TOKEN' "Claude token env reference"
+reject_grep "$plugin_dir/cursor.mcp.json" '"Authorization"' "Cursor static auth header"
+reject_grep "$plugin_dir/cursor.mcp.json" 'AIONFORGE_MCP_TOKEN' "Cursor token env reference"
 
 if [ -e "$plugin_dir/.mcp.json" ]; then
   fail "Codex plugin MCP manifest remains at $plugin_dir/.mcp.json"

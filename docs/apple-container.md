@@ -33,8 +33,7 @@ Run the server on loopback:
 scripts/container-dev.sh run
 ```
 
-The script prints the MCP endpoint and the bearer token it generated or reused.
-By default the endpoint is:
+The script prints the MCP endpoint. By default the endpoint is:
 
 ```text
 http://127.0.0.1:3918/mcp
@@ -48,8 +47,6 @@ container image pull --platform linux/arm64 ghcr.io/aionforge-labs/aionforge-mem
 container run -d \
   --name aionforge-memory \
   --platform linux/arm64 \
-  --env AIONFORGE_AGENT_ID=018f0cc0-40f3-7cc4-b8b4-9ca41f88d012 \
-  --env AIONFORGE_MCP_TOKEN="$(openssl rand -hex 32)" \
   --publish 127.0.0.1:3918:3918 \
   ghcr.io/aionforge-labs/aionforge-memory:0.1.0
 ```
@@ -57,9 +54,11 @@ container run -d \
 The runtime image keeps the same default command as Docker:
 
 ```bash
-aionforge serve http --listen 0.0.0.0:3918 --data-dir /data \
-  --bearer-token-agent-env AIONFORGE_AGENT_ID=AIONFORGE_MCP_TOKEN
+aionforge serve http --listen 0.0.0.0:3918 --data-dir /data
 ```
+
+Publish the container port to host loopback unless an external verifier is
+protecting the endpoint.
 
 ## Operate the local container
 

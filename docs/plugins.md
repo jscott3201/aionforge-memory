@@ -38,14 +38,13 @@ Recommended local setup:
 
 ```bash
 export AIONFORGE_AGENT_ID="<uuid>"
-export AIONFORGE_MCP_TOKEN="$(openssl rand -hex 32)"
-aionforge serve http --listen 127.0.0.1:3918 \
-  --bearer-token-agent-env AIONFORGE_AGENT_ID=AIONFORGE_MCP_TOKEN
+aionforge serve http --listen 127.0.0.1:3918
 ```
 
 If a client cannot read `AIONFORGE_AGENT_ID`, put the UUID in that client's
 standing instructions and have the skills use `agent:<uuid>` for recall and the
-raw UUID for capture.
+raw UUID for capture. Keep the local HTTP endpoint on loopback; use an external
+OAuth resource-server verifier before exposing it remotely.
 
 ## Client Notes
 
@@ -56,8 +55,8 @@ shows the marketplace-qualified plugin id. For the repo marketplace, the id is
 
 The Codex plugin does not register its own MCP server. Configure the Aionforge
 MCP endpoint separately as `[mcp_servers.aionforge_memory]`; that standalone MCP
-entry owns auth, login, tool policy, and transport settings. The plugin skills
-declare a dependency on that canonical server id instead of creating a second
+entry owns tool policy and transport settings. The plugin skills declare a
+dependency on that canonical server id instead of creating a second
 plugin-scoped server.
 
 Claude Code can test the package directly:

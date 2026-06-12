@@ -19,17 +19,18 @@ For Claude Code, the plugin also ships:
 ## Requirements
 
 - A running Aionforge Memory MCP server.
-- `AIONFORGE_MCP_TOKEN` set when the server uses bearer auth.
 - A stable agent UUID for the workflow, usually stored as `AIONFORGE_AGENT_ID` or in your client instructions.
 
 Start a local HTTP server:
 
 ```bash
 export AIONFORGE_AGENT_ID="018f0cc0-40f3-7cc4-b8b4-9ca41f88d012"
-export AIONFORGE_MCP_TOKEN="$(openssl rand -hex 32)"
-aionforge serve http --listen 127.0.0.1:3918 \
-  --bearer-token-agent-env AIONFORGE_AGENT_ID=AIONFORGE_MCP_TOKEN
+aionforge serve http --listen 127.0.0.1:3918
 ```
+
+Keep the built-in HTTP server on loopback. Put an OAuth resource-server verifier
+or equivalent perimeter in front of `/mcp` before exposing it to a shared
+network.
 
 ## Install Notes
 
@@ -50,7 +51,7 @@ Claude Code can test the plugin directly:
 claude --plugin-dir ./plugins/aionforge-memory
 ```
 
-The Claude manifest points to `claude.mcp.json`, which keeps Claude's static-header MCP shape separate from the Codex config.
+The Claude manifest points to `claude.mcp.json`, which keeps Claude's MCP shape separate from the Codex config.
 
 When the plugin is enabled in Claude Code, `settings.json` selects the `aionforge-memory-steward` agent by default. Run `/reload-plugins` after local edits, then check `/agents` and `/help` to confirm the agent and commands are loaded.
 

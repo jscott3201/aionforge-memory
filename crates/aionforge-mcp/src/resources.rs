@@ -46,7 +46,7 @@ pub const CURSOR_CONFIG_RESOURCE_URI: &str = "aionforge://client/cursor/mcp.json
 const MCP_SURFACE_GUIDE: &str = r#"Aionforge MCP Surface
 
 Start locally with `aionforge serve stdio` or
-`aionforge serve http --listen 127.0.0.1:3918 --bearer-token-agent-env AIONFORGE_AGENT_ID=AIONFORGE_MCP_TOKEN`.
+`aionforge serve http --listen 127.0.0.1:3918`.
 
 Tool routing:
 - server_status: verify version, counts, transports, and tool posture.
@@ -57,10 +57,10 @@ Tool routing:
 - forget / unforget: point lifecycle mutations in the viewer's writable namespace set.
 - audit_history: principal-scoped audit page by subject, by kind, or by subject+kind.
 
-Token discipline:
-- Repeat --bearer-token-agent-env once per agent; each token binds one id.
-- capture.agent_id and viewer must match bearer principal.
-- Rotate by overlapping old and new token env vars across a restart; verify a read-only call, then remove the old binding.
+Local HTTP discipline:
+- Keep the built-in HTTP server on loopback. It does not implement transport authentication.
+- Identity comes from tool parameters: agent_id, viewer, and optional teams.
+- Do not expose the built-in HTTP server to a shared network without an external OAuth resource-server verifier or equivalent perimeter.
 - Keep default compact output for normal use; set verbose=true only for debugging.
 - Compact search <memory id="..."> is the domain memory id used by forget and audit_history; sid is only the serialization order.
 - For audit_history, omit subject_id only with kind to scan all visible subjects for that audit kind; the compact header reports subject=*.
@@ -96,7 +96,7 @@ Recommended client posture:
 - Ask before capture because it persists new user-provided memory.
 - Ask before consolidate because it mutates derived memory, even though runs are bounded and deterministic.
 - Ask before forget/unforget; require an explicit user request naming the target id.
-- Keep server HTTP on loopback unless bearer auth and network policy are configured.
+- Keep the built-in HTTP server on loopback. Use an external OAuth resource-server verifier before exposing MCP over a shared network.
 - Protocol annotations mirror this posture: read-like tools set readOnlyHint=true, all tools set openWorldHint=false, and forget sets destructiveHint=true.
 
 Error markers worth preserving in summaries:
@@ -111,30 +111,19 @@ const CLIENT_OAUTH_GUIDE: &str = r#"Aionforge MCP OAuth Guide
 Use this when the HTTP MCP endpoint is remote or shared.
 
 Server posture:
-- The built-in bearer wrapper is a local/private guard, not a full OAuth verifier.
-- Put an OAuth resource-server verifier in front of /mcp for multi-user deployments.
+- The built-in Aionforge HTTP server is a local loopback endpoint and does not validate OAuth tokens.
+- Put an OAuth resource-server verifier in front of /mcp for remote or multi-user deployments.
 - Validate issuer, expiry, audience/resource, and scopes before requests reach MCP.
-- If the verifier forwards to the aionforge CLI server, replace inbound Authorization with a configured internal principal-bound bearer token.
-- Repeat --bearer-token-agent-env for every internal principal token; do not reuse one token across agents.
-- Rotate internal tokens by overlapping old and new bindings across a restart, updating clients or the verifier, verifying a read-only request, then removing the retired binding.
+- Bind tokens to the public MCP resource URL and reject tokens issued for other resources.
+- The verifier should advertise protected-resource metadata through a 401 WWW-Authenticate resource_metadata parameter or /.well-known/oauth-protected-resource/mcp.
 - Never pass inbound MCP access tokens through to downstream services.
 - Use the public MCP URL as the resource value, e.g. https://memory.example.com/mcp.
 
-Aionforge serve flags:
-- --bearer-token-agent-env AGENT_ID_ENV=TOKEN_ENV
-- --public-url https://memory.example.com/mcp
-- --oauth-issuer https://auth.example.com
-- --oauth-scope memory.read --oauth-scope memory.write
-- With principal-bound bearer tokens, 401 responses include resource_metadata and scope.
-- Metadata is served at /.well-known/oauth-protected-resource/mcp.
-
 Client modes:
-- Static bearer: use the per-client config resource and keep auth in env vars.
-- OAuth: omit static Authorization headers and let the client authenticate.
-- Codex: run `codex mcp login aionforge_memory`; optional top-level callback settings are mcp_oauth_callback_port and mcp_oauth_callback_url.
-- Claude Code: configure the HTTP URL without Authorization and authenticate from /mcp; only use headers for static bearer.
-- OpenCode: omit headers for automatic OAuth, use an oauth object for preregistered clients, or oauth=false for static bearer.
-- Cursor: use remote url entries; static OAuth credentials belong in auth.CLIENT_ID, auth.CLIENT_SECRET, and auth.scopes.
+- Local loopback: omit Authorization headers and OAuth login. Configure only the URL and tool approvals.
+- Remote OAuth: configure clients against the verifier's public MCP URL and let the client run its OAuth flow.
+- Codex: local config should omit bearer_token_env_var. Only run `codex mcp login aionforge_memory` against a real OAuth-protected remote endpoint.
+- Claude Code, OpenCode, and Cursor: omit static Authorization headers for local loopback. Use their OAuth settings only for real OAuth deployments.
 "#;
 
 const PLUGIN_PACKAGE_GUIDE: &str = r#"Aionforge Memory Plugin
@@ -152,8 +141,7 @@ It bundles:
 
 Requirements:
 - Run the Aionforge MCP server over HTTP or stdio.
-- Set AIONFORGE_AGENT_ID to one stable agent UUID across sessions.
-- Set AIONFORGE_MCP_TOKEN to that agent's bearer secret when HTTP auth is enabled.
+- Use one stable agent UUID across sessions when calling capture/search so the same private memory namespace is reused.
 
 Local test paths:
 - Claude Code: claude --plugin-dir ./plugins/aionforge-memory
@@ -172,7 +160,6 @@ Recall safety:
 const CODEX_CONFIG: &str = r#"# ~/.codex/config.toml or .codex/config.toml in a trusted project
 [mcp_servers.aionforge_memory]
 url = "http://127.0.0.1:3918/mcp"
-bearer_token_env_var = "AIONFORGE_MCP_TOKEN"
 startup_timeout_sec = 10
 tool_timeout_sec = 60
 enabled = true
@@ -206,10 +193,8 @@ approval_mode = "prompt"
 [mcp_servers.aionforge_memory.tools.unforget]
 approval_mode = "prompt"
 
-# OAuth mode for remote deployments:
-# - remove bearer_token_env_var
-# - run: codex mcp login aionforge_memory
-# - optionally set top-level mcp_oauth_callback_port / mcp_oauth_callback_url
+# Remote OAuth deployments should point this URL at an OAuth-protected
+# verifier and then use: codex mcp login aionforge_memory
 "#;
 
 const CLAUDE_CODE_CONFIG: &str = r#"{
@@ -217,9 +202,6 @@ const CLAUDE_CODE_CONFIG: &str = r#"{
     "aionforge-memory": {
       "type": "http",
       "url": "${AIONFORGE_MCP_URL:-http://127.0.0.1:3918/mcp}",
-      "headers": {
-        "Authorization": "Bearer ${AIONFORGE_MCP_TOKEN}"
-      },
       "timeout": 60000
     }
   }
@@ -233,10 +215,6 @@ const OPENCODE_CONFIG: &str = r#"{
       "type": "remote",
       "url": "http://127.0.0.1:3918/mcp",
       "enabled": true,
-      "oauth": false,
-      "headers": {
-        "Authorization": "Bearer {env:AIONFORGE_MCP_TOKEN}"
-      },
       "timeout": 60000
     }
   },
@@ -256,10 +234,7 @@ const OPENCODE_CONFIG: &str = r#"{
 const CURSOR_CONFIG: &str = r#"{
   "mcpServers": {
     "aionforge-memory": {
-      "url": "http://127.0.0.1:3918/mcp",
-      "headers": {
-        "Authorization": "Bearer ${env:AIONFORGE_MCP_TOKEN}"
-      }
+      "url": "http://127.0.0.1:3918/mcp"
     }
   }
 }
@@ -310,7 +285,7 @@ static RESOURCES: &[StaticResource] = &[
         uri: MCP_SURFACE_GUIDE_RESOURCE_URI,
         name: "mcp_surface_guide",
         title: "Aionforge MCP Surface Guide",
-        description: "Compact tool routing, token discipline, and resource index for MCP clients.",
+        description: "Compact tool routing, local HTTP posture, and resource index for MCP clients.",
         mime_type: TEXT,
         body: ResourceBody::Static(MCP_SURFACE_GUIDE),
     },
@@ -342,7 +317,7 @@ static RESOURCES: &[StaticResource] = &[
         uri: CODEX_CONFIG_RESOURCE_URI,
         name: "codex_config",
         title: "Codex MCP Config",
-        description: "Codex config.toml template with Streamable HTTP bearer auth and per-tool approvals.",
+        description: "Codex config.toml template with local Streamable HTTP and per-tool approvals.",
         mime_type: TOML,
         body: ResourceBody::Static(CODEX_CONFIG),
     },
@@ -366,7 +341,7 @@ static RESOURCES: &[StaticResource] = &[
         uri: CURSOR_CONFIG_RESOURCE_URI,
         name: "cursor_config",
         title: "Cursor MCP Config",
-        description: "Cursor mcp.json template with loopback HTTP and token interpolation.",
+        description: "Cursor mcp.json template with local loopback HTTP.",
         mime_type: JSON,
         body: ResourceBody::Static(CURSOR_CONFIG),
     },
@@ -592,11 +567,10 @@ mod tests {
             panic!("codex config resource should be text");
         };
         assert!(codex.contains("[mcp_servers.aionforge_memory]"));
-        assert!(codex.contains("bearer_token_env_var = \"AIONFORGE_MCP_TOKEN\""));
+        assert!(!codex.contains("bearer_token_env_var"));
         assert!(codex.contains("default_tools_approval_mode = \"prompt\""));
         assert!(codex.contains("approval_mode = \"approve\""));
         assert!(codex.contains("codex mcp login aionforge_memory"));
-        assert!(codex.contains("mcp_oauth_callback_port"));
 
         let claude = read_json_resource(CLAUDE_CODE_CONFIG_RESOURCE_URI);
         let claude_server = &claude["mcpServers"]["aionforge-memory"];
@@ -605,30 +579,21 @@ mod tests {
             claude_server["url"],
             "${AIONFORGE_MCP_URL:-http://127.0.0.1:3918/mcp}"
         );
-        assert_eq!(
-            claude_server["headers"]["Authorization"],
-            "Bearer ${AIONFORGE_MCP_TOKEN}"
-        );
+        assert!(claude_server["headers"].is_null());
         assert_eq!(claude_server["timeout"].as_u64(), Some(60_000));
 
         let opencode = read_json_resource(OPENCODE_CONFIG_RESOURCE_URI);
         let opencode_server = &opencode["mcp"]["aionforge-memory"];
         assert_eq!(opencode_server["type"], "remote");
-        assert_eq!(opencode_server["oauth"], false);
-        assert_eq!(
-            opencode_server["headers"]["Authorization"],
-            "Bearer {env:AIONFORGE_MCP_TOKEN}"
-        );
+        assert!(opencode_server["oauth"].is_null());
+        assert!(opencode_server["headers"].is_null());
         assert_eq!(opencode["permission"]["aionforge-memory_search"], "allow");
         assert_eq!(opencode["permission"]["aionforge-memory_capture"], "ask");
 
         let cursor = read_json_resource(CURSOR_CONFIG_RESOURCE_URI);
         let cursor_server = &cursor["mcpServers"]["aionforge-memory"];
         assert_eq!(cursor_server["url"], "http://127.0.0.1:3918/mcp");
-        assert_eq!(
-            cursor_server["headers"]["Authorization"],
-            "Bearer ${env:AIONFORGE_MCP_TOKEN}"
-        );
+        assert!(cursor_server["headers"].is_null());
     }
 
     #[test]
@@ -642,10 +607,7 @@ mod tests {
         assert!(text.contains("/.well-known/oauth-protected-resource/mcp"));
         assert!(text.contains("audience/resource"));
         assert!(text.contains("Never pass inbound MCP access tokens through"));
-        assert!(
-            text.contains("Repeat --bearer-token-agent-env for every internal principal token")
-        );
-        assert!(text.contains("Rotate internal tokens by overlapping old and new bindings"));
+        assert!(text.contains("Only run `codex mcp login aionforge_memory`"));
         assert!(text.contains("Codex"));
         assert!(text.contains("Claude Code"));
         assert!(text.contains("OpenCode"));

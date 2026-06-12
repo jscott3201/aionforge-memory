@@ -76,21 +76,20 @@ For a local agent process, stdio is the smallest surface:
 aionforge --config /path/to/config.toml serve stdio
 ```
 
-For a shared local service, use Streamable HTTP with a bearer token and agent id
-from the environment:
+For a local service shared by clients on the same machine, use Streamable HTTP
+on loopback:
 
 ```bash
-export AIONFORGE_AGENT_ID="018f0cc0-40f3-7cc4-b8b4-9ca41f88d012"
-export AIONFORGE_MCP_TOKEN="$(openssl rand -hex 32)"
 aionforge --config /path/to/config.toml \
-  serve http --listen 127.0.0.1:3918 \
-  --bearer-token-agent-env AIONFORGE_AGENT_ID=AIONFORGE_MCP_TOKEN
+  serve http --listen 127.0.0.1:3918
 ```
 
 Then configure your client with the MCP endpoint
-`http://127.0.0.1:3918/mcp`. The setup snippets for Codex CLI, Claude Code,
-OpenCode, and Cursor are in [MCP client support](mcp-clients.md) and are also
-published by the server as compact `aionforge://client/...` resources.
+`http://127.0.0.1:3918/mcp`. Do not expose the built-in HTTP server to a shared
+network without an OAuth resource-server verifier or equivalent perimeter. The
+setup snippets for Codex CLI, Claude Code, OpenCode, and Cursor are in
+[MCP client support](mcp-clients.md) and are also published by the server as
+compact `aionforge://client/...` resources.
 
 ## Run in Docker
 
@@ -107,8 +106,6 @@ as UID/GID `10001` in an Alpine runtime image:
 ```bash
 docker build -t aionforge-memory:dev .
 docker run --rm \
-  -e AIONFORGE_AGENT_ID=018f0cc0-40f3-7cc4-b8b4-9ca41f88d012 \
-  -e AIONFORGE_MCP_TOKEN=change-me \
   -p 127.0.0.1:3918:3918 \
   -v aionforge-data:/data \
   aionforge-memory:dev

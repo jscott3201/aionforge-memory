@@ -2,8 +2,9 @@
 
 Aionforge Memory exposes MCP Tools, Resources, and Prompts over stdio and over the
 MCP Streamable HTTP transport. The HTTP service is intended to be mounted at
-`/mcp`, bound to loopback by default, and protected with a bearer token whenever
-it is reachable outside a private process boundary.
+`/mcp` and bound to loopback by default. The built-in HTTP server does not
+implement transport authentication; keep it local unless an OAuth
+resource-server verifier or equivalent perimeter protects the endpoint.
 
 The current server instructions deliberately lead with the recall safety rule:
 memories returned by `search` are third-party data wrapped in
@@ -26,26 +27,20 @@ discover the recommended posture without loading this whole document:
 
 ## Server defaults
 
-Use `aionforge_mcp::streamable_http_service` or
-`aionforge_mcp::streamable_http_service_with_auth` from an HTTP host and mount
-the returned Tower service at `aionforge_mcp::STREAMABLE_HTTP_ENDPOINT` (`/mcp`).
+Use `aionforge_mcp::streamable_http_service` from an HTTP host and mount the
+returned Tower service at `aionforge_mcp::STREAMABLE_HTTP_ENDPOINT` (`/mcp`).
 The single `aionforge` binary can serve the same surface directly:
 
 ```bash
 aionforge serve stdio
-AIONFORGE_AGENT_ID=018f0cc0-40f3-7cc4-b8b4-9ca41f88d012 \
-AIONFORGE_MCP_TOKEN=change-me \
-  aionforge serve http --listen 127.0.0.1:3918 \
-  --bearer-token-agent-env AIONFORGE_AGENT_ID=AIONFORGE_MCP_TOKEN
+aionforge serve http --listen 127.0.0.1:3918
 ```
 
-The Docker image defaults to the authenticated HTTP server on port `3918` and
-stores state under `/data`:
+The Docker image serves HTTP on port `3918` and stores state under `/data`.
+Publish the host port on loopback for local use:
 
 ```bash
 docker run --rm \
-  -e AIONFORGE_AGENT_ID=018f0cc0-40f3-7cc4-b8b4-9ca41f88d012 \
-  -e AIONFORGE_MCP_TOKEN=change-me \
   -p 127.0.0.1:3918:3918 \
   -v aionforge-data:/data \
   aionforge-memory:dev
@@ -65,95 +60,45 @@ Default HTTP posture:
   `StreamableHttpOptions::max_request_body_bytes`; oversized requests return
   `413 Payload Too Large`.
 - Session mode: stateful, matching normal Streamable HTTP clients.
-- Auth: the CLI requires principal-bound bearer tokens for HTTP. Each token
-  authenticates one agent id, and identity-bearing tools reject mismatched
-  `agent_id` or `viewer` values.
+- Auth: none in the built-in local HTTP server. Identity-bearing tools take
+  explicit `agent_id`, `viewer`, and optional `teams` parameters; namespace
+  authorization is applied from those values.
 
-## Multi-agent bearer tokens and rotation
+## Agent identity parameters
 
-Use one bearer token per agent principal. Repeat `--bearer-token-agent-env` for
-each agent that should reach the HTTP server:
+Aionforge namespaces memory by agent id. Use one stable UUID per agent workflow
+when you want the same private memory namespace across sessions. Clients should
+pass the raw UUID to `capture.agent_id` and `agent:<uuid>` to `search.viewer`,
+`forget.viewer`, `unforget.viewer`, and `audit_history.viewer`.
 
-```bash
-export AIONFORGE_CODEX_AGENT_ID=018f0cc0-40f3-7cc4-b8b4-9ca41f88d012
-export AIONFORGE_CODEX_MCP_TOKEN="$(openssl rand -hex 32)"
-export AIONFORGE_CLAUDE_AGENT_ID=018f0cc0-40f3-7cc4-b8b4-9ca41f88d013
-export AIONFORGE_CLAUDE_MCP_TOKEN="$(openssl rand -hex 32)"
+Team visibility is host-asserted through the optional `teams` array. A local
+client should only provide teams it is allowed to assert. Transport-derived
+identity for remote deployments is deferred until the platform OAuth/identity
+layer exists.
 
-aionforge serve http --listen 127.0.0.1:3918 \
-  --bearer-token-agent-env AIONFORGE_CODEX_AGENT_ID=AIONFORGE_CODEX_MCP_TOKEN \
-  --bearer-token-agent-env AIONFORGE_CLAUDE_AGENT_ID=AIONFORGE_CLAUDE_MCP_TOKEN
-```
+## OAuth readiness
 
-The accepted token determines the authenticated principal. Tools that carry
-identity, such as `capture.agent_id` or `search.viewer`, must match that
-principal or the request is refused with `ERR_AUTH_PRINCIPAL_MISMATCH`. Do not
-reuse one token across multiple agents.
+The built-in HTTP server is not an OAuth resource server. For remote multi-user
+deployments, mount an OAuth verifier at the HTTP boundary that validates issuer,
+expiry, scope, and audience/resource binding before the MCP service sees the
+request. Custom hosts can mount the library service behind that verifier. Do not
+pass inbound MCP access tokens through to downstream services, and do not accept
+tokens that were issued for another resource.
 
-Rotate a token by overlap:
-
-1. Mint a new token in a new environment variable for the same agent id.
-2. Restart the server with both old and new token bindings present. The CLI reads
-   token env vars at startup; it does not hot-reload them.
-3. Update the client or upstream verifier to use the new token.
-4. Verify with a read-only request such as `server_status` or a narrow `search`.
-5. Remove the retired token binding and restart again.
-
-For OAuth deployments, rotate the verifier's internal principal-bound bearer
-tokens the same way. Inbound MCP access tokens should be validated at the
-verifier and never passed through to the Aionforge MCP service.
-
-## OAuth Readiness
-
-The built-in bearer wrapper is a local/private deployment guard, not a complete
-OAuth resource server. For remote multi-user deployments, mount an OAuth verifier
-at the HTTP boundary that validates issuer, expiry, scope, and audience/resource
-binding before the MCP service sees the request. If the verifier forwards to the
-`aionforge` CLI server, it must replace the inbound `Authorization` header with a
-configured internal principal-bound bearer token. Custom hosts can instead mount
-the library service behind the verifier. Do not pass inbound MCP access tokens
-through to downstream services.
-
-The crate exposes two small helpers for MCP OAuth 2.1 integration:
+The crate exposes a small helper for MCP OAuth 2.1 integration:
 
 - `OAuthProtectedResourceMetadata` renders RFC 9728 metadata for the MCP endpoint.
   For the default `/mcp` path, serve it at
-  `/.well-known/oauth-protected-resource/mcp` or expose the same URL through the
-  `WWW-Authenticate` challenge.
-- `BearerAuthChallenge` can advertise `resource_metadata` and `scope` parameters
-  on 401 responses so SDK clients can discover the authorization server and
-  request the right scopes.
+  `/.well-known/oauth-protected-resource/mcp` from the verifier or custom host.
 
 Use the MCP endpoint URL as the OAuth `resource` value, for example
 `https://memory.example.com/mcp`. Authorization and token requests should include
 that resource value, and the verifier should reject tokens that are not audience
 bound to it.
 
-When running the built-in HTTP server behind an OAuth verifier, pass the public
-endpoint URL and issuer metadata so MCP clients can discover the protected
-resource:
-
-```bash
-AIONFORGE_AGENT_ID=018f0cc0-40f3-7cc4-b8b4-9ca41f88d012 \
-AIONFORGE_MCP_TOKEN=change-me \
-aionforge serve http --listen 127.0.0.1:3918 \
-  --bearer-token-agent-env AIONFORGE_AGENT_ID=AIONFORGE_MCP_TOKEN \
-  --public-url https://memory.example.com/mcp \
-  --oauth-issuer https://auth.example.com \
-  --oauth-scope memory.read --oauth-scope memory.write
-```
-
-That serves RFC 9728 protected-resource metadata at
-`/.well-known/oauth-protected-resource/mcp` and advertises that metadata URL in
-the 401 `WWW-Authenticate` challenge. Token validation is still the job of the
-upstream OAuth verifier; the built-in bearer wrapper checks the bearer value that
-reaches the MCP service and binds it to the configured agent id.
-
-Static bearer and OAuth modes should not be mixed in client config. A static
-`Authorization` header is appropriate for loopback/private deployments. For
-OAuth deployments, omit static authorization headers so the client can discover
-the protected-resource metadata, run its authorization flow, and request tokens
-for the MCP endpoint resource.
+For OAuth deployments, omit static `Authorization` headers from client config so
+the client can discover the protected-resource metadata, run its authorization
+flow, and request tokens for the MCP endpoint resource.
 
 This guidance tracks the public MCP authorization spec and the current client
 docs for Codex, Claude Code, OpenCode, and Cursor:
@@ -166,20 +111,19 @@ docs for Codex, Claude Code, OpenCode, and Cursor:
 
 ## Codex CLI
 
-Codex reads MCP servers from `config.toml`. HTTP entries use `url`, and static
-bearer tokens should come from an environment variable.
+Codex reads MCP servers from `config.toml`. Local loopback HTTP entries only
+need the `url` and tool policy.
 
 ```toml
 [mcp_servers.aionforge_memory]
 url = "http://127.0.0.1:3918/mcp"
-bearer_token_env_var = "AIONFORGE_MCP_TOKEN"
 startup_timeout_sec = 10
 tool_timeout_sec = 60
 default_tools_approval_mode = "prompt"
 enabled = true
 ```
 
-For OAuth deployments, remove `bearer_token_env_var` and run:
+For real OAuth-protected remote deployments, point `url` at the verifier and run:
 
 ```bash
 codex mcp login aionforge_memory
@@ -187,8 +131,8 @@ codex mcp login aionforge_memory
 
 If the authorization server requires a fixed redirect URI, set Codex's top-level
 `mcp_oauth_callback_port` and, when needed, `mcp_oauth_callback_url`. Codex uses
-server-advertised `scopes_supported` when available, so keep
-`--oauth-scope` values tight and stable.
+server-advertised `scopes_supported` when available, so keep verifier-advertised
+scopes tight and stable.
 
 For full surface support, approve read-like tools and keep mutating tools behind
 prompts:
@@ -225,9 +169,8 @@ approval_mode = "prompt"
 
 The Codex plugin does not register a second MCP server. Configure
 `[mcp_servers.aionforge_memory]` first, then install the plugin only when you
-want the memory workflow skills that use that canonical MCP entry. MCP auth,
-login, enabled tools, and approval policy all stay on the standalone server
-table above.
+want the memory workflow skills that use that canonical MCP entry. Enabled tools
+and approval policy stay on the standalone server table above.
 
 ## Claude Code
 
@@ -241,9 +184,6 @@ JSON `type` may be `http` or the MCP transport name `streamable-http`.
     "aionforge-memory": {
       "type": "http",
       "url": "${AIONFORGE_MCP_URL:-http://127.0.0.1:3918/mcp}",
-      "headers": {
-        "Authorization": "Bearer ${AIONFORGE_MCP_TOKEN}"
-      },
       "timeout": 60000
     }
   }
@@ -258,16 +198,13 @@ agent needs client setup or tool policy details.
 Claude Code's tool search keeps MCP tool schemas out of the initial context by
 default and uses the server `instructions` field to decide when to discover
 tools, so Aionforge keeps instructions compact and front-loads the recall safety
-rule. For OAuth deployments, configure the HTTP URL without the `Authorization`
-header and authenticate from `/mcp`; if a static header is present and rejected,
-Claude Code treats the connection as failed instead of falling back to OAuth.
+rule. For OAuth deployments, point the URL at the verifier and authenticate from
+`/mcp`.
 
 ## OpenCode
 
 OpenCode configures MCP servers under the top-level `mcp` object. Use `remote`
-for Streamable HTTP and send the bearer token as a static header. Set
-`oauth: false` for static bearer mode so OpenCode does not try OAuth discovery
-for a token-protected local endpoint.
+for Streamable HTTP.
 
 ```json
 {
@@ -277,19 +214,16 @@ for a token-protected local endpoint.
       "type": "remote",
       "url": "http://127.0.0.1:3918/mcp",
       "enabled": true,
-      "oauth": false,
-      "headers": {
-        "Authorization": "Bearer {env:AIONFORGE_MCP_TOKEN}"
-      },
       "timeout": 60000
     }
   }
 }
 ```
 
-For OAuth deployments, omit `headers`; OpenCode will detect the 401 challenge
-and can use dynamic client registration. If the provider requires a
-pre-registered client, set `oauth.clientId`, `oauth.clientSecret`, and `oauth.scope`.
+For OAuth deployments, point `url` at the verifier. OpenCode can use dynamic
+client registration when the provider supports it. If the provider requires a
+pre-registered client, set `oauth.clientId`, `oauth.clientSecret`, and
+`oauth.scope`.
 
 OpenCode permissions default to permissive behavior. Prefer explicit permission
 rules for this server:
@@ -312,35 +246,30 @@ rules for this server:
 ## Cursor
 
 Cursor uses the `mcp.json` shape and supports both stdio and remote MCP
-servers. Use the HTTP server for a shared Aionforge process, and use
-environment interpolation for secrets. The repository plugin stores this Cursor
-template as `cursor.mcp.json` so Codex does not ingest it as a second MCP
-server.
+servers. Use the HTTP server for a local Aionforge process. The repository
+plugin stores this Cursor template as `cursor.mcp.json` so Codex does not ingest
+it as a second MCP server.
 
 ```json
 {
   "mcpServers": {
     "aionforge-memory": {
-      "url": "http://127.0.0.1:3918/mcp",
-      "headers": {
-        "Authorization": "Bearer ${env:AIONFORGE_MCP_TOKEN}"
-      }
+      "url": "http://127.0.0.1:3918/mcp"
     }
   }
 }
 ```
 
-For sensitive data, prefer a local loopback server, keep the token in the
-environment, and review Cursor's MCP logs when debugging connection or auth
-failures. Use Cursor's tool approval and run-mode controls for `capture`,
-`consolidate`, `forget`, and `unforget`.
+For sensitive data, keep the built-in HTTP server on loopback and review
+Cursor's MCP logs when debugging connection failures. Use Cursor's tool approval
+and run-mode controls for `capture`, `consolidate`, `forget`, and `unforget`.
 
 For pre-registered OAuth clients, Cursor uses an `auth` object on remote URL
 entries with `CLIENT_ID`, optional `CLIENT_SECRET`, and optional `scopes`.
 Cursor's fixed MCP OAuth redirect URL is
 `cursor://anysphere.cursor-mcp/oauth/callback`; register it with providers that
 require redirect allow-listing. For dynamic OAuth discovery, omit the static
-bearer header.
+Authorization header.
 
 ## Tool approval posture
 

@@ -182,8 +182,8 @@ async fn mcp_transport_lists_client_policy_resources() -> TestResult {
         .collect();
     assert_eq!(manifest_tools, listed_tool_names);
     let surface = read_text_resource(&client, MCP_SURFACE_GUIDE_RESOURCE_URI).await?;
-    assert!(surface.contains("Repeat --bearer-token-agent-env once per agent"));
-    assert!(surface.contains("Rotate by overlapping old and new token env vars"));
+    assert!(surface.contains("Keep the built-in HTTP server on loopback"));
+    assert!(surface.contains("does not implement transport authentication"));
 
     let listed_tools_by_name: BTreeMap<String, _> = listed_tools
         .iter()
@@ -257,7 +257,7 @@ async fn mcp_transport_lists_client_policy_resources() -> TestResult {
     assert!(codex.contains("[mcp_servers.aionforge_memory]"));
     assert!(!codex.contains("aionforge_memory_plugin"));
     assert!(codex.contains("\"server_status\""));
-    assert!(codex.contains("bearer_token_env_var = \"AIONFORGE_MCP_TOKEN\""));
+    assert!(!codex.contains("bearer_token_env_var"));
     assert!(codex.contains("approval_mode = \"prompt\""));
 
     let policy = read_text_resource(&client, TOOL_APPROVAL_POLICY_RESOURCE_URI).await?;
@@ -269,9 +269,8 @@ async fn mcp_transport_lists_client_policy_resources() -> TestResult {
     let oauth = read_text_resource(&client, CLIENT_OAUTH_GUIDE_RESOURCE_URI).await?;
     assert!(oauth.contains("resource_metadata"));
     assert!(oauth.contains("codex mcp login aionforge_memory"));
-    assert!(oauth.contains("oauth=false"));
-    assert!(oauth.contains("Repeat --bearer-token-agent-env for every internal principal token"));
-    assert!(oauth.contains("Rotate internal tokens by overlapping old and new bindings"));
+    assert!(oauth.contains("does not validate OAuth tokens"));
+    assert!(oauth.contains("omit Authorization headers"));
 
     let plugin = read_text_resource(&client, PLUGIN_PACKAGE_GUIDE_RESOURCE_URI).await?;
     assert!(plugin.contains("plugins/aionforge-memory"));

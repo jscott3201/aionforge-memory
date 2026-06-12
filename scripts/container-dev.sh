@@ -9,8 +9,6 @@ ARCH="${AIONFORGE_CONTAINER_ARCH:-arm64}"
 PLATFORM="${AIONFORGE_CONTAINER_PLATFORM:-linux/$ARCH}"
 HOST="${AIONFORGE_CONTAINER_HOST:-127.0.0.1}"
 PORT="${AIONFORGE_CONTAINER_PORT:-3918}"
-AGENT_ID="${AIONFORGE_AGENT_ID:-018f0cc0-40f3-7cc4-b8b4-9ca41f88d012}"
-TOKEN="${AIONFORGE_MCP_TOKEN:-}"
 
 usage() {
   cat <<'USAGE'
@@ -32,8 +30,6 @@ Environment:
   AIONFORGE_CONTAINER_PLATFORM OCI platform (default: linux/$AIONFORGE_CONTAINER_ARCH)
   AIONFORGE_CONTAINER_HOST    Host bind address (default: 127.0.0.1)
   AIONFORGE_CONTAINER_PORT    Host port (default: 3918)
-  AIONFORGE_AGENT_ID          Principal bound to the bearer token
-  AIONFORGE_MCP_TOKEN         Bearer token; generated for local runs when unset
 USAGE
 }
 
@@ -50,19 +46,6 @@ ensure_system() {
   fi
 }
 
-generate_token() {
-  if [ -n "$TOKEN" ]; then
-    printf '%s' "$TOKEN"
-    return
-  fi
-  if command -v openssl >/dev/null 2>&1; then
-    openssl rand -hex 32
-  else
-    echo "AIONFORGE_MCP_TOKEN is required when openssl is unavailable." >&2
-    exit 1
-  fi
-}
-
 cmd="${1:-}"
 case "$cmd" in
   pull)
@@ -73,17 +56,12 @@ case "$cmd" in
   run)
     require_container
     ensure_system
-    TOKEN="$(generate_token)"
     container run -d \
       --name "$NAME" \
       --platform "$PLATFORM" \
-      --env "AIONFORGE_AGENT_ID=$AGENT_ID" \
-      --env "AIONFORGE_MCP_TOKEN=$TOKEN" \
       --publish "$HOST:$PORT:3918" \
       "$IMAGE"
     echo "MCP endpoint: http://$HOST:$PORT/mcp"
-    echo "AIONFORGE_AGENT_ID=$AGENT_ID"
-    echo "AIONFORGE_MCP_TOKEN=$TOKEN"
     ;;
   start)
     require_container
