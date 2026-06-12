@@ -223,45 +223,11 @@ approval_mode = "prompt"
 approval_mode = "prompt"
 ```
 
-When the MCP server comes from the installed Codex plugin rather than a
-standalone `[mcp_servers]` entry, keep policy under the plugin-scoped table. The
-plugin server id is `aionforge_memory_plugin` so it does not collide with a
-standalone `aionforge_memory` server in the same Codex config:
-
-```toml
-[plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory_plugin]
-enabled = true
-default_tools_approval_mode = "prompt"
-enabled_tools = [
-  "server_status",
-  "search",
-  "consolidation_status",
-  "audit_history",
-  "capture",
-  "consolidate",
-  "forget",
-  "unforget",
-]
-[plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory_plugin.tools.server_status]
-approval_mode = "approve"
-[plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory_plugin.tools.search]
-approval_mode = "approve"
-[plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory_plugin.tools.consolidation_status]
-approval_mode = "approve"
-[plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory_plugin.tools.audit_history]
-approval_mode = "approve"
-[plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory_plugin.tools.capture]
-approval_mode = "prompt"
-[plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory_plugin.tools.consolidate]
-approval_mode = "prompt"
-[plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory_plugin.tools.forget]
-approval_mode = "prompt"
-[plugins."aionforge-memory@aionforge-plugins".mcp_servers.aionforge_memory_plugin.tools.unforget]
-approval_mode = "prompt"
-```
-
-If the marketplace name differs, replace `aionforge-plugins` with the name shown
-by `codex plugin list`.
+The Codex plugin does not register a second MCP server. Configure
+`[mcp_servers.aionforge_memory]` first, then install the plugin only when you
+want the memory workflow skills that use that canonical MCP entry. MCP auth,
+login, enabled tools, and approval policy all stay on the standalone server
+table above.
 
 ## Claude Code
 

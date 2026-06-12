@@ -255,9 +255,7 @@ async fn mcp_transport_lists_client_policy_resources() -> TestResult {
 
     let codex = read_text_resource(&client, CODEX_CONFIG_RESOURCE_URI).await?;
     assert!(codex.contains("[mcp_servers.aionforge_memory]"));
-    assert!(codex.contains(
-        "[plugins.\"aionforge-memory@aionforge-plugins\".mcp_servers.aionforge_memory_plugin]"
-    ));
+    assert!(!codex.contains("aionforge_memory_plugin"));
     assert!(codex.contains("\"server_status\""));
     assert!(codex.contains("bearer_token_env_var = \"AIONFORGE_MCP_TOKEN\""));
     assert!(codex.contains("approval_mode = \"prompt\""));
@@ -283,7 +281,8 @@ async fn mcp_transport_lists_client_policy_resources() -> TestResult {
     assert!(plugin.contains("memory-maintenance"));
     assert!(plugin.contains("aionforge-memory-steward"));
     assert!(plugin.contains("memory-session"));
-    assert!(plugin.contains("codex.plugin-policy.example.toml"));
+    assert!(plugin.contains("[mcp_servers.aionforge_memory]"));
+    assert!(!plugin.contains("aionforge_memory_plugin"));
 
     client.cancel().await?;
     server_handle.await??;
