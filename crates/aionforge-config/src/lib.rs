@@ -48,6 +48,7 @@
 //! human_attester_ids = ["0197b0aa-3c5e-8000-8000-000000000000"]
 //! ```
 
+mod auth;
 mod config;
 mod core_block;
 mod drift;
@@ -56,6 +57,7 @@ mod forgetting;
 mod guard;
 mod load;
 
+pub use auth::{AuthConfig, IssuerConfig};
 pub use config::{
     CategoryPromotionRule, CompleterConfig, Config, DecayConfig, EmbedderConfig, PersistenceConfig,
     PromotionConfig, ReliabilityConfig, RetrievalConfig, SecurityConfig,

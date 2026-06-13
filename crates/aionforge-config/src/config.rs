@@ -7,6 +7,7 @@ use aionforge_store::{DEFAULT_EMBEDDING_DIMENSION, StoreConfig, default_data_dir
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 
+use crate::auth::AuthConfig;
 use crate::core_block::CoreBlockConfig;
 use crate::drift::DriftConfig;
 use crate::error::ConfigError;
@@ -81,6 +82,11 @@ pub struct Config {
     /// the declared consolidating family the startup single-family check reads.
     /// Always-on policy, inert until an inference-backed consolidation rule runs.
     pub consolidation_guard: ConsolidationGuardConfig,
+    /// OAuth resource-server posture: the master switch and trusted token issuers.
+    /// **Default-off** — when [`AuthConfig::enabled`] is `false` (the default) the
+    /// server derives no identity from a connection. Config only in this PR; JWT
+    /// validation and principal mapping read these fields in later work.
+    pub auth: AuthConfig,
 }
 
 /// On-disk state configuration.
@@ -748,6 +754,7 @@ impl Config {
         self.core_block.validate()?;
         self.drift.validate()?;
         self.consolidation_guard.validate()?;
+        self.auth.validate()?;
         Ok(())
     }
 }
