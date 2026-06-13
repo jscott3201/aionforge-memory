@@ -10,7 +10,6 @@ use crate::providers::{CANDIDATE_STATE_NAMES, CandidateStateInfo};
 use crate::store::Store;
 use crate::{LagSnapshot, StoreError, VectorIndexInfo};
 
-const EXPECTED_VECTOR_KIND: &str = "HnswCosine";
 const EXPECTED_COMPOSITE_INDEXES: &[(&str, &[&str])] = &[
     ("Fact", &["subject_id", "predicate"]),
     ("Fact", &["subject_id", "status"]),
@@ -210,7 +209,7 @@ impl Store {
         let vector_indexes = inventory_check(
             VECTOR_INDEXES
                 .iter()
-                .map(|(label, property)| index_key(label, property)),
+                .map(|(label, property, _kind)| index_key(label, property)),
             vectors
                 .iter()
                 .map(|index| index_key(&index.label, &index.property)),
@@ -341,12 +340,29 @@ fn vector_dimension_mismatches(
 fn vector_kind_mismatches(indexes: &[VectorIndexInfo]) -> Vec<VectorKindMismatch> {
     indexes
         .iter()
-        .filter(|index| index.kind != EXPECTED_VECTOR_KIND)
-        .map(|index| VectorKindMismatch {
-            label: index.label.clone(),
-            property: index.property.clone(),
-            expected_kind: EXPECTED_VECTOR_KIND.to_owned(),
-            actual_kind: index.kind.clone(),
+        .filter_map(|index| {
+            // The catalog kind is the single source of truth (indexes.rs VECTOR_INDEXES).
+            // An index with no declared entry is an *unexpected* index — already reported
+            // by the presence check — so it is not kind-checked here.
+            let expected_kind = expected_vector_kind(&index.label, &index.property)?;
+            (index.kind != expected_kind).then(|| VectorKindMismatch {
+                label: index.label.clone(),
+                property: index.property.clone(),
+                expected_kind,
+                actual_kind: index.kind.clone(),
+            })
         })
         .collect()
+}
+
+/// The Debug-rendered expected kind for a declared vector index, or `None` when
+/// `(label, property)` is not in the catalog. `VectorIndexInfo.kind` is itself
+/// `format!("{kind:?}")`, so the expectation is rendered the same way to compare.
+fn expected_vector_kind(label: &str, property: &str) -> Option<String> {
+    VECTOR_INDEXES
+        .iter()
+        .find(|(declared_label, declared_property, _kind)| {
+            *declared_label == label && *declared_property == property
+        })
+        .map(|(_label, _property, kind)| format!("{kind:?}"))
 }
