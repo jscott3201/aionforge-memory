@@ -13,6 +13,7 @@
 //! [`search_tool`] so it can be tested without the transport; this module is the rmcp
 //! wiring on top.
 
+mod auth_validator;
 mod http_body_limit;
 mod http_transport;
 mod inspect;
@@ -27,6 +28,7 @@ mod telemetry;
 mod tools;
 mod validated;
 
+pub use auth_validator::{AuthValidators, AuthValidatorsError};
 pub use http_body_limit::{DEFAULT_MAX_REQUEST_BODY_BYTES, RequestBodyLimitService};
 pub use http_transport::{
     AionforgeStreamableHttpService, OAUTH_PROTECTED_RESOURCE_WELL_KNOWN_PREFIX,
@@ -55,7 +57,7 @@ pub use resources::{
     PLUGIN_PACKAGE_GUIDE_RESOURCE_URI, TOOL_APPROVAL_POLICY_RESOURCE_URI,
     TOOL_MANIFEST_RESOURCE_URI,
 };
-pub use status::{ServerStatusToolParams, server_status_tool};
+pub use status::{AuthPosture, ServerStatusToolParams, server_status_tool};
 pub use tools::{
     BatchCaptureItem, BatchCaptureToolParams, CaptureToolParams, MAX_BATCH_ITEMS, SearchToolParams,
     batch_capture_tool, capture_tool, search_tool,
@@ -91,12 +93,13 @@ aionforge://policy/tool-approval for approval policy.";
 /// The MCP server handler over a shared [`Memory`].
 pub struct AionforgeMcp<E> {
     memory: Arc<Memory<E>>,
-    // Whether the OAuth resource-server posture is enabled. Threaded into every identity
-    // resolver: `false` (the default, via [`AionforgeMcp::new`]) reproduces today's body-only
-    // behavior; `true` (via [`AionforgeMcp::new_with_auth`]) requires a validated request
-    // extension. PR4 ships dark — no caller sets it to `true` yet — so runtime behavior is
-    // unchanged; PR5's validator layer flips it on.
-    auth_enabled: bool,
+    // The OAuth resource-server posture. Its `enabled` flag is threaded into every identity
+    // resolver (`false`, the default via [`AionforgeMcp::new`], reproduces today's body-only
+    // behavior; `true`, via [`AionforgeMcp::new_with_auth`], requires a validated request
+    // extension), and the issuer origins ride `server_status` for posture reporting (never a
+    // secret). PR4 shipped dark — no caller set it enabled — so runtime behavior was unchanged
+    // until PR5's validator layer flips it on.
+    auth: AuthPosture,
     consolidation_lock: Arc<tokio::sync::Mutex<()>>,
     // Used by the rmcp-generated `#[tool_handler]` impl; the macro expansion hides the
     // read from the dead-code analyzer.
@@ -114,7 +117,7 @@ impl<E> Clone for AionforgeMcp<E> {
     fn clone(&self) -> Self {
         Self {
             memory: Arc::clone(&self.memory),
-            auth_enabled: self.auth_enabled,
+            auth: self.auth.clone(),
             consolidation_lock: Arc::clone(&self.consolidation_lock),
             tool_router: self.tool_router.clone(),
             prompt_router: self.prompt_router.clone(),
@@ -139,13 +142,31 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
     /// When `auth_enabled` is `true`, every identity resolver requires a validated request
     /// extension ([`ValidatedPrincipal`]): the extension is authoritative, a body identity may
     /// only restate it, an absent extension is rejected, and a read-only extension may not write.
-    /// When `false`, the server behaves exactly as [`AionforgeMcp::new`]. PR4 ships dark: no
-    /// caller passes `true` yet, so runtime behavior is unchanged until PR5 wires the validator.
+    /// When `false`, the server behaves exactly as [`AionforgeMcp::new`].
+    ///
+    /// This convenience constructor reports no issuer origins via `server_status`; use
+    /// [`AionforgeMcp::new_with_auth_posture`] to also surface the trusted issuer origins.
     #[must_use]
     pub fn new_with_auth(memory: Arc<Memory<E>>, auth_enabled: bool) -> Self {
+        let auth = if auth_enabled {
+            AuthPosture::enabled(Vec::new())
+        } else {
+            AuthPosture::disabled()
+        };
+        Self::new_with_auth_posture(memory, auth)
+    }
+
+    /// Build a handler with an explicit [`AuthPosture`] (enabled flag + trusted issuer origins).
+    ///
+    /// The posture's `enabled` flag drives every identity resolver exactly as
+    /// [`AionforgeMcp::new_with_auth`]; the issuer origins ride `server_status` for posture
+    /// reporting (never a secret). The HTTP transport uses this so an operator can see which
+    /// issuers are trusted.
+    #[must_use]
+    pub fn new_with_auth_posture(memory: Arc<Memory<E>>, auth: AuthPosture) -> Self {
         Self {
             memory,
-            auth_enabled,
+            auth,
             consolidation_lock: Arc::new(tokio::sync::Mutex::new(())),
             tool_router: Self::tool_router(),
             prompt_router: Self::prompt_router(),
@@ -173,6 +194,7 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
             resources::static_resource_count(),
             counts,
             params.0,
+            &self.auth,
         ))
     }
 
@@ -418,7 +440,7 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
 impl<E: Embedder + 'static> AionforgeMcp<E> {
     /// The OAuth resource-server posture as the resolver-facing [`AuthEnabled`] signal.
     fn auth_enabled(&self) -> AuthEnabled {
-        AuthEnabled(self.auth_enabled)
+        AuthEnabled(self.auth.enabled)
     }
 
     /// Build prompt routes for host-installable Aionforge guidance.
@@ -503,13 +525,21 @@ impl<E: Embedder + 'static> ServerHandler for AionforgeMcp<E> {
 
 /// Serve the MCP surface over stdio until the peer disconnects.
 ///
+/// `auth_enabled` selects the OAuth resource-server posture exactly as
+/// [`AionforgeMcp::new_with_auth`]: `false` (the default-off path) reproduces today's body-only
+/// behavior, `true` requires a validated request extension on every identity-resolving tool. The
+/// stdio transport carries no HTTP request and so no Tower validator runs over it — an `auth_enabled`
+/// stdio server therefore rejects every identity-bearing tool with `ERR_PRINCIPAL_REQUIRED` until a
+/// stdio-side producer exists; the parameter is threaded for posture parity with the HTTP path.
+///
 /// # Errors
 /// Returns an error if the transport cannot be established or the service fails while
 /// running.
 pub async fn serve_stdio<E: Embedder + 'static>(
     memory: Arc<Memory<E>>,
+    auth_enabled: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let service = AionforgeMcp::new(memory)
+    let service = AionforgeMcp::new_with_auth(memory, auth_enabled)
         .serve(rmcp::transport::io::stdio())
         .await?;
     service.waiting().await?;

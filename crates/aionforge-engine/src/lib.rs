@@ -53,7 +53,8 @@ pub use aionforge_consolidate::{
     RuleSummarizer, SummarizationConfig, TickReport,
 };
 pub use aionforge_domain::authz::{
-    AuthorizationError, Authorizer, DefaultAuthorizer, DenyReason, Principal, VisibleSet,
+    AuthorizationError, Authorizer, DefaultAuthorizer, DenyReason, OperatorAwareAuthorizer,
+    Principal, VisibleSet,
 };
 pub use aionforge_forget::{
     CoolingSweepReport, DriftBaseline, DriftPolicy, DriftSweepReport, EraseReport, ErasurePolicy,
