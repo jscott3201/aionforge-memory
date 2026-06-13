@@ -195,7 +195,8 @@ impl Store {
             graph_id(),
             empty_graph_type()?,
             vec![candidate_state_provider()?],
-        )?;
+        )
+        .map_err(StoreError::from_recovery)?;
         let store = Self {
             graph,
             config,

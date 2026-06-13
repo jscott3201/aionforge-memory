@@ -13,6 +13,10 @@ description = "L0 storage over the selene-db SharedGraph: typed read/write, para
 aionforge-domain = { path = "../aionforge-domain", version = "0.1.0" }
 selene-core = { workspace = true }
 selene-graph = { workspace = true }
+# selene-persist is named directly only to lift its typed UnsupportedVersion
+# recovery gate into StoreError::UnsupportedFormat (error.rs). The store-only-selene
+# gate permits aionforge-store to name selene-db crates; no other crate may.
+selene-persist = { workspace = true }
 selene-gql = { workspace = true }
 thiserror = { workspace = true }
 miette = { workspace = true }

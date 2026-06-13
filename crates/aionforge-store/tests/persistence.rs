@@ -13,7 +13,9 @@ use aionforge_domain::ids::{ContentHash, Id};
 use aionforge_domain::namespace::Namespace;
 use aionforge_domain::nodes::episodic::{ConsolidationState, Episode, Role};
 use aionforge_domain::nodes::forensic::{AuditEvent, AuditKind};
-use aionforge_store::{BoundQuery, QueryResult, SCHEMA_VERSION, Store, StoreConfig, Value};
+use aionforge_store::{
+    BoundQuery, QueryResult, SCHEMA_VERSION, Store, StoreConfig, StoreError, Value,
+};
 
 use jiff::Zoned;
 
@@ -450,6 +452,47 @@ fn recovery_runs_the_dimension_consistency_check() {
             .all(|v| v.dimension == 768)
     );
     drop(recovered);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn recovery_maps_an_unsupported_on_disk_format_to_a_distinct_error() {
+    let dir = temp_dir("unsupported-format");
+    let config = StoreConfig::default();
+
+    // Write a real, current-format store, then drop it so the WAL file unlocks.
+    {
+        let store =
+            Store::open_persistent_migrated(&dir, config, &now()).expect("open and migrate");
+        drop(store);
+    }
+
+    // Downgrade the persisted WAL's minor format version on disk to one this build
+    // does not read. The 16-byte WAL header is `SLDB` + major(u16-le) + minor(u16-le)
+    // + snapshot_seq(u64-le); patching bytes [6..8] flips only the minor version,
+    // reusing selene's own writer for the magic and major so the test pins
+    // format-version *detection*, not a hand-built header.
+    let wal = dir.join(Store::WAL_FILE_NAME);
+    let mut bytes = std::fs::read(&wal).expect("read persisted WAL");
+    assert_eq!(&bytes[0..4], b"SLDB", "the WAL header magic is stable");
+    bytes[6..8].copy_from_slice(&0u16.to_le_bytes());
+    std::fs::write(&wal, &bytes).expect("rewrite WAL with an older minor version");
+
+    // Recovery must surface the distinct UnsupportedFormat arm — not an opaque
+    // Graph/corruption error — so the runbook can say "recreate fresh", and the
+    // message must carry the on-disk version and the actionable guidance.
+    let error = Store::recover(&dir, config).expect_err("an older on-disk format is rejected");
+    assert!(
+        matches!(error, StoreError::UnsupportedFormat { minor: 0, .. }),
+        "expected a distinct UnsupportedFormat, got: {error:?}"
+    );
+    let rendered = error.to_string();
+    assert!(
+        rendered.contains("unsupported on-disk store format")
+            && rendered.contains("recreate it fresh"),
+        "the runbook message is actionable and distinct from corruption: {rendered}"
+    );
+
     let _ = std::fs::remove_dir_all(&dir);
 }
 
