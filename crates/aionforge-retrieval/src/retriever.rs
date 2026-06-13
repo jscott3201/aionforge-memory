@@ -198,9 +198,20 @@ impl<E: Embedder> HybridRetriever<E> {
 
         if profile.weights.lexical > 0.0 {
             let _signal_span = trace::signal_span(Signal::Lexical, fanout).entered();
-            let episodes = lexical_ranking(&self.store, SearchKind::Episode, &query.text, fanout)?;
-            let facts =
-                fact_lexical_ranking(&self.store, &query, current_facts.as_deref(), fanout)?;
+            let episodes = lexical_ranking(
+                &self.store,
+                SearchKind::Episode,
+                &query.text,
+                fanout,
+                deadline,
+            )?;
+            let facts = fact_lexical_ranking(
+                &self.store,
+                &query,
+                current_facts.as_deref(),
+                fanout,
+                deadline,
+            )?;
             let lexical_anchor = if profile.weights.lexical_anchor > 0.0 {
                 let _anchor_span =
                     trace::signal_span(Signal::LexicalAnchor, LEXICAL_ANCHOR_WINDOW).entered();
@@ -231,6 +242,7 @@ impl<E: Embedder> HybridRetriever<E> {
                 embedding,
                 fanout,
                 profile.exact_rerank,
+                deadline,
             )?;
             // The high-precision default path (03 §4): for the factual/temporal-current
             // classes, derive a graph candidate seed (scope membership, else the entities
@@ -252,6 +264,7 @@ impl<E: Embedder> HybridRetriever<E> {
                 embedding,
                 fanout,
                 profile.exact_rerank,
+                deadline,
             )?;
             fact_nodes.extend(facts.candidates.iter().map(|c| c.node));
             rankings.push(WeightedRanking::new(profile.weights.dense, episodes));
@@ -303,8 +316,15 @@ impl<E: Embedder> HybridRetriever<E> {
                 resolve_seed_entities(&self.store, &query.text, query_embedding.as_ref())?
         {
             let _signal_span = trace::signal_span(Signal::Graph, fanout).entered();
-            let episodes = graph_ranking_for(&self.store, SearchKind::Episode, &seeds, fanout)?;
-            let facts = fact_graph_ranking(&self.store, &seeds, current_facts.as_deref(), fanout)?;
+            let episodes =
+                graph_ranking_for(&self.store, SearchKind::Episode, &seeds, fanout, deadline)?;
+            let facts = fact_graph_ranking(
+                &self.store,
+                &seeds,
+                current_facts.as_deref(),
+                fanout,
+                deadline,
+            )?;
             fact_nodes.extend(facts.candidates.iter().map(|c| c.node));
             rankings.push(WeightedRanking::new(profile.weights.graph, episodes));
             rankings.push(WeightedRanking::new(profile.weights.graph, facts));
