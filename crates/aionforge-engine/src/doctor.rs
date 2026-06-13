@@ -2,7 +2,7 @@
 
 use aionforge_domain::contracts::Embedder;
 use aionforge_domain::embedding::EmbedderModel;
-use aionforge_store::{StoreDoctorReport, VectorDimensionMismatch};
+use aionforge_store::{MemoryCounts, StoreDoctorReport, VectorDimensionMismatch};
 
 use crate::{EngineError, Memory, telemetry};
 
@@ -47,6 +47,14 @@ impl<E: Embedder> Memory<E> {
             store,
             embedder,
         })
+    }
+
+    /// Live counts of each memory kind (operator telemetry).
+    ///
+    /// # Errors
+    /// Returns [`EngineError`] if the store read fails.
+    pub fn memory_counts(&self) -> Result<MemoryCounts, EngineError> {
+        Ok(self.store.memory_counts()?)
     }
 
     fn embedder_doctor_report(&self) -> EmbedderDoctorReport {

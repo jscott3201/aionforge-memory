@@ -133,8 +133,13 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
         &self,
         params: Parameters<ServerStatusToolParams>,
     ) -> Result<String, String> {
+        let counts = self
+            .memory
+            .memory_counts()
+            .map_err(|e| format!("ERR_SERVER_STATUS {e}"))?;
         Ok(server_status_tool(
             resources::static_resource_count(),
+            counts,
             params.0,
         ))
     }

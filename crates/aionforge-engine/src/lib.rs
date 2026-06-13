@@ -85,7 +85,7 @@ mod pin;
 mod reliability_sweep;
 mod telemetry;
 pub use aionforge_store::{AuditCursor, MAX_AUDIT_PAGE};
-pub use aionforge_store::{ConsolidatingModel, NoteLineage, WriterFamilySet};
+pub use aionforge_store::{ConsolidatingModel, MemoryCounts, NoteLineage, WriterFamilySet};
 pub use audit::{AuditPage, AuditRecord, AuditVerification};
 pub use core_block::{CoreBlockCreate, CoreBlockDraft};
 pub use doctor::{EmbedderDoctorReport, MemoryDoctorReport};

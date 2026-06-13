@@ -61,7 +61,9 @@ pub use compact::{CompactReport, CompactionPressure};
 pub use config::{
     DEFAULT_EMBEDDING_DIMENSION, StoreConfig, default_data_dir, default_data_dir_checked,
 };
-pub use consolidation::{ConsolidationCursor, ConsolidationWorkItem, LagSnapshot};
+pub use consolidation::{
+    ConsolidationCursor, ConsolidationWorkItem, LagSnapshot, MEMORY_LABELS, MemoryCounts,
+};
 pub use cooling::{CoolWrite, CoolingCandidate, CoolingCursor};
 pub use core_block_write::{CoreAttestation, CoreBlockReplacement, CoreEditWrite};
 pub use distill::DistilledNoteWrite;

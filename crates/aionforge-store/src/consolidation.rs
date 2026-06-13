@@ -20,8 +20,11 @@
 use aionforge_domain::edges::Audit;
 use aionforge_domain::ids::Id;
 use aionforge_domain::namespace::Namespace;
+use aionforge_domain::nodes::associative::Note;
 use aionforge_domain::nodes::episodic::{ConsolidationState, Episode};
 use aionforge_domain::nodes::forensic::{AuditEvent, AuditKind};
+use aionforge_domain::nodes::procedural::{BadPattern, Skill};
+use aionforge_domain::nodes::semantic::{Entity, Fact};
 use aionforge_domain::time::Timestamp;
 use selene_core::{
     DbString, LabelDiff, LabelSet, NodeId, PropertyDiff, PropertyMap, Value, db_string,
@@ -121,6 +124,49 @@ pub struct LagSnapshot {
     pub episodes_failed: u64,
     /// The current graph generation (the commit-stream watermark).
     pub generation: u64,
+}
+
+/// The selene-db labels that carry a live memory — the canonical public list of the
+/// memory-bearing kinds (episodic, semantic, associative, procedural). Cursors, schema
+/// versions, audit/provenance, agents, sessions, and anchors are not memories and are
+/// deliberately excluded. [`Store::memory_counts`] counts exactly these kinds.
+pub const MEMORY_LABELS: [&str; 6] = [
+    Episode::LABEL,
+    Fact::LABEL,
+    Entity::LABEL,
+    Note::LABEL,
+    Skill::LABEL,
+    BadPattern::LABEL,
+];
+
+/// A live per-kind memory census (global operator telemetry).
+///
+/// Every field counts only *live* nodes of that kind — rows whose `expired_at` is
+/// unset, so soft-forgotten memories (which keep their row) are excluded. The fields
+/// are taken against one pinned snapshot so they and [`MemoryCounts::total`] are
+/// mutually consistent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct MemoryCounts {
+    /// Live episodes (episodic tier).
+    pub episodes: u64,
+    /// Live facts (semantic tier).
+    pub facts: u64,
+    /// Live entities (semantic tier).
+    pub entities: u64,
+    /// Live notes (associative tier).
+    pub notes: u64,
+    /// Live skills (procedural tier).
+    pub skills: u64,
+    /// Live bad patterns (procedural tier).
+    pub bad_patterns: u64,
+}
+
+impl MemoryCounts {
+    /// Total live memories across every kind.
+    #[must_use]
+    pub fn total(&self) -> u64 {
+        self.episodes + self.facts + self.entities + self.notes + self.skills + self.bad_patterns
+    }
 }
 
 impl Store {
@@ -451,6 +497,61 @@ impl Store {
         }
     }
 
+    /// A live per-kind census of every memory-bearing kind (operator telemetry).
+    ///
+    /// A node is *live* iff its `expired_at` property is unset: soft-forget keeps the
+    /// row and merely stamps `expired_at` (02 §3), so the unset check is the same
+    /// liveness predicate as GQL's `IS NULL`. All six labels in [`MEMORY_LABELS`] are
+    /// counted against ONE pinned read snapshot, so the per-kind fields and
+    /// [`MemoryCounts::total`] are mutually consistent (no row is counted under one
+    /// generation and missed under another). This is engine-native — it reads the label
+    /// bitmap and subtracts the expired rows — with no bolt-on counter to drift.
+    ///
+    /// This is an operator-wide census: it takes no principal and counts live nodes
+    /// across *all* namespaces and roles, so it is deliberately broader than recall
+    /// (which excludes the System namespace and system-role episodes). Only the
+    /// aggregate per-kind numbers are surfaced — never content or per-namespace counts —
+    /// so it exposes no individual namespace's existence.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if a label or property key cannot be interned.
+    pub fn memory_counts(&self) -> Result<MemoryCounts, StoreError> {
+        // One pinned snapshot for all six labels: the per-kind fields and total() must
+        // agree, which they only can if every label is counted against the same version.
+        let snapshot = self.graph().read();
+        let expired_key = db_string("expired_at")?;
+        let mut counts = MemoryCounts::default();
+        let count_label = |label_str: &str| -> Result<u64, StoreError> {
+            let label = db_string(label_str)?;
+            let Some(rows) = snapshot.nodes_with_label(&label) else {
+                return Ok(0);
+            };
+            let mut live = 0u64;
+            for row in rows.iter() {
+                let Some(node) = snapshot.node_id_for_row(RowIndex::new(row)) else {
+                    continue;
+                };
+                let Some(props) = snapshot.node_properties(node) else {
+                    continue;
+                };
+                // `expired_at` is written only on soft-forget (02 §3); its absence is
+                // live, matching GQL `IS NULL` and the store's presence-based liveness
+                // convention (forget_read.rs / cooling.rs / forget_write.rs).
+                if props.get(&expired_key).is_none() {
+                    live += 1;
+                }
+            }
+            Ok(live)
+        };
+        counts.episodes = count_label(Episode::LABEL)?;
+        counts.facts = count_label(Fact::LABEL)?;
+        counts.entities = count_label(Entity::LABEL)?;
+        counts.notes = count_label(Note::LABEL)?;
+        counts.skills = count_label(Skill::LABEL)?;
+        counts.bad_patterns = count_label(BadPattern::LABEL)?;
+        Ok(counts)
+    }
+
     /// Snapshot the consolidation backlog for the lag metric (write-and-consolidation §3).
     ///
     /// Reads the oldest pending `ingested_at` and the pending/failed counts plus the
@@ -565,4 +666,140 @@ fn cursor_from_properties(props: &PropertyMap) -> Result<ConsolidationCursor, St
         last_processed_at: get(LAST_PROCESSED_AT)?.map(as_timestamp).transpose()?,
         rule_versions: json_from_value(require(RULE_VERSIONS)?)?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    //! The liveness filter must hold on every memory kind, not just `Episode`. The store
+    //! layer can insert both an `Episode` and a `Fact` directly, so this proves the
+    //! `expired_at`-unset predicate excludes soft-forgotten rows on a NON-`Episode` label
+    //! too — the one behaviour the per-kind census hangs on.
+
+    use aionforge_domain::blocks::{Identity, Stats};
+    use aionforge_domain::ids::{ContentHash, Id};
+    use aionforge_domain::namespace::Namespace;
+    use aionforge_domain::nodes::episodic::Role;
+    use aionforge_domain::nodes::semantic::{Fact, FactStatus};
+    use aionforge_domain::value::ObjectValue;
+
+    use super::*;
+    use crate::config::StoreConfig;
+
+    fn ts(text: &str) -> Timestamp {
+        text.parse().expect("valid zoned datetime literal")
+    }
+
+    fn store() -> Store {
+        let store = Store::open_with_config(StoreConfig {
+            embedding_dimension: 4,
+        })
+        .expect("open store");
+        store
+            .migrate(&ts("2026-01-01T00:00:00-06:00[America/Chicago]"))
+            .expect("migrate store");
+        store
+    }
+
+    fn stats() -> Stats {
+        Stats {
+            importance: 0.5,
+            trust: 0.8,
+            last_access: ts("2026-06-06T10:00:00-05:00[America/Chicago]"),
+            access_count_recent: 0,
+            referenced_count: 0,
+            surprise: 0.1,
+            is_pinned: false,
+        }
+    }
+
+    fn episode(content: &str, expired_at: Option<Timestamp>) -> Episode {
+        Episode {
+            identity: Identity {
+                id: Id::generate(),
+                ingested_at: ts("2026-06-06T09:00:00-05:00[America/Chicago]"),
+                namespace: Namespace::Agent("alice".to_string()),
+                expired_at,
+            },
+            stats: stats(),
+            content: content.to_string(),
+            role: Role::User,
+            captured_at: ts("2026-06-06T09:00:00-05:00[America/Chicago]"),
+            agent_id: Id::generate(),
+            session_id: None,
+            content_hash: ContentHash::of(content.as_bytes()),
+            embedding: None,
+            embedder_model: None,
+            consolidation_state: ConsolidationState::Raw,
+            origin: None,
+        }
+    }
+
+    fn fact(statement: &str, expired_at: Option<Timestamp>) -> Fact {
+        Fact {
+            identity: Identity {
+                id: Id::generate(),
+                ingested_at: ts("2026-06-06T09:00:00-05:00[America/Chicago]"),
+                namespace: Namespace::Global,
+                expired_at,
+            },
+            stats: stats(),
+            subject_id: Id::from_content_hash(statement.as_bytes()),
+            predicate: "asserts".to_string(),
+            object: ObjectValue::Text(statement.to_string()),
+            confidence: 0.9,
+            status: FactStatus::Active,
+            statement: statement.to_string(),
+            embedding: None,
+            embedder_model: None,
+            extraction: None,
+            cooled_until: None,
+        }
+    }
+
+    #[test]
+    fn memory_counts_excludes_expired_and_nonmemory_labels() {
+        let store = store();
+        let expired = ts("2026-06-07T12:00:00-05:00[America/Chicago]");
+
+        // Two live + one soft-forgotten Episode (the row survives, `expired_at` stamped).
+        store
+            .insert_episode(&episode("ep-live-1", None))
+            .expect("insert live episode 1");
+        store
+            .insert_episode(&episode("ep-live-2", None))
+            .expect("insert live episode 2");
+        store
+            .insert_episode(&episode("ep-gone", Some(expired.clone())))
+            .expect("insert expired episode");
+
+        // One live + one soft-forgotten Fact — the NON-Episode liveness coverage.
+        store
+            .insert_fact(&fact("fact-live", None))
+            .expect("insert live fact");
+        store
+            .insert_fact(&fact("fact-gone", Some(expired)))
+            .expect("insert expired fact");
+
+        let counts = store.memory_counts().expect("memory counts");
+
+        // Expired rows are excluded on BOTH the Episode and the Fact label.
+        assert_eq!(counts.episodes, 2, "only the two live episodes count");
+        assert_eq!(counts.facts, 1, "the soft-forgotten fact is excluded");
+        // Kinds with no inserted nodes are zero — non-memory labels never leak in.
+        assert_eq!(counts.entities, 0);
+        assert_eq!(counts.notes, 0);
+        assert_eq!(counts.skills, 0);
+        assert_eq!(counts.bad_patterns, 0);
+        // total() is the consistent sum of the per-kind fields.
+        assert_eq!(counts.total(), 3);
+        assert_eq!(
+            counts.total(),
+            counts.episodes
+                + counts.facts
+                + counts.entities
+                + counts.notes
+                + counts.skills
+                + counts.bad_patterns
+        );
+    }
 }
