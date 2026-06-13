@@ -5,10 +5,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use aionforge::{
-    CaptureConfig, CategoryRule, ConsolidationGuardPolicy, CoreEditPolicy, CoreEditRule,
-    DriftPolicy, Embedder, EmbedderModel, Embedding, ForgettingPolicy, GuardMode, Memory,
-    MemoryConfig, PromotionPolicy, ReliabilityPolicy, RetrieverConfig, SecurityGate, Store,
-    Timestamp,
+    Authorizer, CaptureConfig, CategoryRule, ConsolidationGuardPolicy, CoreEditPolicy,
+    CoreEditRule, DefaultAuthorizer, DriftPolicy, Embedder, EmbedderModel, Embedding,
+    ForgettingPolicy, GuardMode, Memory, MemoryConfig, OperatorAwareAuthorizer, PromotionPolicy,
+    ReliabilityPolicy, RetrieverConfig, SecurityGate, Store, Timestamp,
 };
 use aionforge_config::{Config, GuardMode as ConfigGuardMode};
 use aionforge_embed::{EmbedError, HttpEmbedder};
@@ -42,7 +42,20 @@ pub(crate) fn open_memory(config: &Config) -> Result<Arc<Memory<RuntimeEmbedder>
         config.store_config(),
         &now,
     )?);
-    Ok(Arc::new(Memory::new(store, embedder, memory_config, &now)?))
+    // DEFAULT-OFF: with `auth.enabled == false` (the default) the memory is built with the
+    // [`DefaultAuthorizer`] via `Memory::new`, byte-for-byte today's behavior. When auth is
+    // enabled, wrap the default authority with [`OperatorAwareAuthorizer`] so an operator
+    // principal (its bit set only by the validated-claims mapper) can surface the `system`
+    // namespace at the AND-gated read sites; the operator capability never widens write authority
+    // or pre-widens visibility (see the authorizer's own override).
+    let memory = if config.auth.enabled {
+        let authorizer: Arc<dyn Authorizer> =
+            Arc::new(OperatorAwareAuthorizer::new(DefaultAuthorizer));
+        Memory::with_authorizer(store, embedder, memory_config, authorizer, &now)?
+    } else {
+        Memory::new(store, embedder, memory_config, &now)?
+    };
+    Ok(Arc::new(memory))
 }
 
 pub(crate) enum RuntimeEmbedder {
@@ -410,6 +423,42 @@ mod tests {
 
         assert!(!mapped.security.sign_audit_events);
         assert!(mapped.security.audit_seed.is_none());
+    }
+
+    #[test]
+    fn open_memory_installs_the_operator_authorizer_only_when_auth_is_enabled() {
+        use aionforge_config::IssuerConfig;
+
+        // DEFAULT-OFF: a default config (auth disabled) opens a memory on the DefaultAuthorizer
+        // path (`Memory::new`), byte-for-byte today's behavior.
+        let mut off = Config::default();
+        off.persistence.data_dir = unique_dir("authz-off");
+        off.embedder.enabled = false;
+        off.embedder.model.clear();
+        off.embedder.endpoint.clear();
+        let off_dir = off.persistence.data_dir.clone();
+        open_memory(&off).expect("default-off memory opens");
+        let _ = std::fs::remove_dir_all(off_dir);
+
+        // AUTH ENABLED: an enabled config opens a memory wrapped with OperatorAwareAuthorizer via
+        // the `Memory::with_authorizer` seam. Construction succeeds (the wrap is in-process; no
+        // token validation runs here — that is the request-path producer's job).
+        let mut on = Config::default();
+        on.persistence.data_dir = unique_dir("authz-on");
+        on.embedder.enabled = false;
+        on.embedder.model.clear();
+        on.embedder.endpoint.clear();
+        on.auth.enabled = true;
+        on.auth.issuers = vec![IssuerConfig {
+            issuer: "https://dev-7ppqf0duhy7etaet.us.auth0.com/".into(),
+            audience: "https://memory.aionforgelabs.com".into(),
+            allows_writes: false,
+            ..IssuerConfig::default()
+        }];
+        on.validate().expect("an enabled auth config validates");
+        let on_dir = on.persistence.data_dir.clone();
+        open_memory(&on).expect("auth-enabled memory opens with the operator authorizer");
+        let _ = std::fs::remove_dir_all(on_dir);
     }
 
     #[tokio::test]

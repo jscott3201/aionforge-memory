@@ -8,9 +8,9 @@ use aionforge_domain::embedding::{EmbedderModel, Embedding};
 use aionforge_domain::time::Timestamp;
 use aionforge_engine::{Memory, MemoryConfig};
 use aionforge_mcp::{
-    DEFAULT_MAX_REQUEST_BODY_BYTES, OAuthProtectedResourceMetadata, STREAMABLE_HTTP_ENDPOINT,
-    StreamableHttpConfigError, StreamableHttpOptions, oauth_protected_resource_well_known_path,
-    streamable_http_service,
+    AuthPosture, DEFAULT_MAX_REQUEST_BODY_BYTES, OAuthProtectedResourceMetadata,
+    STREAMABLE_HTTP_ENDPOINT, StreamableHttpConfigError, StreamableHttpOptions,
+    oauth_protected_resource_well_known_path, streamable_http_service,
 };
 use bytes::Bytes;
 use http::header::{ACCEPT, CONTENT_LENGTH, CONTENT_TYPE, HOST, ORIGIN};
@@ -135,7 +135,7 @@ fn tool_call_request(host: &str, name: &str, arguments: serde_json::Value) -> Re
 
 #[tokio::test]
 async fn streamable_http_advertises_mcp_capabilities() -> TestResult {
-    let service = streamable_http_service(memory(), json_options())?;
+    let service = streamable_http_service(memory(), json_options(), AuthPosture::disabled())?;
     let response = service
         .handle(initialize_request("localhost:3918", None))
         .await;
@@ -158,7 +158,7 @@ async fn streamable_http_advertises_mcp_capabilities() -> TestResult {
 
 #[tokio::test]
 async fn streamable_http_rejects_disallowed_hosts_and_origins() -> TestResult {
-    let service = streamable_http_service(memory(), json_options())?;
+    let service = streamable_http_service(memory(), json_options(), AuthPosture::disabled())?;
 
     let response = service
         .handle(initialize_request("attacker.example", None))
@@ -188,6 +188,7 @@ async fn streamable_http_rejects_oversized_request_bodies() -> TestResult {
     let service = streamable_http_service(
         memory(),
         json_options().with_max_request_body_bytes("{}".len()),
+        AuthPosture::disabled(),
     )?;
 
     let response = service
@@ -207,6 +208,7 @@ async fn streamable_http_rejects_content_length_over_limit_before_reading() -> T
     let service = streamable_http_service(
         memory(),
         json_options().with_max_request_body_bytes(DEFAULT_MAX_REQUEST_BODY_BYTES),
+        AuthPosture::disabled(),
     )?;
     let mut request = initialize_request("localhost:3918", None);
     request.headers_mut().insert(
@@ -222,7 +224,7 @@ async fn streamable_http_rejects_content_length_over_limit_before_reading() -> T
 #[tokio::test]
 async fn http_tool_calls_do_not_require_authorization_header() -> TestResult {
     let alice = "018f0cc0-40f3-7cc4-b8b4-9ca41f88d012";
-    let service = streamable_http_service(memory(), json_options())?;
+    let service = streamable_http_service(memory(), json_options(), AuthPosture::disabled())?;
 
     let request = tool_call_request(
         "localhost:3918",

@@ -29,6 +29,38 @@ pub struct ServerStatusToolParams {
     pub verbose: Option<bool>,
 }
 
+/// The OAuth resource-server posture `server_status` reports — **posture only, never a secret**.
+///
+/// Carries the master switch and the count/origins of the trusted issuers. It deliberately holds
+/// **no** JWKS, key, token, claim, or audience value: an operator can see *that* auth is on and
+/// *which* issuers are trusted (by origin), but nothing cryptographic and no resource audience.
+/// The default ([`AuthPosture::disabled`]) is auth-off with no issuers, the same posture a
+/// default-off deployment reports.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AuthPosture {
+    /// Whether the OAuth resource-server posture is enabled.
+    pub enabled: bool,
+    /// The trusted issuer origins (non-secret URLs), in config order. Empty when auth is disabled.
+    pub issuer_origins: Vec<String>,
+}
+
+impl AuthPosture {
+    /// The auth-disabled posture: the master switch off and no trusted issuers.
+    #[must_use]
+    pub fn disabled() -> Self {
+        Self::default()
+    }
+
+    /// The auth-enabled posture with the given trusted issuer origins (non-secret URLs).
+    #[must_use]
+    pub fn enabled(issuer_origins: Vec<String>) -> Self {
+        Self {
+            enabled: true,
+            issuer_origins,
+        }
+    }
+}
+
 /// Render compact MCP server status.
 ///
 /// `counts` is the live, engine-native memory census (global operator telemetry): its
@@ -39,9 +71,10 @@ pub fn server_status_tool(
     resource_count: usize,
     counts: MemoryCounts,
     params: ServerStatusToolParams,
+    auth: &AuthPosture,
 ) -> String {
     let mut out = format!(
-        "[server] version={} build_sha={} build={} tools={} resources={} prompts={} transports={} sampling=false recall_wrapper=recalled-memory-context mutating_tools={} memories={}",
+        "[server] version={} build_sha={} build={} tools={} resources={} prompts={} transports={} sampling=false recall_wrapper=recalled-memory-context mutating_tools={} memories={} auth_enabled={} auth_issuers={}",
         env!("CARGO_PKG_VERSION"),
         BUILD_SHA,
         BUILD_STATUS,
@@ -50,7 +83,9 @@ pub fn server_status_tool(
         surface::PROMPT_COUNT,
         surface::TRANSPORTS_COMPACT,
         surface::tool_count_by_class(ToolClass::Mutating),
-        counts.total()
+        counts.total(),
+        auth.enabled,
+        auth.issuer_origins.len(),
     );
     if params.verbose.unwrap_or(false) {
         out.push('\n');
@@ -69,6 +104,14 @@ pub fn server_status_tool(
             counts.skills,
             counts.bad_patterns
         ));
+        // The trusted issuer ORIGINS (never JWKS, keys, the resource audience, or any token/claim)
+        // are listed only when auth is enabled and at least one issuer is configured. This is the
+        // posture an operator needs to confirm WHICH issuers are trusted, with nothing secret.
+        if auth.enabled && !auth.issuer_origins.is_empty() {
+            out.push('\n');
+            out.push_str("auth_issuer_origins=");
+            out.push_str(&auth.issuer_origins.join(","));
+        }
         out.push('\n');
         out.push_str(
             "policy=allow_read_like_ask_mutations resources=aionforge://manifest/tools.json,aionforge://guide/mcp-surface,aionforge://policy/tool-approval",
@@ -94,7 +137,12 @@ mod tests {
 
     #[test]
     fn compact_status_reports_counts_and_posture() {
-        let out = server_status_tool(8, sample_counts(), ServerStatusToolParams { verbose: None });
+        let out = server_status_tool(
+            8,
+            sample_counts(),
+            ServerStatusToolParams { verbose: None },
+            &AuthPosture::disabled(),
+        );
         assert!(out.starts_with("[server] "), "{out}");
         assert!(out.contains("tools=13"), "{out}");
         assert!(out.contains("resources=8"), "{out}");
@@ -110,6 +158,42 @@ mod tests {
                 .any(|status| out.contains(status)),
             "{out}"
         );
+        // Default-off posture: the base line reports auth disabled with zero issuers.
+        assert!(out.contains("auth_enabled=false"), "{out}");
+        assert!(out.contains("auth_issuers=0"), "{out}");
+        // ...and never lists origins (there are none, and the verbose origins line is absent).
+        assert!(!out.contains("auth_issuer_origins="), "{out}");
+    }
+
+    #[test]
+    fn enabled_auth_posture_reports_the_count_and_origins_but_no_secret() {
+        let auth = AuthPosture::enabled(vec![
+            "https://dev-7ppqf0duhy7etaet.us.auth0.com/".to_string(),
+            "https://login.microsoftonline.com/tenant/v2.0".to_string(),
+        ]);
+        let out = server_status_tool(
+            8,
+            sample_counts(),
+            ServerStatusToolParams {
+                verbose: Some(true),
+            },
+            &auth,
+        );
+        // Base line: enabled with the issuer count.
+        assert!(out.contains("auth_enabled=true"), "{out}");
+        assert!(out.contains("auth_issuers=2"), "{out}");
+        // Verbose: the issuer ORIGINS are listed (non-secret URLs), comma-joined.
+        assert!(
+            out.contains(
+                "auth_issuer_origins=https://dev-7ppqf0duhy7etaet.us.auth0.com/,\
+                 https://login.microsoftonline.com/tenant/v2.0"
+            ),
+            "{out}"
+        );
+        // Never the resource audience, JWKS, keys, or any token/claim material.
+        assert!(!out.contains("memory.aionforgelabs.com"), "{out}");
+        assert!(!out.to_lowercase().contains("jwks"), "{out}");
+        assert!(!out.to_lowercase().contains("bearer"), "{out}");
     }
 
     #[test]
@@ -120,6 +204,7 @@ mod tests {
             ServerStatusToolParams {
                 verbose: Some(true),
             },
+            &AuthPosture::disabled(),
         );
         assert!(out.contains("read_like_tools=server_status,search,read_memory,session_manifest"));
         assert!(out.contains(

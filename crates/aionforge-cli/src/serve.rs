@@ -5,16 +5,17 @@ use std::io::Write;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use aionforge_config::ServerHttpConfig;
+use aionforge_config::{AuthConfig, Config, ServerHttpConfig};
 use aionforge_mcp::{
-    AionforgeStreamableHttpService, STREAMABLE_HTTP_ENDPOINT, StreamableHttpOptions, serve_stdio,
-    streamable_http_service,
+    AionforgeStreamableHttpService, AuthPosture, AuthValidators, STREAMABLE_HTTP_ENDPOINT,
+    StreamableHttpOptions, serve_stdio, streamable_http_service,
 };
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full, combinators::BoxBody};
 use hyper::body::Incoming;
+use hyper::header::AUTHORIZATION;
 use hyper::service::service_fn;
-use hyper::{Request, Response, StatusCode};
+use hyper::{Method, Request, Response, StatusCode};
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto::Builder as AutoHttpBuilder;
 use tokio::net::TcpListener;
@@ -32,15 +33,23 @@ type HttpResponse = Response<BoxBody<Bytes, Infallible>>;
 pub(crate) async fn run(options: &HostOptions, args: ServeArgs) -> Result<(), CliError> {
     let config = load_config(options)?;
     let memory = open_memory(&config)?;
+    // The OAuth resource-server posture is DEFAULT-OFF: `config.auth.enabled` is `false` unless a
+    // deployment opts in, so the stdio and HTTP transports below reproduce today's behavior exactly.
     match args.transport {
         ServeTransport::Stdio => {
             let startup = check_startup_embedder(memory.as_ref()).await?;
             report_startup_embedder(&startup);
-            serve_stdio(memory)
+            // stdio carries no HTTP request, so no Tower validator can run over it; the flag is
+            // threaded only for posture parity (an enabled stdio server has no producer yet).
+            // Auth-on over stdio therefore rejects EVERY identity-bearing tool with
+            // ERR_PRINCIPAL_REQUIRED (fail-closed, never a bypass). Warn LOUDLY at startup so the
+            // operator sees the root cause as a single visible signal, not a stream of per-tool 403s.
+            report_stdio_auth_unsupported(config.auth.enabled);
+            serve_stdio(memory, config.auth.enabled)
                 .await
                 .map_err(|error| CliError::Serve(error.to_string()))
         }
-        ServeTransport::Http => serve_http(memory, args, &config.server).await,
+        ServeTransport::Http => serve_http(memory, args, &config).await,
     }
 }
 
@@ -115,15 +124,33 @@ fn build_http_options(
 async fn serve_http(
     memory: Arc<aionforge::Memory<RuntimeEmbedder>>,
     args: ServeArgs,
-    http: &ServerHttpConfig,
+    config: &Config,
 ) -> Result<(), CliError> {
+    let http: &ServerHttpConfig = &config.server;
     let resolved = resolve_http_settings(&args, http);
     let options = build_http_options(&resolved, args.json_response, args.max_request_body_bytes);
 
     let startup = check_startup_embedder(memory.as_ref()).await?;
     report_startup_embedder(&startup);
-    let service = streamable_http_service(memory, options)?;
-    let service = HttpMcpRouter { inner: service };
+
+    // Build the OAuth resource-server producer ONCE, at startup. DEFAULT-OFF: `build` returns
+    // `None` when `config.auth.enabled` is `false`, so the router below runs no validator, serves
+    // no well-known route, and inserts no extension — byte-for-byte today's behavior. When enabled,
+    // each issuer's JWKS is fetched here so a broken issuer fails fast at startup, not per-request.
+    let validators = AuthValidators::build(&config.auth)
+        .await
+        .map_err(|error| CliError::Serve(error.to_string()))?;
+    report_auth_startup(&config.auth, &validators);
+    let auth_posture = match &validators {
+        Some(validators) => AuthPosture::enabled(validators.issuer_origins().to_vec()),
+        None => AuthPosture::disabled(),
+    };
+
+    let service = streamable_http_service(memory, options, auth_posture)?;
+    let service = HttpMcpRouter {
+        inner: service,
+        validators: validators.map(Arc::new),
+    };
 
     let listener = TcpListener::bind(resolved.listen).await?;
     let builder = AutoHttpBuilder::new(TokioExecutor::new());
@@ -185,16 +212,112 @@ fn report_shutdown_signal() {
     let _ = writeln!(stderr, "aionforge serve: shutdown signal received");
 }
 
+/// Warn loudly when auth is enabled on the stdio transport, where there is no HTTP producer to
+/// insert a validated principal: every identity-bearing tool then fails closed with
+/// `ERR_PRINCIPAL_REQUIRED`. A no-op when auth is disabled (the default), so the warning never
+/// fires on today's path. Surfaced on stderr (the same channel as the other startup advisories),
+/// since the CLI installs no tracing subscriber.
+fn report_stdio_auth_unsupported(auth_enabled: bool) {
+    if let Some(warning) = stdio_auth_unsupported_warning(auth_enabled) {
+        let mut stderr = std::io::stderr().lock();
+        let _ = writeln!(stderr, "{warning}");
+    }
+}
+
+/// The (non-secret) stdio-auth-unsupported advisory, or `None` when auth is disabled. Pure, so the
+/// no-op-when-disabled invariant and the wording are directly testable.
+fn stdio_auth_unsupported_warning(auth_enabled: bool) -> Option<String> {
+    if !auth_enabled {
+        return None;
+    }
+    Some(
+        "aionforge serve: WARNING auth is enabled but the stdio transport has no token-validator \
+         producer; every identity-bearing tool will be rejected with ERR_PRINCIPAL_REQUIRED. Use \
+         the HTTP transport (serve http) for an auth-enabled deployment."
+            .to_string(),
+    )
+}
+
+/// Report the OAuth resource-server posture at startup (posture only, never a secret).
+///
+/// Default-off prints a single "auth disabled" line; an enabled server prints the issuer count and
+/// each soft config advisory (`AuthConfig::startup_warnings`, which names issuers by index, never
+/// by value). No token, key, or JWKS is ever logged.
+fn report_auth_startup(auth: &AuthConfig, validators: &Option<AuthValidators>) {
+    let mut stderr = std::io::stderr().lock();
+    match validators {
+        None => {
+            let _ = writeln!(stderr, "aionforge serve: auth disabled (default)");
+        }
+        Some(validators) => {
+            let _ = writeln!(
+                stderr,
+                "aionforge serve: auth enabled issuers={}",
+                validators.issuer_origins().len()
+            );
+            for warning in auth.startup_warnings() {
+                let _ = writeln!(stderr, "aionforge serve: auth warning: {warning}");
+            }
+        }
+    }
+}
+
+/// The hand-rolled MCP router (the PR5 Tower validator producer).
+///
+/// Routes `/mcp` to the inner Streamable HTTP service and, when auth is enabled, gates it: it
+/// serves the RFC 9728 well-known metadata, extracts and validates the Bearer token, maps the
+/// claims to a principal, and inserts the [`ValidatedPrincipal`] into the request's
+/// `http::request::Parts.extensions` — the two-level nesting PR4 reads back downstream. When
+/// `validators` is `None` (the DEFAULT-OFF path) it is byte-for-byte the pre-PR5 router: `/mcp`
+/// delegates straight to the inner service and every other path 404s, with no validation, no
+/// extension insert, and no well-known route.
 #[derive(Clone)]
 struct HttpMcpRouter {
     inner: AionforgeStreamableHttpService<RuntimeEmbedder>,
+    /// The OAuth resource-server producer, present only when `auth.enabled`. `None` is the
+    /// default-off path: no validator runs, no extension is inserted, no well-known route exists.
+    validators: Option<Arc<AuthValidators>>,
 }
 
 impl HttpMcpRouter {
-    async fn call(&mut self, request: Request<Incoming>) -> Result<HttpResponse, Infallible> {
+    async fn call(&mut self, mut request: Request<Incoming>) -> Result<HttpResponse, Infallible> {
+        // DEFAULT-OFF fast path: with no producer the router is byte-for-byte the pre-PR5 router —
+        // `/mcp` delegates to the inner service, every other path 404s, nothing else runs.
+        let Some(validators) = self.validators.clone() else {
+            if request.uri().path() != STREAMABLE_HTTP_ENDPOINT {
+                return Ok(not_found_response());
+            }
+            return self.inner.call(request).await;
+        };
+
+        // Auth-enabled. The RFC 9728 well-known route is served first (a GET that lets a client
+        // discover the authorization servers BEFORE it has a token).
+        if request.method() == Method::GET && request.uri().path() == validators.well_known_path() {
+            return Ok(validators.oauth_metadata_response());
+        }
+
+        // Every other path that is not `/mcp` 404s, exactly as the default-off router.
         if request.uri().path() != STREAMABLE_HTTP_ENDPOINT {
             return Ok(not_found_response());
         }
+
+        // Authenticate the `/mcp` request. On any failure the producer returns the secret-free
+        // 401/403 response (with the WWW-Authenticate challenge) to send verbatim.
+        let validated = match validators
+            .authenticate(request.headers().get(AUTHORIZATION))
+            .await
+        {
+            Ok(validated) => validated,
+            Err(response) => return Ok(*response),
+        };
+
+        // THE CRUX: insert the ValidatedPrincipal into the http::request::Parts.extensions (one
+        // level below the rmcp model::Extensions bag). The rmcp streamable-http transport carries
+        // the WHOLE Parts into its bag as a single entry, so PR4's two-level read
+        // (`extensions.get::<http::request::Parts>()` then `parts.extensions.get::<ValidatedPrincipal>()`)
+        // finds it here and nowhere else — inserting into any other bag would yield None at the
+        // handler and a total auth-on outage.
+        request.extensions_mut().insert(validated);
         self.inner.call(request).await
     }
 }
@@ -225,6 +348,22 @@ mod tests {
             json_response: false,
             max_request_body_bytes: None,
         }
+    }
+
+    #[test]
+    fn stdio_auth_warning_fires_only_when_auth_is_enabled() {
+        // DEFAULT-OFF: auth disabled (the default) draws no stdio advisory, so today's stdio path
+        // is byte-for-byte unchanged.
+        assert!(
+            stdio_auth_unsupported_warning(false).is_none(),
+            "auth-off stdio is silent"
+        );
+        // Auth-on stdio warns loudly with the actionable root cause and the actionable remedy.
+        let warning = stdio_auth_unsupported_warning(true).expect("auth-on stdio warns");
+        assert!(warning.contains("ERR_PRINCIPAL_REQUIRED"), "{warning}");
+        assert!(warning.contains("serve http"), "{warning}");
+        // Never leaks a secret — it is a fixed advisory.
+        assert!(!warning.to_lowercase().contains("token="), "{warning}");
     }
 
     #[test]

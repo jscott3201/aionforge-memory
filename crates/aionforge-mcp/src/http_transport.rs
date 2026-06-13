@@ -17,6 +17,7 @@ use crate::AionforgeMcp;
 use crate::http_body_limit::{
     DEFAULT_MAX_REQUEST_BODY_BYTES, RequestBodyLimitService, validate_max_request_body_bytes,
 };
+use crate::status::AuthPosture;
 
 /// The path hosts should mount the Streamable HTTP service under.
 pub const STREAMABLE_HTTP_ENDPOINT: &str = "/mcp";
@@ -298,20 +299,30 @@ pub fn streamable_http_config(
     options.into_rmcp_config()
 }
 
-/// Build an unauthenticated Streamable HTTP service.
+/// Build the Streamable HTTP service, selecting the OAuth resource-server posture.
 ///
-/// Mount the returned service under [`STREAMABLE_HTTP_ENDPOINT`].
+/// Mount the returned service under [`STREAMABLE_HTTP_ENDPOINT`]. The `auth` posture's `enabled`
+/// flag drives the handler: [`AuthPosture::disabled`] (the default-off path) reproduces today's
+/// body-only behavior exactly; an enabled posture requires a validated request extension on every
+/// identity-resolving tool (which a Tower validator inserts upstream — see
+/// [`AuthValidators`](crate::AuthValidators)). The posture's issuer origins ride `server_status`.
 ///
 /// # Errors
 /// Returns [`StreamableHttpConfigError`] when the options are invalid.
 pub fn streamable_http_service<E: Embedder + 'static>(
     memory: Arc<Memory<E>>,
     options: StreamableHttpOptions,
+    auth: AuthPosture,
 ) -> Result<AionforgeStreamableHttpService<E>, StreamableHttpConfigError> {
     let max_request_body_bytes = options.max_request_body_bytes;
     let config = streamable_http_config(options)?;
     let service = StreamableHttpService::new(
-        move || Ok(AionforgeMcp::new(Arc::clone(&memory))),
+        move || {
+            Ok(AionforgeMcp::new_with_auth_posture(
+                Arc::clone(&memory),
+                auth.clone(),
+            ))
+        },
         Arc::new(LocalSessionManager::default()),
         config,
     );

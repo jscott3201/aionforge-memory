@@ -210,11 +210,13 @@ dependencies = [
  "aionforge-domain",
  "aionforge-engine",
  "aionforge-store",
+ "base64",
  "bytes",
  "http",
  "http-body",
  "http-body-util",
  "jiff",
+ "jsonwebtoken",
  "metrics",
  "rmcp",
  "schemars",
@@ -224,6 +226,7 @@ dependencies = [
  "tokio",
  "tower-service",
  "tracing",
+ "wiremock",
 ]
 
 [[package]]
