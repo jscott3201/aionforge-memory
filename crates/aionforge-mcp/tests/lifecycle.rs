@@ -318,6 +318,8 @@ async fn mcp_transport_lists_lifecycle_tools() -> TestResult {
         "consolidate",
         "forget",
         "unforget",
+        "pin",
+        "unpin",
         "audit_history",
     ] {
         assert!(tools.contains(name), "{name} listed in {tools:?}");

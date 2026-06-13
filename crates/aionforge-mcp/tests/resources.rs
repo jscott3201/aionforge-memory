@@ -21,10 +21,10 @@ use rmcp::model::ReadResourceRequestParams;
 type TestError = Box<dyn std::error::Error + Send + Sync>;
 type TestResult<T = ()> = Result<T, TestError>;
 
-const TOTAL_STATIC_RESOURCE_BUDGET_BYTES: usize = 16_384;
+const TOTAL_STATIC_RESOURCE_BUDGET_BYTES: usize = 17_408;
 
 const RESOURCE_BODY_BUDGETS: &[(&str, usize)] = &[
-    (TOOL_MANIFEST_RESOURCE_URI, 5_840),
+    (TOOL_MANIFEST_RESOURCE_URI, 6_900),
     (RECALL_UNTRUSTED_DATA_PROMPT_RESOURCE_URI, 1_200),
     (MCP_SURFACE_GUIDE_RESOURCE_URI, 2_100),
     (TOOL_APPROVAL_POLICY_RESOURCE_URI, 1_664),

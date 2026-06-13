@@ -79,7 +79,7 @@ mod tests {
     fn compact_status_reports_counts_and_posture() {
         let out = server_status_tool(8, sample_counts(), ServerStatusToolParams { verbose: None });
         assert!(out.starts_with("[server] "), "{out}");
-        assert!(out.contains("tools=11"), "{out}");
+        assert!(out.contains("tools=13"), "{out}");
         assert!(out.contains("resources=8"), "{out}");
         assert!(out.contains("sampling=false"), "{out}");
         assert!(out.contains("memories=6"), "{out}");
@@ -95,7 +95,9 @@ mod tests {
             },
         );
         assert!(out.contains("read_like_tools=server_status,search,read_memory,session_manifest"));
-        assert!(out.contains("mutating_tools=capture,batch_capture,consolidate,forget,unforget"));
+        assert!(out.contains(
+            "mutating_tools=capture,batch_capture,consolidate,forget,unforget,pin,unpin"
+        ));
         assert!(out.contains("aionforge://policy/tool-approval"));
         // The per-kind breakdown line is exact.
         let kinds_line = "kinds=episodes=3 facts=2 entities=1 notes=0 skills=0 bad_patterns=0";
@@ -104,7 +106,7 @@ mod tests {
         // Anchor to the verbose roster specifically — the base [server] line also
         // contains "mutating_tools=", so a plain find() would match that one instead.
         let mutating_at = out
-            .find("mutating_tools=capture,batch_capture,consolidate,forget,unforget")
+            .find("mutating_tools=capture,batch_capture,consolidate,forget,unforget,pin,unpin")
             .expect("verbose output has a mutating_tools roster line");
         let kinds_at = out
             .find(kinds_line)

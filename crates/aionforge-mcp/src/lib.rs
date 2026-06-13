@@ -39,7 +39,7 @@ pub use inspect::{
 pub use lifecycle::{
     AuditCursorToolParam, AuditHistoryToolParams, ConsolidationRunToolParams,
     ConsolidationStatusToolParams, MemoryLifecycleToolParams, audit_history_tool, consolidate_tool,
-    consolidation_status_tool, forget_tool, unforget_tool,
+    consolidation_status_tool, forget_tool, pin_tool, unforget_tool, unpin_tool,
 };
 pub use principal::HostPrincipalToolParam;
 pub use prompt::{
@@ -305,6 +305,36 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
         let params = params.0;
         let now = jiff::Zoned::now();
         unforget_tool(&self.memory, params, &now)
+    }
+
+    #[tool(
+        description = "Pin one writable memory so decay and forgetting spare it.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn pin(&self, params: Parameters<MemoryLifecycleToolParams>) -> Result<String, String> {
+        let params = params.0;
+        let now = jiff::Zoned::now();
+        pin_tool(&self.memory, params, &now)
+    }
+
+    #[tool(
+        description = "Unpin one writable memory so decay and forgetting resume.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn unpin(&self, params: Parameters<MemoryLifecycleToolParams>) -> Result<String, String> {
+        let params = params.0;
+        let now = jiff::Zoned::now();
+        unpin_tool(&self.memory, params, &now)
     }
 
     #[tool(

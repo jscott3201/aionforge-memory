@@ -18,7 +18,8 @@ use aionforge_domain::nodes::semantic::{Entity, Fact};
 use aionforge_domain::time::Timestamp;
 use aionforge_engine::{
     AuditCursor, AuditPage, AuditRecord, AuditVerification, ConsolidationConfig, Memory,
-    PassConfig, PointForget, PointUnforget, RuleExtractor, RuleInducer, RuleSummarizer, TickReport,
+    PassConfig, PointForget, PointPin, PointUnforget, PointUnpin, RuleExtractor, RuleInducer,
+    RuleSummarizer, TickReport,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -274,6 +275,73 @@ pub fn unforget_tool<E: Embedder>(
     ))
 }
 
+/// Pin one writable memory by id so decay and forgetting spare it (05 §2, M5.T02 rider).
+///
+/// Resolves and authorizes the target exactly like `forget`, then calls the always-available
+/// engine pin (there is no off-switch: a pin can only spare, never doom, and read-time decay
+/// honors it whether or not active forgetting is enabled). Idempotent: pinning an
+/// already-pinned memory is a no-op `already_pinned` outcome, audited only on a real change.
+///
+/// # Errors
+/// Returns a structured `ERR_*` string if parameters are invalid, the target is not
+/// writable by the viewer, or the engine returns an error.
+pub fn pin_tool<E: Embedder>(
+    memory: &Memory<E>,
+    params: MemoryLifecycleToolParams,
+    now: &Timestamp,
+) -> Result<String, String> {
+    let target = writable_memory(
+        memory,
+        &params.memory_id,
+        params.viewer.as_deref(),
+        params.teams,
+        params.principal,
+    )?;
+    let outcome = memory
+        .pin(&target.id, now)
+        .map_err(|error| format!("ERR_PIN: {error}"))?;
+    Ok(format!(
+        "[pin] {} kind={} ns={} outcome={}",
+        target.id,
+        target.label,
+        target.namespace,
+        point_pin_outcome(outcome)
+    ))
+}
+
+/// Lift the pin on one writable memory by id so decay and forgetting eligibility re-arm.
+///
+/// A pin is a stay, not a vault: unpinning silently re-arms decay and sweep eligibility, and
+/// the memory is forgotten later only if every eligibility axis independently holds low.
+/// Idempotent: unpinning a memory that is not pinned is a no-op `not_pinned` outcome.
+///
+/// # Errors
+/// Returns a structured `ERR_*` string if parameters are invalid, the target is not
+/// writable by the viewer, or the engine returns an error.
+pub fn unpin_tool<E: Embedder>(
+    memory: &Memory<E>,
+    params: MemoryLifecycleToolParams,
+    now: &Timestamp,
+) -> Result<String, String> {
+    let target = writable_memory(
+        memory,
+        &params.memory_id,
+        params.viewer.as_deref(),
+        params.teams,
+        params.principal,
+    )?;
+    let outcome = memory
+        .unpin(&target.id, now)
+        .map_err(|error| format!("ERR_UNPIN: {error}"))?;
+    Ok(format!(
+        "[unpin] {} kind={} ns={} outcome={}",
+        target.id,
+        target.label,
+        target.namespace,
+        point_unpin_outcome(outcome)
+    ))
+}
+
 /// Read a principal-scoped audit history page for a subject.
 ///
 /// # Errors
@@ -472,6 +540,22 @@ fn point_unforget_outcome(outcome: PointUnforget) -> String {
         PointUnforget::NotFound => "not_found".to_string(),
         PointUnforget::Protected(reason) => format!("protected({reason:?})"),
         PointUnforget::Disabled => "disabled reason=forgetting.enabled=false".to_string(),
+    }
+}
+
+fn point_pin_outcome(outcome: PointPin) -> &'static str {
+    match outcome {
+        PointPin::Pinned => "pinned",
+        PointPin::AlreadyPinned => "already_pinned",
+        PointPin::NotFound => "not_found",
+    }
+}
+
+fn point_unpin_outcome(outcome: PointUnpin) -> &'static str {
+    match outcome {
+        PointUnpin::Unpinned => "unpinned",
+        PointUnpin::NotPinned => "not_pinned",
+        PointUnpin::NotFound => "not_found",
     }
 }
 
