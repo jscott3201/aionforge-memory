@@ -18,7 +18,10 @@ use aionforge_domain::nodes::episodic::Episode;
 use aionforge_domain::nodes::semantic::{Entity, Fact};
 use aionforge_domain::time::Timestamp;
 use selene_core::{GraphId, NodeId, Value, db_string};
-use selene_gql::{BindingTable, BuiltinProcedureRegistry, Session, StatementOutput};
+use selene_gql::{
+    BindingTable, BuiltinProcedureRegistry, CallPlanCache, Session, SharedPlanCache,
+    StatementOutput,
+};
 use selene_graph::{DEFAULT_WAL_FILE_NAME, GraphTypeDef, SeleneGraph, SharedGraph, WalConfig};
 
 use crate::config::StoreConfig;
@@ -56,6 +59,11 @@ pub struct Store {
     /// (two signers across one store's life, a determinism hazard) structurally impossible.
     audit_signer:
         std::sync::OnceLock<std::sync::Arc<dyn aionforge_domain::verify::AuditEventSigner>>,
+    /// Shared per-graph GQL plan caches, built once and cloned into every session, so
+    /// the fixed-source request plans are parsed and lowered once and reused across the
+    /// many short-lived sessions. See [`crate::plan_cache`].
+    pub(crate) shared_plan_cache: Arc<SharedPlanCache>,
+    pub(crate) call_plan_cache: Arc<CallPlanCache>,
 }
 
 impl std::fmt::Debug for Store {
@@ -91,6 +99,21 @@ impl Store {
         self.audit_signer.get().map(std::sync::Arc::as_ref)
     }
 
+    /// Assemble a store over an opened graph, building its per-store plan caches.
+    ///
+    /// Every constructor funnels through here so the cache pair and the audit-signer
+    /// latch are initialized identically regardless of how the graph was opened.
+    fn assemble(graph: SharedGraph, config: StoreConfig) -> Self {
+        let (shared_plan_cache, call_plan_cache) = crate::plan_cache::new_plan_caches();
+        Self {
+            graph,
+            config,
+            audit_signer: std::sync::OnceLock::new(),
+            shared_plan_cache,
+            call_plan_cache,
+        }
+    }
+
     /// Open an in-memory store with no persistence and no schema applied yet.
     ///
     /// The graph is closed but bound to an empty type, so it accepts catalog DDL but
@@ -119,11 +142,7 @@ impl Store {
             .bound_to(empty_graph_type()?)?
             .with_provider(candidate_state_provider()?)
             .build()?;
-        Ok(Self {
-            graph,
-            config,
-            audit_signer: std::sync::OnceLock::new(),
-        })
+        Ok(Self::assemble(graph, config))
     }
 
     /// Open a WAL-backed store at `dir`, with no schema applied yet.
@@ -146,11 +165,7 @@ impl Store {
             .bound_to(empty_graph_type()?)?
             .with_provider(candidate_state_provider()?)
             .build()?;
-        Ok(Self {
-            graph,
-            config,
-            audit_signer: std::sync::OnceLock::new(),
-        })
+        Ok(Self::assemble(graph, config))
     }
 
     /// Open a WAL-backed store at `dir` with the full schema already applied.
@@ -197,11 +212,7 @@ impl Store {
             vec![candidate_state_provider()?],
         )
         .map_err(StoreError::from_recovery)?;
-        let store = Self {
-            graph,
-            config,
-            audit_signer: std::sync::OnceLock::new(),
-        };
+        let store = Self::assemble(graph, config);
         store.dimension_consistency_check(config.embedding_dimension)?;
         store.audit_signature_latch_check()?;
         Ok(store)
@@ -478,7 +489,9 @@ impl Store {
     /// # Errors
     /// Returns [`StoreError`] if the statement fails to parse, plan, or execute.
     pub fn execute(&self, query: &BoundQuery) -> Result<QueryResult, StoreError> {
-        let mut session = Session::new(&self.graph);
+        let mut session = Session::new(&self.graph)
+            .with_shared_plan_cache(Arc::clone(&self.shared_plan_cache))
+            .with_call_plan_cache(Arc::clone(&self.call_plan_cache));
         for (name, value) in query.params() {
             session.bind_parameter(name.clone(), value.clone());
         }
@@ -505,7 +518,9 @@ impl Store {
         statements: &[BoundQuery],
     ) -> Result<QueryResult, StoreError> {
         let registry = BuiltinProcedureRegistry::new();
-        let mut session = Session::new(&self.graph);
+        let mut session = Session::new(&self.graph)
+            .with_shared_plan_cache(Arc::clone(&self.shared_plan_cache))
+            .with_call_plan_cache(Arc::clone(&self.call_plan_cache));
         let mut result = QueryResult::Empty;
         for query in statements {
             for (name, value) in query.params() {

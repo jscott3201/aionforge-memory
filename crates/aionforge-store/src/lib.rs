@@ -40,6 +40,7 @@ mod materialize;
 mod migrate;
 mod note;
 mod pin_write;
+mod plan_cache;
 mod promotion;
 mod provenance;
 mod providers;
@@ -85,6 +86,7 @@ pub use materialize::{
 pub use migrate::{MigrationPlan, MigrationReport, PendingChange};
 pub use note::MaterializedNote;
 pub use pin_write::PinWrite;
+pub use plan_cache::PlanCacheStatsReport;
 pub use promotion::PromoteWriteIds;
 pub use providers::CandidateStateInfo;
 pub use purge_read::{CascadeCaps, ClosureOutcome, PurgeClosure};
