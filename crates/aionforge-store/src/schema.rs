@@ -102,6 +102,8 @@ pub enum PropertyKind {
     Uint,
     /// `FLOAT` (f64).
     Float,
+    /// `DECIMAL` (exact fixed-point).
+    Decimal,
     /// `STRING`.
     String,
     /// `UUID`.
@@ -110,6 +112,8 @@ pub enum PropertyKind {
     ZonedDateTime,
     /// `VECTOR`.
     Vector,
+    /// `BYTES` (binary string).
+    Bytes,
     /// `JSON`.
     Json,
     /// `LIST<T>`.
@@ -207,13 +211,52 @@ fn property_kind(value_type: &PropertyValueType) -> PropertyKind {
         PropertyValueType::Int => PropertyKind::Int,
         PropertyValueType::Uint => PropertyKind::Uint,
         PropertyValueType::Float => PropertyKind::Float,
+        PropertyValueType::Decimal => PropertyKind::Decimal,
         PropertyValueType::String => PropertyKind::String,
         PropertyValueType::Uuid => PropertyKind::Uuid,
         PropertyValueType::ZonedDateTime => PropertyKind::ZonedDateTime,
         PropertyValueType::Vector => PropertyKind::Vector,
+        PropertyValueType::Bytes => PropertyKind::Bytes,
         PropertyValueType::Json => PropertyKind::Json,
         PropertyValueType::List => PropertyKind::List,
         PropertyValueType::Record | PropertyValueType::RecordTyped => PropertyKind::Record,
+        // The genuinely-unused tower (Int128/Uint128/Float32, temporal subtypes) still
+        // collapses to Other; add an explicit arm here when the data model adopts one.
         _ => PropertyKind::Other,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use selene_core::PropertyValueType;
+
+    use super::{PropertyKind, property_kind};
+
+    #[test]
+    fn decimal_and_bytes_map_to_their_own_kinds() {
+        // The forward-insurance arms: a future DECIMAL/BYTES column mirrors faithfully
+        // instead of collapsing to Other and losing its real type in the drift guard.
+        assert_eq!(
+            property_kind(&PropertyValueType::Decimal),
+            PropertyKind::Decimal
+        );
+        assert_eq!(
+            property_kind(&PropertyValueType::Bytes),
+            PropertyKind::Bytes
+        );
+    }
+
+    #[test]
+    fn the_genuinely_unused_tower_still_collapses_to_other() {
+        // Variants the data model does not use stay Other by design, so the mirror does
+        // not grow a kind for every engine type the store never declares.
+        assert_eq!(
+            property_kind(&PropertyValueType::Int128),
+            PropertyKind::Other
+        );
+        assert_eq!(
+            property_kind(&PropertyValueType::Float32),
+            PropertyKind::Other
+        );
     }
 }
