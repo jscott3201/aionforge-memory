@@ -231,6 +231,7 @@ pub(crate) fn render_human(
         indexes.vector_dimension_mismatches.len(),
         indexes.vector_kind_mismatches.len()
     )?;
+    write_vector_index_memory(&mut out, indexes)?;
     write_inventory_issues(&mut out, "vector indexes", &indexes.vector_indexes)?;
     write_inventory_issues(&mut out, "text indexes", &indexes.text_indexes)?;
     write_inventory_issues(&mut out, "property indexes", &indexes.property_indexes)?;
@@ -337,6 +338,24 @@ fn write_store_open(
         write!(out, " error={error}")?;
     }
     writeln!(out)
+}
+
+fn write_vector_index_memory(
+    out: &mut String,
+    indexes: &aionforge_store::IndexDoctorReport,
+) -> Result<(), std::fmt::Error> {
+    let stats = &indexes.vector_index_stats;
+    let total_index_bytes: usize = stats.iter().map(|s| s.estimated_index_bytes).sum();
+    let total_reachable_bytes: usize = stats.iter().map(|s| s.estimated_reachable_bytes).sum();
+    let total_rows: u64 = stats.iter().map(|s| s.indexed_rows).sum();
+    let turbo_quant = stats.iter().filter(|s| s.is_turbo_quant).count();
+    let rebuild_recommended = stats.iter().filter(|s| s.ivf_rebuild_recommended).count();
+    writeln!(
+        out,
+        "vector index memory: rows={total_rows} index_bytes={total_index_bytes} \
+         reachable_bytes={total_reachable_bytes} turbo_quant={turbo_quant}/{} rebuild_recommended={rebuild_recommended}",
+        stats.len()
+    )
 }
 
 fn write_inventory_issues<T: std::fmt::Debug>(

@@ -77,7 +77,7 @@ pub use error::StoreError;
 pub use forget_read::{FORGET_SCAN_LABELS, ForgetCandidate, ForgetCandidatePage, ForgetCursor};
 pub use forget_write::ForgetWrite;
 pub use gql::{BoundQuery, QueryResult, Rows};
-pub use indexes::VectorIndexInfo;
+pub use indexes::{VectorIndexInfo, VectorIndexStats};
 pub use lineage::{ConsolidatingModel, NoteLineage, WriterFamilySet};
 pub use materialize::{
     ConsolidationArtifacts, Contradiction, FactKey, MaterializedFact, Supersession,

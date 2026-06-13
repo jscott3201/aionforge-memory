@@ -8,7 +8,7 @@ use crate::catalog::{NODE_TYPES, SCHEMA_VERSION};
 use crate::indexes::{SCALAR_INDEXES, TEXT_INDEXES, VECTOR_INDEXES};
 use crate::providers::{CANDIDATE_STATE_NAMES, CandidateStateInfo};
 use crate::store::Store;
-use crate::{LagSnapshot, StoreError, VectorIndexInfo};
+use crate::{LagSnapshot, StoreError, VectorIndexInfo, VectorIndexStats};
 
 const EXPECTED_COMPOSITE_INDEXES: &[(&str, &[&str])] = &[
     ("Fact", &["subject_id", "predicate"]),
@@ -117,6 +117,9 @@ pub struct IndexDoctorReport {
     pub vector_dimension_mismatches: Vec<VectorDimensionMismatch>,
     /// Registered vector indexes with the wrong index kind.
     pub vector_kind_mismatches: Vec<VectorKindMismatch>,
+    /// Per-index vector memory and health stats (footprint, TurboQuant flag, IVF
+    /// rebuild recommendation). Read-only diagnostics; they do not affect `ok`.
+    pub vector_index_stats: Vec<VectorIndexStats>,
     /// True when every expected index is present, no unexpected index exists, and vector
     /// dimensions/kinds match.
     pub ok: bool,
@@ -206,6 +209,7 @@ impl Store {
         let vectors = self.vector_indexes();
         let vector_dimension_mismatches = vector_dimension_mismatches(&vectors, expected_dimension);
         let vector_kind_mismatches = vector_kind_mismatches(&vectors);
+        let vector_index_stats = self.vector_index_stats();
         let vector_indexes = inventory_check(
             VECTOR_INDEXES
                 .iter()
@@ -257,6 +261,7 @@ impl Store {
             composite_indexes,
             vector_dimension_mismatches,
             vector_kind_mismatches,
+            vector_index_stats,
             ok,
         }
     }

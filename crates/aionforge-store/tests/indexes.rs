@@ -119,6 +119,55 @@ fn migration_registers_all_native_indexes() {
 }
 
 #[test]
+fn vector_index_stats_project_per_index_memory_and_turbo_quant_flags() {
+    let store = migrated();
+    let stats = store.vector_index_stats();
+    assert_eq!(stats.len(), 7, "one stats row per vector index: {stats:?}");
+
+    // Episode and Fact carry the TurboQuant accelerator; the rest stay HNSW.
+    let mut turbo: Vec<&str> = stats
+        .iter()
+        .filter(|s| s.is_turbo_quant)
+        .map(|s| s.label.as_str())
+        .collect();
+    turbo.sort_unstable();
+    assert_eq!(
+        turbo,
+        ["Episode", "Fact"],
+        "only Episode/Fact are TurboQuant"
+    );
+
+    for s in &stats {
+        let expect_turbo = matches!(s.label.as_str(), "Episode" | "Fact");
+        assert_eq!(s.is_turbo_quant, expect_turbo, "{} turbo flag", s.label);
+        assert_eq!(
+            s.kind,
+            if expect_turbo {
+                "TurboQuantCosine"
+            } else {
+                "HnswCosine"
+            },
+            "{} kind",
+            s.label
+        );
+        // No IVF index is registered, so nothing recommends an IVF rebuild.
+        assert!(
+            !s.ivf_rebuild_recommended,
+            "{} should not recommend rebuild",
+            s.label
+        );
+        // The reachable upper bound is never below the index-owned estimate.
+        assert!(s.estimated_reachable_bytes >= s.estimated_index_bytes);
+    }
+
+    // The doctor carries the same per-index stats and stays healthy — the stats are
+    // diagnostics, not a health gate.
+    let report = store.doctor_report().expect("doctor report");
+    assert_eq!(report.indexes.vector_index_stats.len(), 7);
+    assert!(report.indexes.ok, "stats do not flip index health");
+}
+
+#[test]
 fn dimension_consistency_check_passes_and_fails() {
     let store = migrated();
     // Matches the dimension the indexes were created at.

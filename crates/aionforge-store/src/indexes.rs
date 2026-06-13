@@ -154,6 +154,36 @@ pub struct VectorIndexInfo {
     pub name: Option<String>,
 }
 
+/// A focused, operator-facing projection of one vector index's memory and health
+/// profile, from selene 1.2's `VectorIndexMemoryUsage`.
+///
+/// The engine accounts ~40 columns; this surfaces the fields that drive capacity
+/// planning and make the TurboQuant compression win measurable. `estimated_index_bytes`
+/// counts the index-owned structures (the compressed candidate index for TurboQuant —
+/// the number that shrinks vs a full-precision HNSW graph), while
+/// `estimated_reachable_bytes` adds the full-precision vector component bytes the index
+/// references, as an upper bound. The gap between them is the compression story.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VectorIndexStats {
+    /// The indexed node label.
+    pub label: String,
+    /// The indexed vector property.
+    pub property: String,
+    /// The index kind (e.g. `TurboQuantCosine`), Debug-rendered.
+    pub kind: String,
+    /// Live rows currently admitted to the index.
+    pub indexed_rows: u64,
+    /// Estimated heap bytes owned by the derived index structures, excluding the
+    /// full-precision vector components shared with the primary graph.
+    pub estimated_index_bytes: usize,
+    /// Upper-bound estimate including the vector component bytes the index references.
+    pub estimated_reachable_bytes: usize,
+    /// True when this index carries a TurboQuant compressed accelerator.
+    pub is_turbo_quant: bool,
+    /// True when the engine recommends an IVF rebuild for accumulated drift.
+    pub ivf_rebuild_recommended: bool,
+}
+
 impl Store {
     /// Register every §7–§8 index, idempotently. Called from the migration.
     pub(crate) fn register_indexes(&self, embedding_dimension: u32) -> Result<(), StoreError> {
@@ -301,6 +331,36 @@ impl Store {
                     name: name.map(|name| name.as_str().to_owned()),
                 },
             )
+            .collect()
+    }
+
+    /// Per-index vector memory and health stats (selene 1.2 vector index stats).
+    ///
+    /// Read-only: takes one graph snapshot and reads each registered index's
+    /// `memory_usage()` accounting. Surfaces the per-index footprint that makes the
+    /// TurboQuant compression win measurable and the IVF rebuild recommendation that
+    /// drives bounded maintenance.
+    #[must_use]
+    pub fn vector_index_stats(&self) -> Vec<VectorIndexStats> {
+        let snapshot = self.graph().read();
+        snapshot
+            .iter_vector_index_entries()
+            .map(|(label, property, kind, _dimension, _hnsw, _ivf, _name)| {
+                let usage = snapshot
+                    .vector_index_for(&label, &property)
+                    .map(|index| index.memory_usage())
+                    .unwrap_or_default();
+                VectorIndexStats {
+                    label: label.as_str().to_owned(),
+                    property: property.as_str().to_owned(),
+                    kind: format!("{kind:?}"),
+                    indexed_rows: usage.indexed_rows,
+                    estimated_index_bytes: usage.estimated_index_bytes,
+                    estimated_reachable_bytes: usage.estimated_reachable_bytes,
+                    is_turbo_quant: matches!(kind, VectorIndexKind::TurboQuantCosine),
+                    ivf_rebuild_recommended: usage.ivf_rebuild_recommended(),
+                }
+            })
             .collect()
     }
 
