@@ -127,6 +127,34 @@ fn vector_ann_matches_the_exact_oracle() {
 }
 
 #[test]
+fn a_past_deadline_aborts_a_vector_search_but_none_runs_to_completion() {
+    use std::time::{Duration, Instant};
+
+    let store = store();
+    seed_vec(&store, "a", vec![1.0, 0.0, 0.0, 0.0]);
+    seed_vec(&store, "b", vec![0.0, 1.0, 0.0, 0.0]);
+    seed_vec(&store, "c", vec![0.0, 0.0, 1.0, 0.0]);
+    let query = emb(vec![0.95, 0.05, 0.0, 0.0]);
+
+    // No deadline: the search runs to completion, exactly as the plain entry point.
+    let ok = store
+        .vector_search_ann_within(SearchKind::Episode, &query, 3, None)
+        .expect("a search with no deadline succeeds");
+    assert!(!ok.is_empty(), "the no-deadline path returns hits");
+
+    // A deadline already in the past: the engine aborts the CALL at its first
+    // cooperative checkpoint rather than running it to completion.
+    let past = Instant::now()
+        .checked_sub(Duration::from_secs(60))
+        .expect("an instant 60s in the past");
+    let aborted = store.vector_search_ann_within(SearchKind::Episode, &query, 3, Some(past));
+    assert!(
+        aborted.is_err(),
+        "a past deadline must abort the search, got {aborted:?}"
+    );
+}
+
+#[test]
 fn vector_rerank_orders_and_restricts_to_candidates() {
     let store = store();
     let a = seed_vec(&store, "a", vec![1.0, 0.0, 0.0, 0.0]);

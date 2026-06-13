@@ -15,6 +15,8 @@
 //! higher-is-better. Either way the returned list is ordered best-first, which is all
 //! rank fusion (M1.T05) needs.
 
+use std::time::Instant;
+
 use aionforge_domain::Embedding;
 use selene_core::{NodeId, Value};
 
@@ -197,6 +199,25 @@ impl Store {
         query: &Embedding,
         k: usize,
     ) -> Result<Vec<SearchHit>, StoreError> {
+        self.vector_search_ann_within(kind, query, k, None)
+    }
+
+    /// [`Store::vector_search_ann`] bounded by an optional recall deadline.
+    ///
+    /// `None` is identical to [`Store::vector_search_ann`]. A `Some(deadline)` lets the
+    /// retriever abort this potentially-unbounded ANN `CALL` mid-statement when the
+    /// recall budget expires, instead of only at its next phase boundary.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the query vector, the bind, execution, or the deadline
+    /// fails.
+    pub fn vector_search_ann_within(
+        &self,
+        kind: SearchKind,
+        query: &Embedding,
+        k: usize,
+        deadline: Option<Instant>,
+    ) -> Result<Vec<SearchHit>, StoreError> {
         let (label, prop) = (kind.label(), kind.vector_property());
         let source = format!(
             "CALL selene.vector_search_nodes_ann('{label}', '{prop}', $query, $k, 'cosine') YIELD node_id, distance"
@@ -204,7 +225,7 @@ impl Store {
         let query = BoundQuery::new(source)
             .bind("query", embedding_value(query)?)?
             .bind("k", k_value(k))?;
-        extract_hits(self.execute(&query)?, "distance")
+        extract_hits(self.execute_within(&query, deadline)?, "distance")
     }
 
     /// Exact, full-precision vector search — the oracle for the ANN path (03 §1).
@@ -238,6 +259,25 @@ impl Store {
         candidates: &[NodeId],
         k: usize,
     ) -> Result<Vec<SearchHit>, StoreError> {
+        self.vector_rerank_within(kind, query, candidates, k, None)
+    }
+
+    /// [`Store::vector_rerank`] bounded by an optional recall deadline.
+    ///
+    /// `None` is identical to [`Store::vector_rerank`]. Threaded with the dense ANN
+    /// pass so the whole dense signal observes one recall budget.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the query vector, the binds, execution, or the deadline
+    /// fails.
+    pub fn vector_rerank_within(
+        &self,
+        kind: SearchKind,
+        query: &Embedding,
+        candidates: &[NodeId],
+        k: usize,
+        deadline: Option<Instant>,
+    ) -> Result<Vec<SearchHit>, StoreError> {
         let prop = kind.vector_property();
         let source = format!(
             "CALL selene.vector_score_nodes('{prop}', $query, $nodes, $k, 'cosine') YIELD node_id, distance"
@@ -246,7 +286,7 @@ impl Store {
             .bind("query", embedding_value(query)?)?
             .bind("nodes", node_list_value(candidates))?
             .bind("k", k_value(k))?;
-        extract_hits(self.execute(&query)?, "distance")
+        extract_hits(self.execute_within(&query, deadline)?, "distance")
     }
 
     /// Vector-score a maintained candidate-state set directly (03 §4 high precision).
@@ -364,6 +404,25 @@ impl Store {
         query: &str,
         k: usize,
     ) -> Result<Vec<SearchHit>, StoreError> {
+        self.text_search_within(kind, query, k, None)
+    }
+
+    /// [`Store::text_search`] bounded by an optional recall deadline.
+    ///
+    /// `None` is identical to [`Store::text_search`]. A `Some(deadline)` lets the
+    /// retriever abort this unscoped BM25 `CALL` mid-statement when the recall budget
+    /// expires.
+    ///
+    /// # Errors
+    /// Returns [`StoreError::Search`] if `kind` maintains no text index, or another
+    /// [`StoreError`] if the bind, execution, or the deadline fails.
+    pub fn text_search_within(
+        &self,
+        kind: SearchKind,
+        query: &str,
+        k: usize,
+        deadline: Option<Instant>,
+    ) -> Result<Vec<SearchHit>, StoreError> {
         let label = kind.label();
         let prop = text_property(kind)?;
         let source = format!(
@@ -372,7 +431,7 @@ impl Store {
         let query = BoundQuery::new(source)
             .bind_str("query", query)?
             .bind("k", k_value(k))?;
-        extract_hits(self.execute(&query)?, "score")
+        extract_hits(self.execute_within(&query, deadline)?, "score")
     }
 
     /// BM25-score an explicit candidate set over the text index (03 §2 scoped lexical).

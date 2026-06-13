@@ -29,6 +29,7 @@ mod drift_read;
 mod entity;
 mod episode;
 mod error;
+mod exec;
 mod fact;
 mod forget_read;
 mod forget_write;

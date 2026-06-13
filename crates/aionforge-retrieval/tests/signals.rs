@@ -158,7 +158,7 @@ fn lexical_ranking_returns_matching_docs_best_first() {
     let g2 = seed_text(&store, "a graph of facts");
     let other = seed_text(&store, "completely unrelated text");
 
-    let ranking = lexical_ranking(&store, SearchKind::Episode, "graph", 10).expect("lexical");
+    let ranking = lexical_ranking(&store, SearchKind::Episode, "graph", 10, None).expect("lexical");
 
     assert_eq!(ranking.signal, Signal::Lexical);
     let nodes: Vec<NodeId> = ranking.candidates.iter().map(|c| c.node).collect();
@@ -176,7 +176,7 @@ fn lexical_ranking_returns_matching_docs_best_first() {
 #[test]
 fn lexical_ranking_on_a_kind_without_a_text_index_errors() {
     let store = store();
-    let result = lexical_ranking(&store, SearchKind::CoreBlock, "anything", 5);
+    let result = lexical_ranking(&store, SearchKind::CoreBlock, "anything", 5, None);
     assert!(result.is_err(), "a kind with no text index must error");
 }
 
@@ -190,9 +190,17 @@ async fn dense_ranking_orders_by_similarity() {
     let b = seed(&store, "b", vec![0.0, 1.0, 0.0, 0.0]);
     let embedder = FakeEmbedder::new(&[("blue", [1.0, 0.0, 0.0, 0.0])]);
 
-    let dense = dense_ranking(&store, &embedder, SearchKind::Episode, "blue", 10, false)
-        .await
-        .expect("dense");
+    let dense = dense_ranking(
+        &store,
+        &embedder,
+        SearchKind::Episode,
+        "blue",
+        10,
+        false,
+        None,
+    )
+    .await
+    .expect("dense");
 
     assert!(dense.embedder_available);
     assert_eq!(dense.ranking.signal, Signal::Dense);
@@ -216,9 +224,17 @@ async fn dense_ranking_exact_rerank_keeps_the_nearest_first() {
     seed(&store, "b", vec![0.0, 1.0, 0.0, 0.0]);
     let embedder = FakeEmbedder::new(&[("blue", [1.0, 0.0, 0.0, 0.0])]);
 
-    let dense = dense_ranking(&store, &embedder, SearchKind::Episode, "blue", 10, true)
-        .await
-        .expect("dense with exact rerank");
+    let dense = dense_ranking(
+        &store,
+        &embedder,
+        SearchKind::Episode,
+        "blue",
+        10,
+        true,
+        None,
+    )
+    .await
+    .expect("dense with exact rerank");
 
     assert!(dense.embedder_available);
     assert_eq!(
@@ -240,6 +256,7 @@ async fn dense_ranking_degrades_when_the_embedder_is_unavailable() {
         "blue",
         10,
         true,
+        None,
     )
     .await
     .expect("an unavailable embedder is not an error");
@@ -256,9 +273,17 @@ async fn dense_ranking_over_an_empty_store_is_empty_but_available() {
     let store = store();
     let embedder = FakeEmbedder::new(&[("blue", [1.0, 0.0, 0.0, 0.0])]);
 
-    let dense = dense_ranking(&store, &embedder, SearchKind::Episode, "blue", 10, true)
-        .await
-        .expect("dense");
+    let dense = dense_ranking(
+        &store,
+        &embedder,
+        SearchKind::Episode,
+        "blue",
+        10,
+        true,
+        None,
+    )
+    .await
+    .expect("dense");
 
     assert!(dense.embedder_available);
     assert!(dense.ranking.candidates.is_empty());

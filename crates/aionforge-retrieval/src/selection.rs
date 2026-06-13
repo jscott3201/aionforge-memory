@@ -249,11 +249,14 @@ pub(crate) fn fact_lexical_ranking(
     query: &RecallQuery,
     current: Option<&[NodeId]>,
     k: usize,
+    deadline: Option<Instant>,
 ) -> Result<SignalRanking, RetrievalError> {
+    // The deadline bounds only the unscoped full-index BM25 fallback; the scoped
+    // `text_score_nodes` runs over a bounded current-support member set (fast).
     let hits = match current {
         Some([]) => Vec::new(),
         Some(members) => store.text_score_nodes(SearchKind::Fact, &query.text, members, k)?,
-        None => store.text_search(SearchKind::Fact, &query.text, k)?,
+        None => store.text_search_within(SearchKind::Fact, &query.text, k, deadline)?,
     };
     Ok(ranking_from_hits(Signal::Lexical, hits))
 }
@@ -276,6 +279,7 @@ pub(crate) fn fact_lexical_ranking(
 /// ANN-then-rerank path over all facts (temporally filtered per candidate later).
 /// The fact lexical signal always covers the whole support set, so a seed that
 /// resolves the wrong (or no) entity never drops a current fact from recall.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn fact_dense_ranking(
     store: &Store,
     current: Option<&[NodeId]>,
@@ -284,9 +288,12 @@ pub(crate) fn fact_dense_ranking(
     embedding: &Embedding,
     k: usize,
     exact_rerank: bool,
+    deadline: Option<Instant>,
 ) -> Result<SignalRanking, RetrievalError> {
     match current {
         Some([]) => Ok(ranking_from_hits(Signal::Dense, Vec::new())),
+        // The scoped candidate-state vector scoring runs over a bounded support set,
+        // so it is fast and not deadline-bounded; only the unscoped ANN fallback below is.
         Some(_) => {
             let hits = if let Some(seed) = seed
                 && !seed.is_empty()
@@ -304,7 +311,14 @@ pub(crate) fn fact_dense_ranking(
             };
             Ok(ranking_from_hits(Signal::Dense, hits))
         }
-        None => dense_ranking_for(store, SearchKind::Fact, embedding, k, exact_rerank),
+        None => dense_ranking_for(
+            store,
+            SearchKind::Fact,
+            embedding,
+            k,
+            exact_rerank,
+            deadline,
+        ),
     }
 }
 
@@ -360,8 +374,9 @@ pub(crate) fn fact_graph_ranking(
     seeds: &[NodeId],
     current: Option<&[NodeId]>,
     k: usize,
+    deadline: Option<Instant>,
 ) -> Result<SignalRanking, RetrievalError> {
-    let hits = store.personalized_pagerank(SearchKind::Fact, seeds, k)?;
+    let hits = store.personalized_pagerank_within(SearchKind::Fact, seeds, k, deadline)?;
     let hits = match current {
         Some(members) => {
             let set: HashSet<NodeId> = members.iter().copied().collect();

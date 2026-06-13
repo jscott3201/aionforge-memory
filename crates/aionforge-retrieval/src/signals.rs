@@ -12,6 +12,8 @@
 //! when the embedder is unreachable — an empty ranking with `embedder_available`
 //! false — so retrieval falls back to the remaining signals (03 §6).
 
+use std::time::Instant;
+
 use aionforge_domain::contracts::Embedder;
 use aionforge_domain::embedding::Embedding;
 use aionforge_store::{NodeId, SearchHit, SearchKind, Store};
@@ -93,8 +95,9 @@ pub fn lexical_ranking(
     kind: SearchKind,
     query: &str,
     k: usize,
+    deadline: Option<Instant>,
 ) -> Result<SignalRanking, RetrievalError> {
-    let hits = store.text_search(kind, query, k)?;
+    let hits = store.text_search_within(kind, query, k, deadline)?;
     Ok(ranking_from_hits(Signal::Lexical, hits))
 }
 
@@ -115,6 +118,7 @@ pub async fn dense_ranking<E: Embedder>(
     query: &str,
     k: usize,
     exact_rerank: bool,
+    deadline: Option<Instant>,
 ) -> Result<DenseRanking, RetrievalError> {
     let Some(embedding) = embed_query(embedder, query).await else {
         return Ok(DenseRanking {
@@ -122,7 +126,7 @@ pub async fn dense_ranking<E: Embedder>(
             embedder_available: false,
         });
     };
-    let hits = dense_hits(store, kind, &embedding, k, exact_rerank)?;
+    let hits = dense_hits(store, kind, &embedding, k, exact_rerank, deadline)?;
     Ok(DenseRanking {
         ranking: ranking_from_hits(Signal::Dense, hits),
         embedder_available: true,
@@ -144,10 +148,11 @@ pub(crate) fn dense_ranking_for(
     embedding: &Embedding,
     k: usize,
     exact_rerank: bool,
+    deadline: Option<Instant>,
 ) -> Result<SignalRanking, RetrievalError> {
     Ok(ranking_from_hits(
         Signal::Dense,
-        dense_hits(store, kind, embedding, k, exact_rerank)?,
+        dense_hits(store, kind, embedding, k, exact_rerank, deadline)?,
     ))
 }
 
@@ -169,10 +174,11 @@ pub(crate) fn graph_ranking_for(
     kind: SearchKind,
     seeds: &[NodeId],
     k: usize,
+    deadline: Option<Instant>,
 ) -> Result<SignalRanking, RetrievalError> {
     Ok(ranking_from_hits(
         Signal::Graph,
-        store.personalized_pagerank(kind, seeds, k)?,
+        store.personalized_pagerank_within(kind, seeds, k, deadline)?,
     ))
 }
 
@@ -184,11 +190,12 @@ fn dense_hits(
     embedding: &Embedding,
     k: usize,
     exact_rerank: bool,
+    deadline: Option<Instant>,
 ) -> Result<Vec<SearchHit>, RetrievalError> {
-    let approximate = store.vector_search_ann(kind, embedding, k)?;
+    let approximate = store.vector_search_ann_within(kind, embedding, k, deadline)?;
     let hits = if exact_rerank && !approximate.is_empty() {
         let candidates: Vec<NodeId> = approximate.iter().map(|hit| hit.node).collect();
-        store.vector_rerank(kind, embedding, &candidates, k)?
+        store.vector_rerank_within(kind, embedding, &candidates, k, deadline)?
     } else {
         approximate
     };
