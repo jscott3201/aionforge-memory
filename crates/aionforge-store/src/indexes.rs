@@ -24,15 +24,22 @@ use crate::error::StoreError;
 use crate::gql::BoundQuery;
 use crate::store::Store;
 
-/// `(label, property)` for each embedding vector index (§7). HNSW + cosine.
-pub(crate) const VECTOR_INDEXES: &[(&str, &str)] = &[
-    ("Episode", "embedding_v1"),
-    ("Fact", "embedding_v1"),
-    ("Entity", "embedding_v1"),
-    ("Skill", "problem_embedding_v1"),
-    ("BadPattern", "embedding_v1"),
-    ("Note", "embedding_v1"),
-    ("CoreBlock", "embedding_v1"),
+/// `(label, property, kind)` for each embedding vector index (§7). All cosine.
+///
+/// The kind column is the single source of truth: [`Store::register_vector_indexes`]
+/// creates each index with it, and the doctor derives its per-index kind expectation
+/// from this same table (`doctor.rs`). A kind change here therefore moves the
+/// registration and the health check in lockstep — there is no second constant to keep
+/// in sync, which is what previously made any non-`HnswCosine` kind trip a spurious
+/// doctor mismatch.
+pub(crate) const VECTOR_INDEXES: &[(&str, &str, VectorIndexKind)] = &[
+    ("Episode", "embedding_v1", VectorIndexKind::HnswCosine),
+    ("Fact", "embedding_v1", VectorIndexKind::HnswCosine),
+    ("Entity", "embedding_v1", VectorIndexKind::HnswCosine),
+    ("Skill", "problem_embedding_v1", VectorIndexKind::HnswCosine),
+    ("BadPattern", "embedding_v1", VectorIndexKind::HnswCosine),
+    ("Note", "embedding_v1", VectorIndexKind::HnswCosine),
+    ("CoreBlock", "embedding_v1", VectorIndexKind::HnswCosine),
 ];
 
 /// `(label, property)` for each maintained BM25 text index (§8).
@@ -151,8 +158,11 @@ impl Store {
     }
 
     fn register_vector_indexes(&self, dimension: u32) -> Result<(), StoreError> {
+        // The HNSW construction config is read by the engine only for HNSW kinds
+        // (`hnsw_metric()` is `Some`); for cosine TurboQuant/IVF kinds it is stored but
+        // unused, so one default config serves every row regardless of kind.
         let config = VectorIndexConfig::hnsw(HnswIndexConfig::DEFAULT);
-        for &(label, property) in VECTOR_INDEXES {
+        for &(label, property, kind) in VECTOR_INDEXES {
             if self.vector_index_exists(label, property) {
                 continue;
             }
@@ -160,7 +170,7 @@ impl Store {
             self.graph().create_vector_index_named_with_configs(
                 db_string(label)?,
                 db_string(property)?,
-                VectorIndexKind::HnswCosine,
+                kind,
                 dimension,
                 Some(name),
                 config,
