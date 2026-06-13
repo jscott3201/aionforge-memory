@@ -268,6 +268,7 @@ dependencies = [
  "selene-db-core",
  "selene-db-gql",
  "selene-db-graph",
+ "selene-db-persist",
  "serde",
  "serde_json",
  "thiserror",
