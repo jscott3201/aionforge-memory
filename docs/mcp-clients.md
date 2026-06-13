@@ -312,8 +312,9 @@ Authorization header.
 
 Read-like tools are `server_status`, `search`, `read_memory`,
 `session_manifest`, `consolidation_status`, and `audit_history`. `read_memory`
-reads one visible captured memory by receipt id; `session_manifest` lists the
-visible captured memories for a session. `audit_history` reads the principal-scoped audit subgraph by
+reads 1..=16 visible captured memories by receipt id (missing or unauthorized
+ids are silently absent; `full=true` returns untruncated bodies);
+`session_manifest` lists the visible captured memories for a session. `audit_history` reads the principal-scoped audit subgraph by
 subject, by `kind`, or by subject+kind; when `subject_id` is omitted, `kind` is
 required and the compact output uses `subject=*` while listing each row's
 subject. Mutating tools are `capture`, `batch_capture`, `consolidate`, `forget`,

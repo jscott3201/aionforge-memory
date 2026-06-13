@@ -411,3 +411,156 @@ fn the_admin_capability_lifts_the_system_role_gate_only_when_the_caller_opts_in(
         "{hidden}"
     );
 }
+
+#[test]
+fn equivalent_uuid_spellings_dedupe_to_one_read() {
+    let memory = memory();
+    let alice = Id::generate();
+    let id = seed(
+        &memory,
+        "single distinct memory",
+        Namespace::Agent(alice.to_string()),
+        Role::Assistant,
+    );
+    // The same memory addressed by two textually-distinct but equivalent UUID spellings
+    // (canonical lowercase and uppercase) must collapse to one read — dedup keys on the parsed
+    // Id, not the raw string, so neither the count nor a MAX_READ_IDS slot is double-charged.
+    let mut params = read_params(&[id], alice);
+    params.memory_ids = vec![id.to_string(), id.to_string().to_uppercase()];
+    let out = read_memory_tool(&memory, params).expect("read");
+    assert!(
+        out.starts_with("[read_memory] requested=1 found=1"),
+        "equivalent spellings dedupe before the count: {out}"
+    );
+    assert_eq!(
+        out.matches("<memory ").count(),
+        1,
+        "one line for the one distinct memory: {out}"
+    );
+}
+
+#[test]
+fn the_distinct_id_cap_is_measured_after_dedup() {
+    let memory = memory();
+    let alice = Id::generate();
+    let ns = Namespace::Agent(alice.to_string());
+    // 14 distinct memories, then pad the request to 20 raw ids by repeating six of them.
+    let ids: Vec<Id> = (0..14)
+        .map(|i| {
+            seed(
+                &memory,
+                &format!("memory body {i}"),
+                ns.clone(),
+                Role::Assistant,
+            )
+        })
+        .collect();
+    let mut raw = ids.clone();
+    raw.extend_from_slice(&ids[0..6]); // 20 raw ids -> 14 distinct after dedup
+
+    // 20 raw ids that collapse to 14 distinct stay under the cap: dedup runs before the cap,
+    // so the limit is measured on distinct memories rather than the raw request length.
+    let out =
+        read_memory_tool(&memory, read_params(&raw, alice)).expect("within the distinct-id cap");
+    assert!(
+        out.starts_with("[read_memory] requested=14 found=14"),
+        "{out}"
+    );
+    assert_eq!(
+        out.matches("<memory ").count(),
+        14,
+        "one line per distinct id: {out}"
+    );
+
+    // 17 DISTINCT ids exceed the cap regardless of duplicates.
+    let seventeen: Vec<Id> = (0..17).map(|_| Id::generate()).collect();
+    let oversized = read_memory_tool(&memory, read_params(&seventeen, alice))
+        .expect_err("17 distinct ids exceeds the cap");
+    assert!(oversized.starts_with("ERR_TOO_MANY_IDS"), "{oversized}");
+}
+
+#[test]
+fn verbose_widens_the_snippet_cap_between_default_and_full() {
+    let memory = memory();
+    let alice = Id::generate();
+    // MID sits past the 240-char default cap but within the 2000-char verbose cap; TAIL sits
+    // past the verbose cap so only full reveals it.
+    let body = format!("HEAD_{}_MID_{}_TAIL", "x".repeat(300), "x".repeat(2000));
+    let id = seed(
+        &memory,
+        &body,
+        Namespace::Agent(alice.to_string()),
+        Role::Assistant,
+    );
+
+    // Default: truncated before MID.
+    let default = read_memory_tool(&memory, read_params(&[id], alice)).expect("read");
+    assert!(
+        !default.contains("_MID_"),
+        "default truncates before MID: {default}"
+    );
+
+    // Verbose: MID is revealed, but TAIL past 2000 is still truncated with an ellipsis.
+    let mut verbose = read_params(&[id], alice);
+    verbose.verbose = Some(true);
+    let out = read_memory_tool(&memory, verbose).expect("read");
+    assert!(
+        out.contains("_MID_"),
+        "verbose reveals content past the default cap: {out}"
+    );
+    assert!(
+        !out.contains("_TAIL"),
+        "verbose still truncates past 2000: {out}"
+    );
+    assert!(
+        out.contains("..."),
+        "verbose truncates the tail with an ellipsis: {out}"
+    );
+
+    // Full: the entire body, tail included.
+    let mut full = read_params(&[id], alice);
+    full.full = Some(true);
+    let whole = read_memory_tool(&memory, full).expect("read");
+    assert!(whole.contains("_TAIL"), "full reveals the tail: {whole}");
+}
+
+#[test]
+fn the_admin_reveal_lifts_the_system_namespace_gate_only_with_opt_in() {
+    let admin = Id::generate();
+    let memory = admin_memory(admin);
+    // A system-role turn living in the system NAMESPACE (not the admin's own namespace). This
+    // exercises the with_system() half of the reveal, which the role-gate tests never touch.
+    let id = seed(
+        &memory,
+        "a system namespace directive",
+        Namespace::System,
+        Role::System,
+    );
+
+    // Admin capability AND opt-in: both the namespace gate (with_system) and the role gate lift.
+    let mut revealed = read_params(&[id], admin);
+    revealed.include_system = Some(true);
+    let lifted = read_memory_tool(&memory, revealed).expect("read");
+    assert!(
+        lifted.starts_with("[read_memory] requested=1 found=1"),
+        "{lifted}"
+    );
+    assert!(lifted.contains("a system namespace directive"), "{lifted}");
+
+    // Admin capability but NO opt-in: the system namespace stays excluded.
+    let unopted = read_memory_tool(&memory, read_params(&[id], admin)).expect("read");
+    assert!(
+        unopted.starts_with("[read_memory] requested=1 found=0"),
+        "{unopted}"
+    );
+
+    // A non-admin opting in cannot lift the system namespace gate.
+    let outsider = Id::generate();
+    let mut asked = read_params(&[id], outsider);
+    asked.include_system = Some(true);
+    let denied = read_memory_tool(&memory, asked).expect("read");
+    assert!(
+        denied.starts_with("[read_memory] requested=1 found=0"),
+        "{denied}"
+    );
+}
