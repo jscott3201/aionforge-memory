@@ -10,6 +10,17 @@
 //! data-model §3–§5). The `INDEXED` markers in the spec tables and the vector / text /
 //! composite indexes and candidate-state providers (§7–§9) are registered separately.
 //!
+//! Fixed-vocabulary and fixed-width columns are bounded with selene 1.2's max-only
+//! `STRING(n)` (the short enums as `STRING(32)`, the 64-hex blake3 hashes as
+//! `STRING(64)`), so an oversize write is rejected at the engine boundary and the
+//! intended width is documented. Two invariants make this safe and must hold on edits:
+//! every type ends in `STRICT` (a bounded type is only *enforced* under STRICT — a
+//! switch to WARN would silently disable the guard), and the form is `STRING(n)`, never
+//! `CHAR(n)`, which pads to `n` and would corrupt the fixed-width hashes and break enum
+//! round-trips. A bounded `STRING(n)` keeps `value_type == String`, so the schema mirror
+//! is unchanged. Variable-length columns (`predicate`, entity `type`, model names, free
+//! text, signatures) are deliberately left unbounded.
+//!
 //! Nullability follows the domain: a property is `NOT NULL` exactly when its domain
 //! field is non-`Option` (so the closed graph rejects a write that omits it, the
 //! fail-fast guarantee in §1.1), and nullable when the domain field is `Option<T>` or a
@@ -57,14 +68,14 @@ pub(crate) const NODE_TYPES: &[TypeDdl] = &[
             surprise :: FLOAT NOT NULL,
             is_pinned :: BOOLEAN NOT NULL DEFAULT FALSE,
             content :: STRING NOT NULL,
-            role :: STRING NOT NULL,
+            role :: STRING(32) NOT NULL,
             captured_at :: ZONED DATETIME NOT NULL IMMUTABLE,
             agent_id :: UUID NOT NULL,
             session_id :: UUID,
-            content_hash :: STRING NOT NULL,
+            content_hash :: STRING(64) NOT NULL,
             embedding_v1 :: VECTOR,
             embedder_model :: STRING,
-            consolidation_state :: STRING NOT NULL DEFAULT 'raw',
+            consolidation_state :: STRING(32) NOT NULL DEFAULT 'raw',
             origin :: JSON
         ) STRICT"#,
     },
@@ -84,11 +95,11 @@ pub(crate) const NODE_TYPES: &[TypeDdl] = &[
             is_pinned :: BOOLEAN NOT NULL DEFAULT FALSE,
             subject_id :: UUID NOT NULL,
             predicate :: STRING NOT NULL,
-            object_kind :: STRING NOT NULL,
+            object_kind :: STRING(32) NOT NULL,
             object_entity_id :: UUID,
             object_value :: JSON,
             confidence :: FLOAT NOT NULL,
-            status :: STRING NOT NULL DEFAULT 'active',
+            status :: STRING(32) NOT NULL DEFAULT 'active',
             cooled_until :: ZONED DATETIME,
             statement :: STRING NOT NULL,
             embedding_v1 :: VECTOR,
@@ -138,7 +149,7 @@ pub(crate) const NODE_TYPES: &[TypeDdl] = &[
             description :: STRING NOT NULL,
             problem_embedding_v1 :: VECTOR,
             embedder_model :: STRING,
-            language :: STRING NOT NULL,
+            language :: STRING(32) NOT NULL,
             body :: STRING NOT NULL,
             params :: JSON NOT NULL,
             preconditions :: JSON,
@@ -147,7 +158,7 @@ pub(crate) const NODE_TYPES: &[TypeDdl] = &[
             success_count :: UINT NOT NULL DEFAULT 0,
             failure_count :: UINT NOT NULL DEFAULT 0,
             mean_latency_ms :: FLOAT,
-            source_hash :: STRING NOT NULL,
+            source_hash :: STRING(64) NOT NULL,
             last_success_at :: ZONED DATETIME,
             last_failure_at :: ZONED DATETIME,
             deprecated_at :: ZONED DATETIME,
@@ -211,8 +222,8 @@ pub(crate) const NODE_TYPES: &[TypeDdl] = &[
             surprise :: FLOAT NOT NULL,
             is_pinned :: BOOLEAN NOT NULL DEFAULT FALSE,
             content :: STRING NOT NULL,
-            block_kind :: STRING NOT NULL,
-            sensitivity :: STRING,
+            block_kind :: STRING(32) NOT NULL,
+            sensitivity :: STRING(32),
             drift_baseline :: JSON,
             embedding_v1 :: VECTOR,
             embedder_model :: STRING
@@ -229,7 +240,7 @@ pub(crate) const NODE_TYPES: &[TypeDdl] = &[
             model_family :: STRING NOT NULL,
             model_version :: STRING,
             trust_scores :: JSON NOT NULL,
-            status :: STRING NOT NULL
+            status :: STRING(32) NOT NULL
         ) STRICT"#,
     },
     TypeDdl {
@@ -292,7 +303,7 @@ pub(crate) const NODE_TYPES: &[TypeDdl] = &[
             candidate_fact_id :: UUID NOT NULL,
             posterior :: FLOAT NOT NULL,
             k :: UINT NOT NULL,
-            status :: STRING NOT NULL,
+            status :: STRING(32) NOT NULL,
             resolved_at :: ZONED DATETIME,
             promoted_fact_id :: UUID
         ) STRICT"#,
@@ -329,7 +340,7 @@ pub(crate) const NODE_TYPES: &[TypeDdl] = &[
             namespace :: STRING NOT NULL,
             expired_at :: ZONED DATETIME,
             name :: STRING NOT NULL,
-            scope_kind :: STRING NOT NULL
+            scope_kind :: STRING(32) NOT NULL
         ) STRICT"#,
     },
     TypeDdl {
