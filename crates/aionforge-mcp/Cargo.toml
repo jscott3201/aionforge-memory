@@ -20,6 +20,8 @@ rmcp = { version = "1.6", features = ["server", "macros", "transport-io", "trans
 schemars = "1"
 serde = { workspace = true }
 serde_json = { workspace = true }
+metrics = { workspace = true }
+tracing = { workspace = true }
 jiff = { workspace = true }
 tokio = { workspace = true }
 tower-service = "0.3"

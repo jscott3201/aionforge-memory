@@ -196,12 +196,14 @@ dependencies = [
  "http-body",
  "http-body-util",
  "jiff",
+ "metrics",
  "rmcp",
  "schemars",
  "serde",
  "serde_json",
  "tokio",
  "tower-service",
+ "tracing",
 ]
 
 [[package]]

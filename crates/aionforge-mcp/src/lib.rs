@@ -22,6 +22,7 @@ mod prompt;
 mod resources;
 mod status;
 mod surface;
+mod telemetry;
 mod tools;
 
 pub use http_body_limit::{DEFAULT_MAX_REQUEST_BODY_BYTES, RequestBodyLimitService};

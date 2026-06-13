@@ -454,7 +454,10 @@ pub async fn search_tool<E: Embedder>(
     // The compact rendering lives next to the full rendered view in the retrieval crate
     // so both share one `tag_escape` and the same third-party-data wrapper; the MCP
     // surface never re-derives recall text and so cannot drop the security tagging (07 §4).
-    Ok(bundle.render_compact(verbose))
+    let rendered = bundle.render_compact(verbose);
+    // Measure the realized served size once, at the single render seam, before handing it back.
+    crate::telemetry::record_recall_served("search", &rendered);
+    Ok(rendered)
 }
 
 /// Parse the optional role string, defaulting to `user`.

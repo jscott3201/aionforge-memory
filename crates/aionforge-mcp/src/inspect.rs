@@ -215,6 +215,7 @@ pub fn read_memory_tool<E: Embedder>(
         ));
     }
     out.push_str("\n</recalled-memory-context>");
+    crate::telemetry::record_recall_served("read_memory", &out);
     Ok(out)
 }
 
@@ -295,7 +296,7 @@ pub fn session_manifest_tool<E: Embedder>(
     } else {
         None
     };
-    Ok(render_session_manifest(
+    let rendered = render_session_manifest(
         &session_id,
         visible_episodes,
         limit,
@@ -303,7 +304,9 @@ pub fn session_manifest_tool<E: Embedder>(
         superseded_hidden,
         next.as_ref(),
         manifest_chars,
-    ))
+    );
+    crate::telemetry::record_recall_served("session_manifest", &rendered);
+    Ok(rendered)
 }
 
 pub(crate) fn parse_id(raw: &str, field: &str) -> Result<Id, String> {
