@@ -2740,6 +2740,7 @@ checksum = "58b08ddd59238d09bdcbcd08853469566721af8a87fb8314bd9040e8571a6090"
 dependencies = [
  "bytes",
  "jiff",
+ "metrics",
  "miette",
  "parking_lot",
  "rkyv 0.8.16",
