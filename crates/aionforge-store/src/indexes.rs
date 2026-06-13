@@ -33,8 +33,15 @@ use crate::store::Store;
 /// in sync, which is what previously made any non-`HnswCosine` kind trip a spurious
 /// doctor mismatch.
 pub(crate) const VECTOR_INDEXES: &[(&str, &str, VectorIndexKind)] = &[
-    ("Episode", "embedding_v1", VectorIndexKind::HnswCosine),
-    ("Fact", "embedding_v1", VectorIndexKind::HnswCosine),
+    // Episode and Fact are the largest, fastest-growing embedding corpora, so they
+    // take selene 1.2's TurboQuant cosine index: a 4-bit-compressed candidate index
+    // (~8x less RAM than full f32 at 3072-dim) that preselects, then EXACTLY reranks
+    // survivors against the stored full-precision vectors — so cosine accuracy on the
+    // rerank is preserved while the candidate index shrinks. Cosine-only and opt-in
+    // (1.2's default kind is ivf_cosine), so the kind is named explicitly here. The
+    // smaller corpora stay on HNSW, where per-query latency matters more than index RAM.
+    ("Episode", "embedding_v1", VectorIndexKind::TurboQuantCosine),
+    ("Fact", "embedding_v1", VectorIndexKind::TurboQuantCosine),
     ("Entity", "embedding_v1", VectorIndexKind::HnswCosine),
     ("Skill", "problem_embedding_v1", VectorIndexKind::HnswCosine),
     ("BadPattern", "embedding_v1", VectorIndexKind::HnswCosine),
@@ -158,14 +165,19 @@ impl Store {
     }
 
     fn register_vector_indexes(&self, dimension: u32) -> Result<(), StoreError> {
-        // The HNSW construction config is read by the engine only for HNSW kinds
-        // (`hnsw_metric()` is `Some`); for cosine TurboQuant/IVF kinds it is stored but
-        // unused, so one default config serves every row regardless of kind.
-        let config = VectorIndexConfig::hnsw(HnswIndexConfig::DEFAULT);
         for &(label, property, kind) in VECTOR_INDEXES {
             if self.vector_index_exists(label, property) {
                 continue;
             }
+            // selene rejects an HNSW construction config on a non-HNSW index
+            // (VectorIndexInvalidHnswConfig), so attach the HNSW config only to HNSW
+            // kinds; the TurboQuant/IVF cosine kinds take the empty default (their
+            // construction parameters are engine-internal).
+            let config = if kind.hnsw_metric().is_some() {
+                VectorIndexConfig::hnsw(HnswIndexConfig::DEFAULT)
+            } else {
+                VectorIndexConfig::default()
+            };
             let name = db_string(&format!("vec_{label}_{property}"))?;
             self.graph().create_vector_index_named_with_configs(
                 db_string(label)?,

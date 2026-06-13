@@ -39,12 +39,22 @@ fn migrated() -> Store {
 fn migration_registers_all_native_indexes() {
     let store = migrated();
 
-    // §7: one HNSW/cosine vector index per embedding property, pinned at the configured
-    // dimension.
+    // §7: one cosine vector index per embedding property, pinned at the configured
+    // dimension. Episode and Fact — the largest corpora — use the TurboQuant cosine
+    // index (selene 1.2); the smaller corpora stay on HNSW cosine.
     let vectors = store.vector_indexes();
     assert_eq!(vectors.len(), 7, "vector index count: {vectors:?}");
     for vector in &vectors {
-        assert_eq!(vector.kind, "HnswCosine", "{} is HNSW/cosine", vector.label);
+        let expected_kind = if matches!(vector.label.as_str(), "Episode" | "Fact") {
+            "TurboQuantCosine"
+        } else {
+            "HnswCosine"
+        };
+        assert_eq!(
+            vector.kind, expected_kind,
+            "{} has the expected cosine index kind",
+            vector.label
+        );
         assert_eq!(
             vector.dimension, DEFAULT_EMBEDDING_DIMENSION,
             "{} pinned at the configured dimension",
