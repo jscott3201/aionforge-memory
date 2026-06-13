@@ -3,7 +3,7 @@
 use aionforge_domain::authz::VisibleSet;
 use aionforge_domain::contracts::Embedder;
 use aionforge_domain::ids::Id;
-use aionforge_domain::nodes::episodic::Episode;
+use aionforge_domain::nodes::episodic::{Episode, Role};
 use aionforge_domain::time::Timestamp;
 use aionforge_engine::Memory;
 use schemars::JsonSchema;
@@ -111,7 +111,14 @@ pub fn read_memory_tool<E: Embedder>(
 ) -> Result<String, String> {
     let id = parse_id(&params.memory_id, "MEMORY_ID")?;
     let principal = resolve_reader(params.viewer.as_deref(), params.teams, params.principal)?;
-    let visible = memory.authorizer().visible_namespaces(&principal);
+    // Same admin-gated reveal recall uses (engine §recall): both the system-namespace gate
+    // (`with_system`) and the role gate (passed through to `episode_visible`) lift only when
+    // the injected authority grants the capability. Default authorities deny it.
+    let surface_system = memory.authorizer().may_surface_system(&principal);
+    let mut visible = memory.authorizer().visible_namespaces(&principal);
+    if surface_system {
+        visible = visible.with_system();
+    }
     let Some(episode) = memory
         .store()
         .episode_by_id(&id)
@@ -119,7 +126,7 @@ pub fn read_memory_tool<E: Embedder>(
     else {
         return Err("ERR_NOT_FOUND: memory_id not found or not authorized".to_string());
     };
-    if !episode_visible(&episode, &visible) {
+    if !episode_visible(&episode, &visible, surface_system) {
         return Err("ERR_NOT_FOUND: memory_id not found or not authorized".to_string());
     }
     let superseded_by = memory
@@ -143,7 +150,13 @@ pub fn session_manifest_tool<E: Embedder>(
 ) -> Result<String, String> {
     let session_id = parse_id(&params.session_id, "SESSION_ID")?;
     let principal = resolve_reader(params.viewer.as_deref(), params.teams, params.principal)?;
-    let visible = memory.authorizer().visible_namespaces(&principal);
+    // Same admin-gated reveal as recall and `read_memory`: system content stays hidden in a
+    // manifest unless the injected authority grants the capability (default deny).
+    let surface_system = memory.authorizer().may_surface_system(&principal);
+    let mut visible = memory.authorizer().visible_namespaces(&principal);
+    if surface_system {
+        visible = visible.with_system();
+    }
     let limit = params
         .limit
         .unwrap_or(DEFAULT_MANIFEST_LIMIT)
@@ -166,7 +179,7 @@ pub fn session_manifest_tool<E: Embedder>(
         {
             continue;
         }
-        if episode_visible(&episode, &visible) {
+        if episode_visible(&episode, &visible, surface_system) {
             visible_after.push(episode);
         }
     }
@@ -214,8 +227,17 @@ pub(crate) fn parse_id(raw: &str, field: &str) -> Result<Id, String> {
     Id::parse(raw).map_err(|_| format!("ERR_INVALID_{field}: {field} must be a UUID"))
 }
 
-fn episode_visible(episode: &Episode, visible: &VisibleSet) -> bool {
-    episode.identity.expired_at.is_none() && visible.contains(&episode.identity.namespace)
+/// Whether `episode` may be surfaced to a reader holding `visible`.
+///
+/// Mirrors recall's double exclusion (07 §4): a live episode in a visible namespace is
+/// surfaced unless it is system-role and the reader was not granted the admin reveal.
+/// `surface_system` is the lockstep flag — the read path and recall lift the role gate and
+/// the system-namespace gate together, so a system-role turn living in an otherwise-visible
+/// namespace (e.g. the reader's own) stays hidden by default, exactly as `search` hides it.
+fn episode_visible(episode: &Episode, visible: &VisibleSet, surface_system: bool) -> bool {
+    episode.identity.expired_at.is_none()
+        && (surface_system || episode.role != Role::System)
+        && visible.contains(&episode.identity.namespace)
 }
 
 fn render_read_memory(episode: &Episode, superseded_by: Option<&Id>, verbose: bool) -> String {

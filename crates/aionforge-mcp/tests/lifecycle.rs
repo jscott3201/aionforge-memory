@@ -4,9 +4,12 @@ use std::collections::BTreeSet;
 use std::future::Future;
 use std::sync::Arc;
 
+use aionforge_domain::blocks::{Identity, Stats};
 use aionforge_domain::contracts::Embedder;
 use aionforge_domain::embedding::{EmbedderModel, Embedding};
-use aionforge_domain::ids::Id;
+use aionforge_domain::ids::{ContentHash, Id};
+use aionforge_domain::namespace::Namespace;
+use aionforge_domain::nodes::episodic::{ConsolidationState, Episode, Role};
 use aionforge_domain::time::Timestamp;
 use aionforge_engine::{ForgettingPolicy, Memory, MemoryConfig};
 use aionforge_mcp::{
@@ -169,6 +172,117 @@ fn manifest_params(session_id: Id, agent: Id) -> SessionManifestToolParams {
         include_superseded: None,
         verbose: None,
     }
+}
+
+/// Seed one episode straight into the store, bypassing the Capturer (which refuses a
+/// system-role write). This is the only way to place a `Role::System` turn in an otherwise
+/// visible namespace, which is exactly the read-path exclusion these tests exercise.
+fn seed_episode(
+    memory: &Memory<FakeEmbedder>,
+    content: &str,
+    namespace: Namespace,
+    role: Role,
+    session_id: Option<Id>,
+) -> Id {
+    let id = Id::generate();
+    let episode = Episode {
+        identity: Identity {
+            id,
+            ingested_at: now(),
+            namespace,
+            expired_at: None,
+        },
+        stats: Stats {
+            importance: 0.5,
+            trust: 0.8,
+            last_access: now(),
+            access_count_recent: 0,
+            referenced_count: 0,
+            surprise: 0.1,
+            is_pinned: false,
+        },
+        content: content.to_string(),
+        role,
+        captured_at: now(),
+        agent_id: Id::generate(),
+        session_id,
+        content_hash: ContentHash::of(content.as_bytes()),
+        embedding: Some(Embedding::new(vec![1.0, 0.0, 0.0, 0.0]).expect("finite")),
+        embedder_model: None,
+        consolidation_state: ConsolidationState::Raw,
+        origin: None,
+    };
+    memory
+        .store()
+        .insert_episode(&episode)
+        .expect("seed episode");
+    id
+}
+
+#[tokio::test]
+async fn read_memory_excludes_a_system_role_episode_by_default() -> TestResult {
+    let memory = memory();
+    let alice = Id::generate();
+    // A system-role turn living in Alice's OWN (visible) namespace: the namespace gate would
+    // admit it, so only the role gate keeps it hidden — recall excludes system-role, and
+    // read_memory must match (no admin reveal granted by the default authority).
+    let system_id = seed_episode(
+        &memory,
+        "a system directive turn",
+        Namespace::Agent(alice.to_string()),
+        Role::System,
+        None,
+    );
+    let denied = read_memory_tool(&memory, read_params(&system_id.to_string(), alice))
+        .expect_err("a system-role episode is not readable by default, even in one's own ns");
+    assert!(denied.starts_with("ERR_NOT_FOUND"), "{denied}");
+
+    // The gate is role-specific, not a blanket block: an ordinary turn stays readable.
+    let normal_id = seed_episode(
+        &memory,
+        "an ordinary assistant turn",
+        Namespace::Agent(alice.to_string()),
+        Role::Assistant,
+        None,
+    );
+    let ok = read_memory_tool(&memory, read_params(&normal_id.to_string(), alice))?;
+    assert!(ok.contains("an ordinary assistant turn"), "{ok}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn session_manifest_excludes_system_role_episodes_by_default() -> TestResult {
+    let memory = memory();
+    let alice = Id::generate();
+    let session = Id::generate();
+    seed_episode(
+        &memory,
+        "an ordinary assistant turn",
+        Namespace::Agent(alice.to_string()),
+        Role::Assistant,
+        Some(session),
+    );
+    seed_episode(
+        &memory,
+        "a system directive turn",
+        Namespace::Agent(alice.to_string()),
+        Role::System,
+        Some(session),
+    );
+    let manifest = session_manifest_tool(&memory, manifest_params(session, alice))?;
+    assert!(
+        manifest.contains("count=1"),
+        "only the non-system episode is listed: {manifest}"
+    );
+    assert!(
+        manifest.contains("an ordinary assistant turn"),
+        "{manifest}"
+    );
+    assert!(
+        !manifest.contains("a system directive turn"),
+        "a system-role episode must never appear in a manifest by default: {manifest}"
+    );
+    Ok(())
 }
 
 #[tokio::test]
