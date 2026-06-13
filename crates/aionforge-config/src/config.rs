@@ -13,6 +13,7 @@ use crate::drift::DriftConfig;
 use crate::error::ConfigError;
 use crate::forgetting::ForgettingConfig;
 use crate::guard::ConsolidationGuardConfig;
+use crate::server::ServerHttpConfig;
 
 /// The largest sane per-request embedder timeout (ten minutes). A larger value is almost
 /// certainly a units mistake (seconds typed as milliseconds), so it is rejected rather than
@@ -87,6 +88,12 @@ pub struct Config {
     /// server derives no identity from a connection. Config only in this PR; JWT
     /// validation and principal mapping read these fields in later work.
     pub auth: AuthConfig,
+    /// Streamable HTTP server posture: the bind address, the Host/Origin allow-lists,
+    /// and the stateful-session flag (fork#6). **No master switch** — an HTTP server
+    /// always binds somewhere, so the all-default posture (loopback `127.0.0.1:3918`,
+    /// stateful, no explicit allow-lists) is today's behavior. CLI `serve http` flags
+    /// override these fields field-for-field when present.
+    pub server: ServerHttpConfig,
 }
 
 /// On-disk state configuration.
@@ -755,6 +762,7 @@ impl Config {
         self.drift.validate()?;
         self.consolidation_guard.validate()?;
         self.auth.validate()?;
+        self.server.validate()?;
         Ok(())
     }
 }

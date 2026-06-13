@@ -262,6 +262,51 @@ fn the_core_block_posture_parses_from_toml_and_validates_through_config() {
 }
 
 #[test]
+fn the_server_block_posture_parses_from_toml_and_validates_through_config() {
+    // TOML — not JSON — is the real figment wire format, and `server.listen` is a typed
+    // `SocketAddr` that deserializes from a bare string. Pin that the [server] block round
+    // trips through a full Config load (the path PR1's JSON-only unit test does not cover)
+    // and validates.
+    let figment = Figment::from(Serialized::defaults(Config::default())).merge(Toml::string(
+        r#"
+            [server]
+            listen = "0.0.0.0:8080"
+            allowed_hosts = ["console.example"]
+            allowed_origins = ["https://console.example"]
+            stateful = false
+        "#,
+    ));
+    let config: Config = figment.extract().expect("extract");
+    config.validate().expect("a sound server posture validates");
+    assert_eq!(
+        config.server.listen.to_string(),
+        "0.0.0.0:8080",
+        "the listen SocketAddr parses from its TOML string form"
+    );
+    assert!(
+        !config.server.stateful,
+        "stateful = false parses through TOML"
+    );
+    assert_eq!(
+        config.server.allowed_hosts,
+        vec!["console.example".to_string()]
+    );
+    assert_eq!(
+        config.server.allowed_origins,
+        vec!["https://console.example".to_string()]
+    );
+
+    // The whole-config validate runs the server block: a blank origin fails closed,
+    // naming the key (never the value).
+    let mut config = config;
+    config.server.allowed_origins = vec![String::new()];
+    assert!(
+        matches!(config.validate(), Err(ConfigError::Invalid { key, .. }) if key == "server.allowed_origins"),
+        "the offending key is named"
+    );
+}
+
+#[test]
 fn promotion_gates_are_validated_only_when_enabled() {
     use aionforge_config::CategoryPromotionRule;
 

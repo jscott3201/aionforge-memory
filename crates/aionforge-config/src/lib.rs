@@ -56,6 +56,7 @@ mod error;
 mod forgetting;
 mod guard;
 mod load;
+mod server;
 
 pub use auth::{AuthConfig, IssuerConfig};
 pub use config::{
@@ -69,3 +70,4 @@ pub use error::ConfigError;
 pub use forgetting::ForgettingConfig;
 pub use guard::{ConsolidationGuardConfig, GuardMode};
 pub use load::default_config_path;
+pub use server::ServerHttpConfig;
