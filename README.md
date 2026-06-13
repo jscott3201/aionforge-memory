@@ -108,19 +108,21 @@ You need the Rust toolchain pinned in [rust-toolchain.toml](rust-toolchain.toml)
 (Rust 1.95.0, edition 2024).
 
 Aionforge Memory depends on the public
-[`selene-db`](https://github.com/Aionforge-Labs/selene-db) repository as a git
-dependency. `Cargo.lock` pins the exact substrate commit, while the manifest
-tracks selene-db's `development` branch for planned updates.
+[`selene-db`](https://github.com/Aionforge-Labs/selene-db) substrate, consumed
+from crates.io and pinned to `1.2.0`. The published crates (`selene-db-core`,
+`-graph`, `-persist`, `-gql`, `-algorithms`) are aliased to stable local keys
+(`selene-core`, ...) via Cargo's `package =` rename, so only `aionforge-store`
+ever names them.
 
 ```bash
 cargo build --workspace --locked
 cargo nextest run --workspace --locked --all-features
 ```
 
-To pull a newer selene-db `development` commit, run:
+To pull a newer selene-db `1.x` release, run:
 
 ```bash
-cargo update -p selene-core -p selene-graph -p selene-persist -p selene-gql -p selene-algorithms
+cargo update -p selene-db-core -p selene-db-graph -p selene-db-persist -p selene-db-gql -p selene-db-algorithms
 ```
 
 For local co-development against a sibling `selene-db` checkout, uncomment the

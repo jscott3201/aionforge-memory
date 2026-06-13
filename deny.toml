@@ -77,7 +77,7 @@ deny = [
   { name = "aws-lc-rs" },
   { name = "aws-lc-sys" },
 ]
-# Duplicate-version lines inherited through the selene-db git dep plus the tokio /
+# Duplicate-version lines inherited through the selene-db substrate plus the tokio /
 # reqwest / hyper / ratatui / dalek tree. Each entry needs a documented,
 # owner-attributed reason added here after a lockfile review; re-audit on every
 # `cargo update` and when the substrate pin moves.

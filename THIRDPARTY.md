@@ -4584,11 +4584,6 @@ SOFTWARE.
 ## MIT License (MIT)
 
 Used by:
-- selene-algorithms v1.1.0 — https://github.com/Aionforge-Labs/selene-db
-- selene-core v1.1.0 — https://github.com/Aionforge-Labs/selene-db
-- selene-gql v1.1.0 — https://github.com/Aionforge-Labs/selene-db
-- selene-graph v1.1.0 — https://github.com/Aionforge-Labs/selene-db
-- selene-persist v1.1.0 — https://github.com/Aionforge-Labs/selene-db
 - aionforge v0.1.0 — https://github.com/Aionforge-Labs/aionforge-memory
 - aionforge-capture v0.1.0 — https://github.com/Aionforge-Labs/aionforge-memory
 - aionforge-chat v0.1.0 — https://github.com/Aionforge-Labs/aionforge-memory
@@ -4616,6 +4611,11 @@ Used by:
 - r-efi v5.3.0 — https://github.com/r-efi/r-efi
 - r-efi v6.0.0 — https://github.com/r-efi/r-efi
 - rustls-platform-verifier-android v0.1.1 — https://github.com/rustls/rustls-platform-verifier
+- selene-db-algorithms v1.2.0 — https://github.com/Aionforge-Labs/selene-db
+- selene-db-core v1.2.0 — https://github.com/Aionforge-Labs/selene-db
+- selene-db-gql v1.2.0 — https://github.com/Aionforge-Labs/selene-db
+- selene-db-graph v1.2.0 — https://github.com/Aionforge-Labs/selene-db
+- selene-db-persist v1.2.0 — https://github.com/Aionforge-Labs/selene-db
 - sse-stream v0.2.3 — https://github.com/4t145/sse-stream/
 - wasip3 v0.4.0+wasi-0.3.0-rc-2026-01-06 — https://github.com/bytecodealliance/wasi-rs
 - wide v0.7.33 — https://github.com/Lokathor/wide
