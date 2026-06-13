@@ -170,6 +170,7 @@ enabled_tools = [
   "consolidation_status",
   "audit_history",
   "capture",
+  "batch_capture",
   "consolidate",
   "forget",
   "unforget",
@@ -187,6 +188,8 @@ approval_mode = "approve"
 [mcp_servers.aionforge_memory.tools.audit_history]
 approval_mode = "approve"
 [mcp_servers.aionforge_memory.tools.capture]
+approval_mode = "prompt"
+[mcp_servers.aionforge_memory.tools.batch_capture]
 approval_mode = "prompt"
 [mcp_servers.aionforge_memory.tools.consolidate]
 approval_mode = "prompt"
@@ -267,6 +270,7 @@ rules for this server:
     "aionforge-memory_consolidation_status": "allow",
     "aionforge-memory_audit_history": "allow",
     "aionforge-memory_capture": "ask",
+    "aionforge-memory_batch_capture": "ask",
     "aionforge-memory_consolidate": "ask",
     "aionforge-memory_forget": "ask",
     "aionforge-memory_unforget": "ask"
@@ -294,7 +298,8 @@ server.
 
 For sensitive data, keep the built-in HTTP server on loopback and review
 Cursor's MCP logs when debugging connection failures. Use Cursor's tool approval
-and run-mode controls for `capture`, `consolidate`, `forget`, and `unforget`.
+and run-mode controls for `capture`, `batch_capture`, `consolidate`, `forget`,
+and `unforget`.
 
 For pre-registered OAuth clients, Cursor uses an `auth` object on remote URL
 entries with `CLIENT_ID`, optional `CLIENT_SECRET`, and optional `scopes`.
@@ -311,9 +316,13 @@ reads one visible captured memory by receipt id; `session_manifest` lists the
 visible captured memories for a session. `audit_history` reads the principal-scoped audit subgraph by
 subject, by `kind`, or by subject+kind; when `subject_id` is omitted, `kind` is
 required and the compact output uses `subject=*` while listing each row's
-subject. Mutating tools are `capture`, `consolidate`, `forget`, and
-`unforget`; configure clients to ask before running them unless the host has a
-stronger local policy. `server_status` is the cheapest connection sanity check:
+subject. Mutating tools are `capture`, `batch_capture`, `consolidate`, `forget`,
+and `unforget`; configure clients to ask before running them unless the host has a
+stronger local policy. `batch_capture` captures an array of memories (1..=64) in
+one call under a single shared writer identity, committing each item best-effort
+in input order: it returns a `[batch_capture] items/new/dup/err` header then one
+`[capture]` receipt or `ERR_ITEM[i]` line per item, where `dup` counts stored
+near-duplicates as well as exact duplicates. `server_status` is the cheapest connection sanity check:
 it reports the crate version, tool/resource/prompt counts, advertised transports,
 sampling posture, and mutating-tool count. `consolidate` runs bounded foreground
 ticks with server-owned deterministic rules only and returns

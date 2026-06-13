@@ -54,6 +54,7 @@ Tools:
 - read_memory: read one visible captured memory by id.
 - session_manifest: visible session handoff; supports after/next pagination and audit counts.
 - capture: write one event for agent_id or principal.agent_id; team target requires asserted teams.
+- batch_capture: capture an array (1..=64) under one shared writer; per-item best-effort, dup counts stored near-duplicates.
 - consolidation_status: service-wide backlog age from ingestion, not historical event time.
 - consolidate: bounded deterministic foreground pass, max_ticks <= 5.
 - forget / unforget: viewer-writable lifecycle ops; disabled says `reason=forgetting.enabled=false`.
@@ -86,6 +87,7 @@ Read-like tools:
 
 Prompt-gated mutating tools:
 - capture
+- batch_capture
 - consolidate
 - forget
 - unforget
@@ -177,6 +179,7 @@ enabled_tools = [
   "consolidation_status",
   "audit_history",
   "capture",
+  "batch_capture",
   "consolidate",
   "forget",
   "unforget",
@@ -196,6 +199,8 @@ approval_mode = "approve"
 approval_mode = "approve"
 
 [mcp_servers.aionforge_memory.tools.capture]
+approval_mode = "prompt"
+[mcp_servers.aionforge_memory.tools.batch_capture]
 approval_mode = "prompt"
 [mcp_servers.aionforge_memory.tools.consolidate]
 approval_mode = "prompt"
@@ -237,6 +242,7 @@ const OPENCODE_CONFIG: &str = r#"{
     "aionforge-memory_consolidation_status": "allow",
     "aionforge-memory_audit_history": "allow",
     "aionforge-memory_capture": "ask",
+    "aionforge-memory_batch_capture": "ask",
     "aionforge-memory_consolidate": "ask",
     "aionforge-memory_forget": "ask",
     "aionforge-memory_unforget": "ask"

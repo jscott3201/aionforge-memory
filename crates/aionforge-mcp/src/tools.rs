@@ -30,6 +30,8 @@ use crate::principal::{HostPrincipalToolParam, resolve_reader, resolve_writer};
 const DEFAULT_LIMIT: usize = 10;
 /// The most hits a single search will return, so a response stays small.
 const MAX_LIMIT: usize = 100;
+/// The most items a single `batch_capture` call accepts, so one call stays bounded.
+pub const MAX_BATCH_ITEMS: usize = 64;
 
 /// Parameters for the `capture` tool.
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -88,6 +90,81 @@ pub struct CaptureToolParams {
     pub supersedes: Option<String>,
 }
 
+/// One memory in a `batch_capture` call.
+///
+/// A batch item carries only the per-item fields; the writer identity (agent, teams,
+/// principal, target namespace, model family) is shared across the whole call and lives on
+/// [`BatchCaptureToolParams`]. `content` is required; every other field mirrors the matching
+/// single-capture parameter and defaults the same way.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct BatchCaptureItem {
+    /// The raw event content to remember.
+    #[schemars(description = "The raw event content to remember.")]
+    pub content: String,
+    /// The producing role: user, assistant, tool, system, or event (default user).
+    #[schemars(
+        description = "Producing role: user, assistant, tool, system, or event (default user)."
+    )]
+    pub role: Option<String>,
+    /// Writer trust in [0, 1] (default 0.5).
+    #[schemars(description = "Writer trust in [0, 1] (default 0.5).")]
+    pub trust: Option<f64>,
+    /// The event time as RFC3339, for backfilling a past event; defaults to capture time.
+    #[schemars(
+        description = "Event time as RFC3339 (e.g. 2026-06-07T12:00:00Z); defaults to capture time."
+    )]
+    pub captured_at: Option<String>,
+    /// The owning session id (a UUID), if any.
+    #[schemars(description = "The owning session id (a UUID), if any.")]
+    pub session_id: Option<String>,
+    /// The id of a live memory this item replaces; consolidation evidence, not an immediate
+    /// action. Must be the shared writer's own memory.
+    #[schemars(
+        description = "Id of a live memory this item replaces; consolidation evidence. Must be the writer's own memory."
+    )]
+    pub supersedes: Option<String>,
+}
+
+/// Parameters for the `batch_capture` tool.
+///
+/// One shared writer identity (agent, teams, principal, optional target namespace, optional
+/// model family) seeds every item; `items` carries the per-memory content and overrides.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct BatchCaptureToolParams {
+    /// The authoring agent's id (a UUID). Legacy shorthand for `principal.agent_id`.
+    #[serde(default)]
+    #[schemars(
+        description = "The authoring agent's id (a UUID). Legacy shorthand for principal.agent_id."
+    )]
+    pub agent_id: Option<String>,
+    /// Explicit host-verified principal shared by every item. OAuth-capable hosts can pass the
+    /// verified token subject and teams here instead of asking the server to infer them.
+    #[schemars(description = "Explicit host-verified principal shared by every item. Optional.")]
+    pub principal: Option<HostPrincipalToolParam>,
+    /// Teams the host asserts this writer belongs to. Only used when `target_namespace`
+    /// asks for a team namespace; omitted/empty keeps every capture private.
+    #[serde(default)]
+    #[schemars(
+        description = "Teams the host asserts this writer belongs to. Required to capture into a matching team namespace."
+    )]
+    pub teams: Vec<String>,
+    /// Optional shared write target for every item, such as `team:<name>` or this writer's
+    /// own `agent:<id>`. Omit for private captures. Never inferred from session or content.
+    #[schemars(
+        description = "Optional explicit write target namespace for every item, such as team:project-alpha. Omit for private captures."
+    )]
+    pub target_namespace: Option<String>,
+    /// The writer model family shared by every item, recorded for provenance.
+    #[schemars(description = "The writer model family for every item, recorded for provenance.")]
+    pub model_family: Option<String>,
+    /// The memories to capture, 1..=64. Each item is committed best-effort in input order:
+    /// one bad item yields an inline `ERR_ITEM[i]` line and never aborts the batch.
+    #[schemars(
+        description = "The memories to capture (1..=64). Each item commits best-effort in input order."
+    )]
+    pub items: Vec<BatchCaptureItem>,
+}
+
 /// Parameters for the `search` tool.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SearchToolParams {
@@ -142,49 +219,91 @@ pub async fn capture_tool<E: Embedder>(
 ) -> Result<String, String> {
     let (agent_id, teams) =
         resolve_writer(params.agent_id.as_deref(), params.teams, params.principal)?;
-    let role = parse_role(params.role.as_deref())?;
-    let session_id = params
-        .session_id
-        .as_deref()
+    // The single-capture path resolves the shared writer identity here, then builds one
+    // request: the same trust default (0.5) and `trusted = target_namespace.is_some()`
+    // semantics the batch path reuses item-by-item.
+    let model_family = params
+        .model_family
+        .unwrap_or_else(|| "mcp-client".to_string());
+    let request = build_capture_request(
+        params.content,
+        agent_id,
+        &teams,
+        &model_family,
+        params.target_namespace.as_deref(),
+        params.role.as_deref(),
+        params.trust,
+        params.captured_at.as_deref(),
+        params.session_id.as_deref(),
+        params.supersedes.as_deref(),
+        now,
+    )?;
+
+    let receipt = memory
+        .capture(request)
+        .await
+        .map_err(|error| format!("ERR_CAPTURE: {error}"))?;
+    Ok(format_receipt(&receipt))
+}
+
+/// Build one [`CaptureRequest`] from already-resolved writer identity plus per-item fields.
+///
+/// The writer identity (`agent_id`, `teams`, `model_family`) is resolved once per call and
+/// passed in by reference; this helper clones the per-item slices it needs so a single
+/// resolved identity can seed many requests in a batch. The trust default (0.5) and the
+/// `trusted = target_namespace.is_some()` rule are shared with the single-capture path, so
+/// both tools commit identical requests for identical input. A `system` role parses here
+/// (it is a valid `Role`); the Capturer is what refuses a system-role *write*, surfacing as
+/// an `ERR_CAPTURE` (`system_role_not_writable`) at commit time, not at parse time.
+#[allow(clippy::too_many_arguments)]
+fn build_capture_request(
+    content: String,
+    agent_id: Id,
+    teams: &[String],
+    model_family: &str,
+    target_namespace: Option<&str>,
+    role: Option<&str>,
+    trust: Option<f64>,
+    captured_at: Option<&str>,
+    session_id: Option<&str>,
+    supersedes: Option<&str>,
+    now: &Timestamp,
+) -> Result<CaptureRequest, String> {
+    let role = parse_role(role)?;
+    let session_id = session_id
         .map(Id::parse)
         .transpose()
         .map_err(|_| "ERR_INVALID_SESSION_ID: session_id must be a UUID".to_string())?;
-    let captured_at = match params.captured_at.as_deref() {
+    let captured_at = match captured_at {
         Some(raw) => parse_captured_at(raw)?,
         None => now.clone(),
     };
-    let namespace = params
-        .target_namespace
-        .as_deref()
-        .map(parse_target_namespace)
-        .transpose()?;
-    let supersedes = params
-        .supersedes
-        .as_deref()
+    let namespace = target_namespace.map(parse_target_namespace).transpose()?;
+    let supersedes = supersedes
         .map(Id::parse)
         .transpose()
         .map_err(|_| "ERR_INVALID_SUPERSEDES: supersedes must be a memory id (UUID)".to_string())?;
 
-    let request = CaptureRequest {
-        content: params.content,
+    Ok(CaptureRequest {
+        content,
         role,
+        // `Id` is `Copy`, so the shared writer identity is reused per item without a clone.
         agent_id,
         // The host, not the MCP server, is the principal/team authority. Without an explicit
         // target namespace the write remains private even if teams are present; a shared write
         // requires both `target_namespace` and matching host-asserted membership, then the
-        // capture funnel authorizer makes the final decision (06 §1).
-        teams,
+        // capture funnel authorizer makes the final decision (06 §1). The teams and model
+        // family are cloned per item from the once-resolved shared identity.
+        teams: teams.to_vec(),
         session_id,
         captured_at,
         ingested_at: now.clone(),
         writer: WriterContext {
-            model_family: params
-                .model_family
-                .unwrap_or_else(|| "mcp-client".to_string()),
+            model_family: model_family.to_string(),
             model_version: None,
             transport: Some("mcp".to_string()),
             request_id: None,
-            trust: params.trust.unwrap_or(0.5),
+            trust: trust.unwrap_or(0.5),
             // MCP captures are unsigned; signed-write deployments reject them until the MCP
             // transport carries a host signature (out of scope for M4.T03).
             signed: None,
@@ -195,13 +314,106 @@ pub async fn capture_tool<E: Embedder>(
         trusted: namespace.is_some(),
         namespace,
         supersedes,
-    };
+    })
+}
 
-    let receipt = memory
-        .capture(request)
-        .await
-        .map_err(|error| format!("ERR_CAPTURE: {error}"))?;
-    Ok(format_receipt(&receipt))
+/// Run the `batch_capture` tool: capture an array of memories under one shared writer
+/// identity, committing each item best-effort in input order.
+///
+/// The writer identity is resolved once (a call-level failure — bad identity, an empty or
+/// oversized `items` array — fails the whole call before any commit). Each item then runs
+/// the full single-capture funnel via [`Memory::capture`]: there is no batch engine path
+/// and no shortcut around the per-item authorizer, so a team target still needs asserted
+/// membership for every item exactly as it would for a single capture.
+///
+/// The output is a header line `[batch_capture] items=N new=.. dup=.. err=..` followed by
+/// one line per item in input order: the same `[capture]` receipt on success, or an
+/// `ERR_ITEM[i] ERR_*: ...` line (0-based `i`) on a per-item failure. A `NearDuplicate`
+/// verdict **is** a committed write (the episode is stored), so the `dup` tally counts both
+/// exact and near duplicates — every `dup` past the first exact match is a stored memory.
+/// `new` counts only brand-new, distinct episodes.
+///
+/// # Errors
+/// Returns a call-level `ERR_*` string when the array is empty (`ERR_EMPTY_BATCH`), too
+/// large (`ERR_BATCH_TOO_LARGE`), or the shared writer identity does not resolve. Per-item
+/// failures never abort the call; they appear as inline `ERR_ITEM[i]` lines instead.
+pub async fn batch_capture_tool<E: Embedder>(
+    memory: &Memory<E>,
+    params: BatchCaptureToolParams,
+    now: &Timestamp,
+) -> Result<String, String> {
+    if params.items.is_empty() {
+        return Err("ERR_EMPTY_BATCH: items must contain at least one memory".to_string());
+    }
+    if params.items.len() > MAX_BATCH_ITEMS {
+        return Err(format!(
+            "ERR_BATCH_TOO_LARGE: items has {count}, max is {MAX_BATCH_ITEMS}",
+            count = params.items.len()
+        ));
+    }
+    // One shared writer identity for the whole call; a bad identity fails before any commit.
+    let (agent_id, teams) =
+        resolve_writer(params.agent_id.as_deref(), params.teams, params.principal)?;
+    // Resolve the model-family default once, before the loop, then clone per item.
+    let model_family = params
+        .model_family
+        .unwrap_or_else(|| "mcp-client".to_string());
+    let target_namespace = params.target_namespace;
+
+    let mut new_count = 0usize;
+    let mut dup_count = 0usize;
+    let mut err_count = 0usize;
+    let mut lines: Vec<String> = Vec::with_capacity(params.items.len());
+
+    for (index, item) in params.items.into_iter().enumerate() {
+        let request = build_capture_request(
+            item.content,
+            agent_id,
+            &teams,
+            &model_family,
+            target_namespace.as_deref(),
+            item.role.as_deref(),
+            item.trust,
+            item.captured_at.as_deref(),
+            item.session_id.as_deref(),
+            item.supersedes.as_deref(),
+            now,
+        );
+        let line = match request {
+            Ok(request) => match memory.capture(request).await {
+                Ok(receipt) => {
+                    match &receipt.verdict {
+                        // An exact duplicate writes nothing; a near duplicate IS stored but
+                        // is still tallied under `dup` (documented in the surface output).
+                        CaptureVerdict::New => new_count += 1,
+                        CaptureVerdict::ExactDuplicate | CaptureVerdict::NearDuplicate { .. } => {
+                            dup_count += 1;
+                        }
+                    }
+                    format_receipt(&receipt)
+                }
+                Err(error) => {
+                    err_count += 1;
+                    format!("ERR_ITEM[{index}] ERR_CAPTURE: {error}")
+                }
+            },
+            Err(error) => {
+                err_count += 1;
+                format!("ERR_ITEM[{index}] {error}")
+            }
+        };
+        lines.push(line);
+    }
+
+    let mut out = format!(
+        "[batch_capture] items={items} new={new_count} dup={dup_count} err={err_count}",
+        items = lines.len(),
+    );
+    for line in lines {
+        out.push('\n');
+        out.push_str(&line);
+    }
+    Ok(out)
 }
 
 /// Run the `search` tool: recall under the viewer's authorization and render a

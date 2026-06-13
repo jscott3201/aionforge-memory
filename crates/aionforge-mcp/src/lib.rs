@@ -52,7 +52,10 @@ pub use resources::{
     TOOL_MANIFEST_RESOURCE_URI,
 };
 pub use status::{ServerStatusToolParams, server_status_tool};
-pub use tools::{CaptureToolParams, SearchToolParams, capture_tool, search_tool};
+pub use tools::{
+    BatchCaptureItem, BatchCaptureToolParams, CaptureToolParams, MAX_BATCH_ITEMS, SearchToolParams,
+    batch_capture_tool, capture_tool, search_tool,
+};
 
 use std::sync::Arc;
 
@@ -157,6 +160,24 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
         let params = params.0;
         let now = jiff::Zoned::now();
         capture_tool(&self.memory, params, &now).await
+    }
+
+    #[tool(
+        description = "Capture an array of memories in one call; per-item best-effort receipt lines.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
+    async fn batch_capture(
+        &self,
+        params: Parameters<BatchCaptureToolParams>,
+    ) -> Result<String, String> {
+        let params = params.0;
+        let now = jiff::Zoned::now();
+        batch_capture_tool(&self.memory, params, &now).await
     }
 
     #[tool(
