@@ -33,20 +33,34 @@ use crate::store::Store;
 /// in sync, which is what previously made any non-`HnswCosine` kind trip a spurious
 /// doctor mismatch.
 pub(crate) const VECTOR_INDEXES: &[(&str, &str, VectorIndexKind)] = &[
-    // Episode and Fact are the largest, fastest-growing embedding corpora, so they
-    // take selene 1.2's TurboQuant cosine index: a 4-bit-compressed candidate index
-    // (~8x less RAM than full f32 at 3072-dim) that preselects, then EXACTLY reranks
-    // survivors against the stored full-precision vectors — so cosine accuracy on the
-    // rerank is preserved while the candidate index shrinks. Cosine-only and opt-in
-    // (1.2's default kind is ivf_cosine), so the kind is named explicitly here. The
-    // smaller corpora stay on HNSW, where per-query latency matters more than index RAM.
+    // Every embedding corpus takes selene 1.2's TurboQuant cosine index: a 4-bit-compressed
+    // candidate index (~8x less RAM than full f32 at 3072-dim) that preselects, then EXACTLY
+    // reranks survivors against the stored full-precision vectors — so cosine accuracy on the
+    // rerank is preserved while the candidate index shrinks. It is the default for all kinds
+    // because the rerank keeps recall intact even on the small corpora: with a 512-wide
+    // candidate sweep, any corpus under ~512 rows has every row clear the sweep and get an
+    // exact full-precision rerank (recall 1.0), so the smaller kinds pay no accuracy cost for
+    // the RAM win. Cosine-only and opt-in (1.2's default kind is ivf_cosine), so the kind is
+    // named explicitly here.
     ("Episode", "embedding_v1", VectorIndexKind::TurboQuantCosine),
     ("Fact", "embedding_v1", VectorIndexKind::TurboQuantCosine),
-    ("Entity", "embedding_v1", VectorIndexKind::HnswCosine),
-    ("Skill", "problem_embedding_v1", VectorIndexKind::HnswCosine),
-    ("BadPattern", "embedding_v1", VectorIndexKind::HnswCosine),
-    ("Note", "embedding_v1", VectorIndexKind::HnswCosine),
-    ("CoreBlock", "embedding_v1", VectorIndexKind::HnswCosine),
+    ("Entity", "embedding_v1", VectorIndexKind::TurboQuantCosine),
+    (
+        "Skill",
+        "problem_embedding_v1",
+        VectorIndexKind::TurboQuantCosine,
+    ),
+    (
+        "BadPattern",
+        "embedding_v1",
+        VectorIndexKind::TurboQuantCosine,
+    ),
+    ("Note", "embedding_v1", VectorIndexKind::TurboQuantCosine),
+    (
+        "CoreBlock",
+        "embedding_v1",
+        VectorIndexKind::TurboQuantCosine,
+    ),
 ];
 
 /// `(label, property)` for each maintained BM25 text index (§8).

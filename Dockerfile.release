@@ -1,6 +1,10 @@
 # syntax=docker/dockerfile:1.7
 
-FROM alpine:3.22 AS runtime
+# The release linux binaries are dynamically linked against glibc (built on the
+# Debian-based rust image), so the runtime base must be glibc too: a glibc binary
+# cannot exec under Alpine's musl loader (it fails with "not found" on the missing
+# /lib/ld-linux interpreter).
+FROM debian:bookworm-slim AS runtime
 
 ARG TARGETOS
 ARG TARGETARCH
@@ -10,8 +14,10 @@ LABEL org.opencontainers.image.description="Aionforge Memory single-binary MCP s
 
 ENV AIONFORGE_PERSISTENCE__DATA_DIR=/data
 
-# hadolint ignore=DL3018
-RUN apk add --no-cache ca-certificates \
+# hadolint ignore=DL3008
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /data \
     && chmod 700 /data \
     && chown -R 10001:10001 /data

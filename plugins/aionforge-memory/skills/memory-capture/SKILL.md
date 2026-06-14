@@ -3,7 +3,7 @@ name: memory-capture
 description: Capture durable Aionforge Memory records for decisions, user preferences, project facts, release outcomes, validation results, handoffs, corrections, and reusable failure patterns. Use proactively during substantial work and whenever the user asks to remember or update memory.
 license: MIT OR Apache-2.0
 metadata:
-  aionforge-version: "0.2.1"
+  aionforge-version: "0.2.2"
 ---
 
 # Memory Capture

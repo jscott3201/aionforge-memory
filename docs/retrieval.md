@@ -6,7 +6,7 @@ quality re-ranks over the same graph engine. The query routes to a profile that 
 how hard each signal pulls, then the retriever fuses the ranked lists by rank and hands
 back a bundle that is the same every time the graph state is. Everything here goes through
 selene-db. There is no second search engine, no external vector store, and no index the
-substrate keeps on the side — the BM25 text indexes, the HNSW vector indexes, and the
+substrate keeps on the side — the BM25 text indexes, the cosine vector indexes, and the
 maintained candidate-state sets all live in the one engine, and retrieval composes native
 `CALL` procedures over them.
 
@@ -23,10 +23,12 @@ starts with:
   so broad operational queries do not bury a precise memory under several weak quality
   re-ranks from adjacent memories.
 - **Dense** is native vector search. The query is embedded once, an approximate
-  nearest-neighbor pass runs over the HNSW index, and when the profile asks for it the
-  retrieved set is **exact-reranked** with full-precision scoring — the
-  HNSW-then-Flat-oracle path. All vector indexes are cosine; the score is cosine
-  distance, lower is nearer.
+  nearest-neighbor pass runs over the cosine vector index, and when the profile asks for it
+  the retrieved set is **exact-reranked** with full-precision scoring — the
+  approximate-then-Flat-oracle path. The vector indexes are TurboQuant cosine: a compressed
+  candidate sweep that itself reranks survivors against the stored full-precision vectors,
+  so the compression never costs the score its accuracy. All vector indexes are cosine; the
+  score is cosine distance, lower is nearer.
 
 ```rust
 pub enum Signal {

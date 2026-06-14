@@ -70,7 +70,7 @@ OAuth validation, secret custody, and backups.
 The release gate asserts the binding acceptance criteria that exist in code:
 workspace tests, clippy, doctests, rustdoc link checks, dependency audit, license
 attribution, repository policy gates, Docker build, and explicit M6 red-team
-probes. The `0.2.1` release publishes GitHub Release artifacts, Linux and macOS
+probes. The `0.2.2` release publishes GitHub Release artifacts, Linux and macOS
 native binaries, and GHCR runtime images for `linux/amd64` and `linux/arm64`.
 crates.io publishing is deferred until the selene-db 1.x crates are available
 from crates.io. Tagged releases are cut only after human sign-off.
