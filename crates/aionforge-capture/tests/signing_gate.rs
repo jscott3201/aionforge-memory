@@ -156,6 +156,7 @@ fn unsigned_request(content: &str, agent: &Id) -> CaptureRequest {
         teams: Vec::new(),
         session_id: None,
         captured_at: ts(),
+        ingested_at: ts(),
         writer: WriterContext {
             model_family: "test-writer".to_string(),
             model_version: None,

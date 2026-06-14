@@ -1,0 +1,13 @@
+interface:
+  display_name: "Memory Capture"
+  short_description: "Persist decisions, facts, handoffs, and outcomes"
+  default_prompt: "Capture durable facts (decisions, validation results, user preferences, handoffs) in Aionforge Memory the moment they land, not at the end. Tasks are work items (work_create), not memory episodes; there is no note to store directly."
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "aionforge_memory"
+      description: "Aionforge Memory MCP server"
+      transport: "streamable_http"
+      url: "http://127.0.0.1:3918/mcp"
+policy:
+  allow_implicit_invocation: true

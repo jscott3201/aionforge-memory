@@ -294,8 +294,16 @@ mod tests {
         ] {
             assert_eq!(tier_for_label(label), Some(Tier::Semantic), "{label}");
         }
-        // Stats-less kinds carry nothing to decay.
-        for label in ["AuditEvent", "Agent", "ConsolidationCursor", "NoSuchKind"] {
+        // Stats-less kinds carry nothing to decay — including the work-tracking facet, whose
+        // decay-exemption is the absence asserted here (an active work item must never decay out).
+        for label in [
+            "AuditEvent",
+            "Agent",
+            "ConsolidationCursor",
+            "WorkItem",
+            "Tag",
+            "NoSuchKind",
+        ] {
             assert_eq!(tier_for_label(label), None, "{label}");
         }
     }

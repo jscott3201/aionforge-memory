@@ -15,7 +15,7 @@
 //!
 //! ## Why one session
 //! A selene graph projection lives in the *session*, not the graph, so the projection and
-//! the PageRank over it must run in a single session — hence [`Store::execute_session`]
+//! the PageRank over it must run in a single session — hence [`Store::execute_session_within`]
 //! rather than two [`Store::execute`] calls. The projection is ephemeral: it is built per
 //! call and dies with the session, so there is no cross-call cache to invalidate as the
 //! graph advances.
@@ -25,6 +25,8 @@
 //! scored nodes to the requested label and truncates to the top `k` by score before the rows
 //! cross back. So the ranking is exactly the top-`k` nodes of one [`SearchKind`], best-first,
 //! in a single bounded call — no full-graph transfer, no label scan, no Rust-side sort.
+
+use std::time::Instant;
 
 use selene_core::{NodeId, Value};
 
@@ -76,6 +78,25 @@ impl Store {
         seeds: &[NodeId],
         k: usize,
     ) -> Result<Vec<SearchHit>, StoreError> {
+        self.personalized_pagerank_within(kind, seeds, k, None)
+    }
+
+    /// [`Store::personalized_pagerank`] bounded by an optional recall deadline.
+    ///
+    /// `None` is identical to [`Store::personalized_pagerank`]. A `Some(deadline)` lets
+    /// the retriever abort the projection-build + PageRank `CALL`s mid-statement when
+    /// the recall budget expires — the deadline rides the single shared session.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if a seed is not in the projection, or the projection
+    /// build, the PageRank call, a bind, execution, or the deadline fails.
+    pub fn personalized_pagerank_within(
+        &self,
+        kind: SearchKind,
+        seeds: &[NodeId],
+        k: usize,
+        deadline: Option<Instant>,
+    ) -> Result<Vec<SearchHit>, StoreError> {
         if seeds.is_empty() || k == 0 {
             return Ok(Vec::new());
         }
@@ -105,7 +126,10 @@ impl Store {
 
         // PageRank already filtered to `kind` and returned the top `k` best-first, so the
         // yielded rows are the ranking — no Rust-side label intersection, sort, or truncate.
-        extract_hits(self.execute_session(&[build, rank])?, "score")
+        extract_hits(
+            self.execute_session_within(&[build, rank], deadline)?,
+            "score",
+        )
     }
 }
 

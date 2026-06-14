@@ -151,7 +151,8 @@ fn signed_request_at(
         agent_id: agent,
         teams: Vec::new(),
         session_id: None,
-        captured_at,
+        captured_at: captured_at.clone(),
+        ingested_at: captured_at,
         writer: WriterContext {
             model_family: "redteam".to_string(),
             model_version: Some("1".to_string()),
@@ -177,6 +178,7 @@ fn unsigned_request(agent: Id, content: &str) -> CaptureRequest {
         teams: Vec::new(),
         session_id: None,
         captured_at: ts(),
+        ingested_at: ts(),
         writer: WriterContext {
             model_family: "redteam".to_string(),
             model_version: Some("1".to_string()),

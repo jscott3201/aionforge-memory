@@ -15,3 +15,4 @@ pub mod episodic;
 pub mod forensic;
 pub mod procedural;
 pub mod semantic;
+pub mod work;

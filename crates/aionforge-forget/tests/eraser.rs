@@ -16,6 +16,7 @@ use aionforge_domain::nodes::agent::{Agent, AgentStatus, TrustScores};
 use aionforge_domain::nodes::episodic::{ConsolidationState, Episode, Role};
 use aionforge_domain::nodes::forensic::{AuditEvent, AuditKind, ProvenanceRecord};
 use aionforge_domain::nodes::semantic::{Fact, FactStatus};
+use aionforge_domain::nodes::work::{WorkItem, WorkStatus};
 use aionforge_domain::time::Timestamp;
 use aionforge_domain::value::ObjectValue;
 use aionforge_forget::{Eraser, ErasurePolicy, PointErase};
@@ -505,4 +506,31 @@ fn a_soft_forgotten_memory_erases() {
         "erasure escalates past a soft-forget: {outcome:?}"
     );
     assert!(!is_live(&store, &f.identity.id, "Fact"));
+}
+
+#[test]
+fn a_work_item_is_invisible_to_erase() {
+    let store = store();
+    let eraser = eraser(&store);
+    let item = WorkItem {
+        identity: identity_in(Namespace::Agent("alice".to_string())),
+        title: "ship the facet".to_string(),
+        body: None,
+        level: "task".to_string(),
+        work_status: WorkStatus::InProgress,
+        parent_id: None,
+        ordinal: 0,
+    };
+    store.save_work_item(&item).expect("save work item");
+
+    // erase resolves via memory_by_id(&ALL_MEMORY_LABELS) BEFORE the namespace-authority gate, so
+    // even a write-AUTHORIZED principal (PermitAll) gets NotFound — the resolution gate, not the
+    // authority gate, is what excludes a work item. This is the gate-less-erase hazard the
+    // Stats-less design exists to avoid: an active work item can never be erased.
+    assert_eq!(
+        eraser
+            .erase(&principal(), &PermitAll, &item.identity.id, &now())
+            .expect("erase"),
+        PointErase::NotFound,
+    );
 }

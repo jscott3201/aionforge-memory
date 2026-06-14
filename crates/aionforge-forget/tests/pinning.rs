@@ -12,6 +12,7 @@ use aionforge_domain::nodes::episodic::{ConsolidationState, Episode, Role};
 use aionforge_domain::nodes::forensic::AuditKind;
 use aionforge_domain::nodes::procedural::{BadPattern, Skill};
 use aionforge_domain::nodes::semantic::{Entity, Fact, FactStatus};
+use aionforge_domain::nodes::work::{WorkItem, WorkStatus};
 use aionforge_domain::time::Timestamp;
 use aionforge_domain::value::ObjectValue;
 use aionforge_forget::{
@@ -378,4 +379,31 @@ fn skills_and_bad_patterns_pin_like_every_other_kind() {
     // Note and CoreBlock complete the seven; neither has a public write surface yet
     // (notes materialize through consolidation, core blocks land with M5.T04), so
     // their pin coverage rides with those surfaces.
+}
+
+#[test]
+fn a_work_item_is_invisible_to_point_pin() {
+    let store = store();
+    let item = WorkItem {
+        identity: identity_in(Namespace::Agent("alice".to_string())),
+        title: "ship the facet".to_string(),
+        body: None,
+        level: "task".to_string(),
+        work_status: WorkStatus::InProgress,
+        parent_id: None,
+        ordinal: 0,
+    };
+    store.save_work_item(&item).expect("save work item");
+
+    // The pin surface resolves every Stats-bearing kind; a work item is Stats-less and absent
+    // from ALL_MEMORY_LABELS, so it resolves to nothing — NotFound. A work item is already
+    // non-decaying by construction, so it has no pin to gain.
+    assert_eq!(
+        pin(&store, &item.identity.id, &now()).expect("pin"),
+        PointPin::NotFound,
+    );
+    assert_eq!(
+        unpin(&store, &item.identity.id, &now()).expect("unpin"),
+        PointUnpin::NotFound,
+    );
 }

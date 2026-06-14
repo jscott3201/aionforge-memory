@@ -53,7 +53,8 @@ pub use aionforge_consolidate::{
     RuleSummarizer, SummarizationConfig, TickReport,
 };
 pub use aionforge_domain::authz::{
-    AuthorizationError, Authorizer, DefaultAuthorizer, DenyReason, Principal, VisibleSet,
+    AuthorizationError, Authorizer, DefaultAuthorizer, DenyReason, OperatorAwareAuthorizer,
+    Principal, VisibleSet,
 };
 pub use aionforge_forget::{
     CoolingSweepReport, DriftBaseline, DriftPolicy, DriftSweepReport, EraseReport, ErasurePolicy,
@@ -65,7 +66,7 @@ pub use aionforge_retrieval::{
     RecallOptions, RecallQuery, RetrieverConfig, Signal, SignalWeights, StructuredEntry,
     TemporalMode,
 };
-pub use aionforge_store::{CoolingCursor, ForgetCursor, Store, StoreConfig};
+pub use aionforge_store::{CoolingCursor, ForgetCursor, ResolvedMemory, Store, StoreConfig};
 pub use aionforge_trust::{
     AttestReceipt, AttestRequest, AuditStatus, CategoryRule, CoreAttesterVote, CoreEditError,
     CoreEditOutcome, CoreEditPolicy, CoreEditReceipt, CoreEditRejection, CoreEditRequest,
@@ -85,7 +86,9 @@ mod pin;
 mod reliability_sweep;
 mod telemetry;
 pub use aionforge_store::{AuditCursor, MAX_AUDIT_PAGE};
-pub use aionforge_store::{ConsolidatingModel, NoteLineage, WriterFamilySet};
+pub use aionforge_store::{
+    ConsolidatingModel, MemoryCounts, NoteLineage, WorkCounts, WriterFamilySet,
+};
 pub use audit::{AuditPage, AuditRecord, AuditVerification};
 pub use core_block::{CoreBlockCreate, CoreBlockDraft};
 pub use doctor::{EmbedderDoctorReport, MemoryDoctorReport};
@@ -524,7 +527,7 @@ impl<E: Embedder> Memory<E> {
     /// Capture one event on the fast path (04 §1).
     ///
     /// # Errors
-    /// Returns [`EngineError::Capture`] if filtering or the commit fails.
+    /// Returns [`EngineError::Capture`] if filtering, embedding, authorization, or the commit fails.
     pub async fn capture(&self, request: CaptureRequest) -> Result<CaptureReceipt, EngineError> {
         let started = Instant::now();
         let result = self.capturer.capture(request).await;

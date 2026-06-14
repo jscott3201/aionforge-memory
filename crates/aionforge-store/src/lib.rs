@@ -29,6 +29,7 @@ mod drift_read;
 mod entity;
 mod episode;
 mod error;
+mod exec;
 mod fact;
 mod forget_read;
 mod forget_write;
@@ -40,6 +41,7 @@ mod materialize;
 mod migrate;
 mod note;
 mod pin_write;
+mod plan_cache;
 mod promotion;
 mod provenance;
 mod providers;
@@ -51,7 +53,9 @@ mod search;
 mod skill;
 mod skill_induction;
 mod store;
+mod tag;
 mod trust_fold;
+mod work;
 
 pub use attestation::{AttestWriteIds, AttesterRecord};
 pub use audit_read::{AuditCursor, AuditHistory, MAX_AUDIT_PAGE};
@@ -61,7 +65,10 @@ pub use compact::{CompactReport, CompactionPressure};
 pub use config::{
     DEFAULT_EMBEDDING_DIMENSION, StoreConfig, default_data_dir, default_data_dir_checked,
 };
-pub use consolidation::{ConsolidationCursor, ConsolidationWorkItem, LagSnapshot};
+pub use consolidation::{
+    ConsolidationCursor, ConsolidationWorkItem, LagSnapshot, MEMORY_LABELS, MemoryCounts,
+    WorkCounts,
+};
 pub use cooling::{CoolWrite, CoolingCandidate, CoolingCursor};
 pub use core_block_write::{CoreAttestation, CoreBlockReplacement, CoreEditWrite};
 pub use distill::DistilledNoteWrite;
@@ -72,10 +79,12 @@ pub use doctor::{
 };
 pub use drift_read::BehaviorVector;
 pub use error::StoreError;
-pub use forget_read::{FORGET_SCAN_LABELS, ForgetCandidate, ForgetCandidatePage, ForgetCursor};
+pub use forget_read::{
+    FORGET_SCAN_LABELS, ForgetCandidate, ForgetCandidatePage, ForgetCursor, ResolvedMemory,
+};
 pub use forget_write::ForgetWrite;
 pub use gql::{BoundQuery, QueryResult, Rows};
-pub use indexes::VectorIndexInfo;
+pub use indexes::{VectorIndexInfo, VectorIndexStats};
 pub use lineage::{ConsolidatingModel, NoteLineage, WriterFamilySet};
 pub use materialize::{
     ConsolidationArtifacts, Contradiction, FactKey, MaterializedFact, Supersession,
@@ -83,6 +92,7 @@ pub use materialize::{
 pub use migrate::{MigrationPlan, MigrationReport, PendingChange};
 pub use note::MaterializedNote;
 pub use pin_write::PinWrite;
+pub use plan_cache::PlanCacheStatsReport;
 pub use promotion::PromoteWriteIds;
 pub use providers::CandidateStateInfo;
 pub use purge_read::{CascadeCaps, ClosureOutcome, PurgeClosure};

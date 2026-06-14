@@ -24,15 +24,29 @@ use crate::error::StoreError;
 use crate::gql::BoundQuery;
 use crate::store::Store;
 
-/// `(label, property)` for each embedding vector index (§7). HNSW + cosine.
-pub(crate) const VECTOR_INDEXES: &[(&str, &str)] = &[
-    ("Episode", "embedding_v1"),
-    ("Fact", "embedding_v1"),
-    ("Entity", "embedding_v1"),
-    ("Skill", "problem_embedding_v1"),
-    ("BadPattern", "embedding_v1"),
-    ("Note", "embedding_v1"),
-    ("CoreBlock", "embedding_v1"),
+/// `(label, property, kind)` for each embedding vector index (§7). All cosine.
+///
+/// The kind column is the single source of truth: [`Store::register_vector_indexes`]
+/// creates each index with it, and the doctor derives its per-index kind expectation
+/// from this same table (`doctor.rs`). A kind change here therefore moves the
+/// registration and the health check in lockstep — there is no second constant to keep
+/// in sync, which is what previously made any non-`HnswCosine` kind trip a spurious
+/// doctor mismatch.
+pub(crate) const VECTOR_INDEXES: &[(&str, &str, VectorIndexKind)] = &[
+    // Episode and Fact are the largest, fastest-growing embedding corpora, so they
+    // take selene 1.2's TurboQuant cosine index: a 4-bit-compressed candidate index
+    // (~8x less RAM than full f32 at 3072-dim) that preselects, then EXACTLY reranks
+    // survivors against the stored full-precision vectors — so cosine accuracy on the
+    // rerank is preserved while the candidate index shrinks. Cosine-only and opt-in
+    // (1.2's default kind is ivf_cosine), so the kind is named explicitly here. The
+    // smaller corpora stay on HNSW, where per-query latency matters more than index RAM.
+    ("Episode", "embedding_v1", VectorIndexKind::TurboQuantCosine),
+    ("Fact", "embedding_v1", VectorIndexKind::TurboQuantCosine),
+    ("Entity", "embedding_v1", VectorIndexKind::HnswCosine),
+    ("Skill", "problem_embedding_v1", VectorIndexKind::HnswCosine),
+    ("BadPattern", "embedding_v1", VectorIndexKind::HnswCosine),
+    ("Note", "embedding_v1", VectorIndexKind::HnswCosine),
+    ("CoreBlock", "embedding_v1", VectorIndexKind::HnswCosine),
 ];
 
 /// `(label, property)` for each maintained BM25 text index (§8).
@@ -111,6 +125,20 @@ pub(crate) const SCALAR_INDEXES: &[(&str, &str, TypedIndexKind)] = &[
     ("AuditEvent", "occurred_at", TypedIndexKind::ZonedDateTime),
     ("Promotion", "candidate_fact_id", TypedIndexKind::Uuid),
     ("Promotion", "status", TypedIndexKind::String),
+    // Work-tracking facet (work-structure design §2–§3). PR1 readers probe `parent_id` (the
+    // indexed self-referential containment spine — children-of-parent is a single probe),
+    // `work_status` (the status facet), and `id` (the by-id resolver). `level` (the level facet)
+    // and Tag `slug` ("items tagged X") are provisioned here for the PR3 query readers and are
+    // registered now so the schema migration is decided once; until those readers land they index
+    // a column nothing probes yet. Without the index `nodes_with_property_eq` returns `None` (read
+    // as "absent"), so any probe a future reader adds is silently wrong unless its index exists —
+    // hence provisioning them with the schema rather than in a later migration.
+    ("WorkItem", "id", TypedIndexKind::Uuid),
+    ("WorkItem", "parent_id", TypedIndexKind::Uuid),
+    ("WorkItem", "work_status", TypedIndexKind::String),
+    ("WorkItem", "level", TypedIndexKind::String),
+    ("Tag", "id", TypedIndexKind::Uuid),
+    ("Tag", "slug", TypedIndexKind::String),
 ];
 
 /// Composite indexes (§8). DDL-only — no Rust wrapper. The `AuditEvent` temporal
@@ -123,6 +151,10 @@ const COMPOSITE_INDEXES: &[&str] = &[
     "CREATE INDEX IF NOT EXISTS cidx_skill_name_version ON :Skill(name, version)",
     "CREATE INDEX IF NOT EXISTS cidx_audit_subject_occurred ON :AuditEvent(subject_id, occurred_at)",
     "CREATE INDEX IF NOT EXISTS cidx_audit_kind_occurred ON :AuditEvent(kind, occurred_at)",
+    // Orders a work item's children by `ordinal` at the index, so the by-parent reader returns
+    // siblings in declared order. The substrate probes the single `parent_id` scalar and the
+    // composite serves the ordering; it is not a two-key equality lookup.
+    "CREATE INDEX IF NOT EXISTS cidx_workitem_parent_ordinal ON :WorkItem(parent_id, ordinal)",
 ];
 
 /// A registered vector index, for inventory and tests.
@@ -140,6 +172,36 @@ pub struct VectorIndexInfo {
     pub name: Option<String>,
 }
 
+/// A focused, operator-facing projection of one vector index's memory and health
+/// profile, from selene 1.2's `VectorIndexMemoryUsage`.
+///
+/// The engine accounts ~40 columns; this surfaces the fields that drive capacity
+/// planning and make the TurboQuant compression win measurable. `estimated_index_bytes`
+/// counts the index-owned structures (the compressed candidate index for TurboQuant —
+/// the number that shrinks vs a full-precision HNSW graph), while
+/// `estimated_reachable_bytes` adds the full-precision vector component bytes the index
+/// references, as an upper bound. The gap between them is the compression story.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VectorIndexStats {
+    /// The indexed node label.
+    pub label: String,
+    /// The indexed vector property.
+    pub property: String,
+    /// The index kind (e.g. `TurboQuantCosine`), Debug-rendered.
+    pub kind: String,
+    /// Live rows currently admitted to the index.
+    pub indexed_rows: u64,
+    /// Estimated heap bytes owned by the derived index structures, excluding the
+    /// full-precision vector components shared with the primary graph.
+    pub estimated_index_bytes: usize,
+    /// Upper-bound estimate including the vector component bytes the index references.
+    pub estimated_reachable_bytes: usize,
+    /// True when this index carries a TurboQuant compressed accelerator.
+    pub is_turbo_quant: bool,
+    /// True when the engine recommends an IVF rebuild for accumulated drift.
+    pub ivf_rebuild_recommended: bool,
+}
+
 impl Store {
     /// Register every §7–§8 index, idempotently. Called from the migration.
     pub(crate) fn register_indexes(&self, embedding_dimension: u32) -> Result<(), StoreError> {
@@ -151,16 +213,24 @@ impl Store {
     }
 
     fn register_vector_indexes(&self, dimension: u32) -> Result<(), StoreError> {
-        let config = VectorIndexConfig::hnsw(HnswIndexConfig::DEFAULT);
-        for &(label, property) in VECTOR_INDEXES {
+        for &(label, property, kind) in VECTOR_INDEXES {
             if self.vector_index_exists(label, property) {
                 continue;
             }
+            // selene rejects an HNSW construction config on a non-HNSW index
+            // (VectorIndexInvalidHnswConfig), so attach the HNSW config only to HNSW
+            // kinds; the TurboQuant/IVF cosine kinds take the empty default (their
+            // construction parameters are engine-internal).
+            let config = if kind.hnsw_metric().is_some() {
+                VectorIndexConfig::hnsw(HnswIndexConfig::DEFAULT)
+            } else {
+                VectorIndexConfig::default()
+            };
             let name = db_string(&format!("vec_{label}_{property}"))?;
             self.graph().create_vector_index_named_with_configs(
                 db_string(label)?,
                 db_string(property)?,
-                VectorIndexKind::HnswCosine,
+                kind,
                 dimension,
                 Some(name),
                 config,
@@ -279,6 +349,36 @@ impl Store {
                     name: name.map(|name| name.as_str().to_owned()),
                 },
             )
+            .collect()
+    }
+
+    /// Per-index vector memory and health stats (selene 1.2 vector index stats).
+    ///
+    /// Read-only: takes one graph snapshot and reads each registered index's
+    /// `memory_usage()` accounting. Surfaces the per-index footprint that makes the
+    /// TurboQuant compression win measurable and the IVF rebuild recommendation that
+    /// drives bounded maintenance.
+    #[must_use]
+    pub fn vector_index_stats(&self) -> Vec<VectorIndexStats> {
+        let snapshot = self.graph().read();
+        snapshot
+            .iter_vector_index_entries()
+            .map(|(label, property, kind, _dimension, _hnsw, _ivf, _name)| {
+                let usage = snapshot
+                    .vector_index_for(&label, &property)
+                    .map(|index| index.memory_usage())
+                    .unwrap_or_default();
+                VectorIndexStats {
+                    label: label.as_str().to_owned(),
+                    property: property.as_str().to_owned(),
+                    kind: format!("{kind:?}"),
+                    indexed_rows: usage.indexed_rows,
+                    estimated_index_bytes: usage.estimated_index_bytes,
+                    estimated_reachable_bytes: usage.estimated_reachable_bytes,
+                    is_turbo_quant: matches!(kind, VectorIndexKind::TurboQuantCosine),
+                    ivf_rebuild_recommended: usage.ivf_rebuild_recommended(),
+                }
+            })
             .collect()
     }
 

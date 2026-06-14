@@ -1,22 +1,27 @@
 # Retrieval
 
-Retrieval is how a recall turns a query into a ranked set of memories. It runs lexical
-BM25 and dense vector search over the same graph engine, fuses the two by rank, routes
-the query to a profile that decides how hard each signal pulls, and hands back a bundle
-that is the same every time the graph state is. Everything here goes through selene-db.
-There is no second search engine, no external vector store, and no index the substrate
-keeps on the side — the BM25 text indexes, the HNSW vector indexes, and the maintained
-candidate-state sets all live in the one engine, and retrieval composes native `CALL`
-procedures over them.
+Retrieval is how a recall turns a query into a ranked set of memories. It runs BM25
+lexical search, a factual lexical anchor, dense vector search, graph-aware search, and
+quality re-ranks over the same graph engine. The query routes to a profile that decides
+how hard each signal pulls, then the retriever fuses the ranked lists by rank and hands
+back a bundle that is the same every time the graph state is. Everything here goes through
+selene-db. There is no second search engine, no external vector store, and no index the
+substrate keeps on the side — the BM25 text indexes, the HNSW vector indexes, and the
+maintained candidate-state sets all live in the one engine, and retrieval composes native
+`CALL` procedures over them.
 
-## The two native signals
+## Search signals and re-ranks
 
-A signal turns a query into a best-first ranked list of candidate nodes. Two are
-implemented:
+A signal turns a query into a best-first ranked list of candidate nodes. The search side
+starts with:
 
 - **Lexical** is native BM25 over a maintained text index (`Episode.content`,
   `Fact.statement`, `Entity.canonical_name`). The score is BM25 relevance, higher is
   better.
+- **Lexical anchor** is a factual-query guard over the top few BM25 hits. It does not run
+  another search or widen recall. It gives exact surface matches a visible contribution
+  so broad operational queries do not bury a precise memory under several weak quality
+  re-ranks from adjacent memories.
 - **Dense** is native vector search. The query is embedded once, an approximate
   nearest-neighbor pass runs over the HNSW index, and when the profile asks for it the
   retrieved set is **exact-reranked** with full-precision scoring — the
@@ -25,7 +30,7 @@ implemented:
 
 ```rust
 pub enum Signal {
-    Lexical, Dense, Support, Graph, Recency, Trust,
+    Lexical, LexicalAnchor, Dense, Support, Graph, Recency, Importance, Trust,
 }
 ```
 
@@ -35,16 +40,16 @@ but fusion reads only the rank. Candidates ride through the pipeline as the stor
 `NodeId` handle — the currency the engine's candidate-set algebra and the fusion stage
 both work in — and resolve to a stable domain id only at the bundle boundary.
 
-All seven signals ship. `Support` and `Graph` are the additive search signals below;
-`Trust`, `Importance`, and `Recency` are *re-ranks* — they order only the candidates the
-search signals already surfaced (trust by the reliability-folded stored trust, importance
-by the effective decayed importance — see [Decay and importance
-scoring](decay-and-importance.md) — recency by the ingestion instant) and can never widen
-a recall. The importance and recency re-ranks run only when the caller supplies a clock on
+All eight signals ship. `Support` and `Graph` are the additive graph-aware search signals
+below. `Trust`, `Importance`, and `Recency` are *re-ranks* — they order only the
+candidates the search signals already surfaced (trust by the reliability-folded stored
+trust, importance by the effective decayed importance — see [Decay and importance
+scoring](decay-and-importance.md) — recency by the ingestion instant) and can never widen a
+recall. The importance and recency re-ranks run only when the caller supplies a clock on
 the query's options; there is no ambient clock in the retrieval path. The MCP server is
-such a caller: its `search` handler stamps the host's wall clock onto every recall, exactly
-as `capture` stamps `captured_at` — the clock is always supplied, and each query class
-still decides whether it weights those re-ranks (the quote class keeps them off).
+such a caller: its `search` handler stamps the host's wall clock onto every recall,
+exactly as `capture` stamps `captured_at` — the clock is always supplied, and each query
+class still decides whether it weights those re-ranks (the quote class keeps them off).
 
 A fact inside its cooling window (see [Drift detection](drift.md)) ranks in the trust
 re-rank by its *effective* trust — the stored scalar times the configured cooling
@@ -52,6 +57,20 @@ factor — under the same double gate: the cooling switch must be on and the cal
 have stamped a clock. The stamp is a separate column the reliability refold never
 touches, the reduction is computed at rank time and never written back, and it expires
 when the comparison stops applying — no write ever un-cools a fact.
+
+## Sanitized regression corpus
+
+`crates/aionforge-retrieval/tests/corpus` carries a small project-memory regression
+corpus. The rows are hand-curated from recurring public engineering patterns in this
+repository's memory workflow, then generalized before commit. They are not a raw memory
+export and they do not make a benchmark claim.
+
+The harness in `project_corpus.rs` re-checks the fixture scrub rules before recall runs:
+no secret-shaped strings, emails, UUIDs, host-specific paths, macOS temporary-directory
+labels, home-directory labels, or local planning-note labels. The recall assertions then
+pin operational queries and corpus-level exact-top / reciprocal-rank thresholds, including
+the disk-pressure case that should stay anchored on the exact lexical memory even when
+dense-near operational noise is present.
 
 ## RRF fusion
 
@@ -69,6 +88,12 @@ The per-mode weights are how intent enters. A signal the mode switches off carri
 and leaves no trace in a candidate's `contributions`. A negative weight has no rank-fusion
 meaning (there is no anti-ranking) and is a caller error, caught by `debug_assert!` since
 the only caller is the in-process router.
+
+Compact recall output shows both the raw fused score and a coarse `score_band`.
+The band is relative to the top ranked hit in the same response (`high`,
+`medium`, or `low`), not a global confidence or probability. Keep the raw score
+for debugging rank-fusion details; use the band when an agent only needs to know
+whether a hit is near the top of this recall result.
 
 Fusion is deterministic, and that is a hard requirement, not a nicety. Identical inputs
 and graph state yield identical output, and any permutation of the input rankings yields
@@ -103,9 +128,9 @@ Each class maps to a `RetrievalProfile`: the per-signal weights plus the behavio
 the rest of the pipeline reads — `graph_expansion`, `bitemporal_filter`, `exact_rerank`,
 `quote_phrase`, and `restrict_to_fact_kinds`. The weights are built from four levels
 (`HEAVY` 1.0, `MODERATE` 0.6, `LIGHT` 0.3, `OFF` 0.0). The factual profile, for instance,
-runs heavy lexical and dense over current facts with exact rerank, light graph, and graph
-expansion off; the quote profile runs lexical only. A caller that already knows the intent
-can force a class through `RecallOptions::mode_override`.
+runs heavy lexical, lexical anchor, and dense over current facts with exact rerank, light
+graph, and graph expansion off; the quote profile runs lexical only. A caller that already
+knows the intent can force a class through `RecallOptions::mode_override`.
 
 The classifier is heuristic in v1. It can get a query wrong — `Climate Change` reads like
 an entity, a two-word title-cased common phrase is the residual ambiguity — and that is a
@@ -217,7 +242,10 @@ as another memory. Extracted attribute values like a fact predicate or a namespa
 attr-escaped so they cannot break out of their quotes. The compact view
 (`render_compact`, for token-thrifty callers like the MCP surface) is held to the same
 contract — same wrapper, same escaping — so a compact result is no less safe to splice into
-a prompt.
+a prompt. When `verbose=true`, the compact view also emits a trusted `explain:` header before
+the wrapper with the routed query class, embedder state, signals that ran, and the active
+weights that shaped ranking; each memory line then carries namespace, trust, and `via`
+contribution attributes so callers can see why a result surfaced.
 
 The wrapper does its job only if the host is told to honor it, so the MCP surface ships a
 recommended prompt template (`RECALL_UNTRUSTED_DATA_PROMPT`) that instructs the host to treat

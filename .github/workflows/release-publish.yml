@@ -136,6 +136,9 @@ jobs:
       actions: read
       contents: read
       packages: write
+      # Keyless SLSA build provenance: OIDC token to sign, attestations to record.
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@v4
       - name: download Linux binary artifacts
@@ -180,8 +183,10 @@ jobs:
             fi
             echo "EOF"
             echo "version=$version"
+            echo "name=$image"
           } >> "$GITHUB_OUTPUT"
       - name: build release runtime image
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -195,6 +200,18 @@ jobs:
             org.opencontainers.image.version=${{ steps.image.outputs.version }}
           cache-from: type=gha,scope=runtime-image
           cache-to: type=gha,mode=max,scope=runtime-image
+      # Bind a signed SLSA provenance attestation to the pushed image digest and
+      # store it in GHCR alongside the image. Only on a real tag push (the image
+      # is not pushed on the workflow_dispatch dry run). Verify with:
+      #   gh attestation verify oci://ghcr.io/jscott3201/aionforge-memory:<ver> \
+      #     --repo jscott3201/aionforge-memory
+      - name: attest container image provenance
+        if: github.event_name == 'push'
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-name: ${{ steps.image.outputs.name }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
 
   publish:
     name: publish github release
@@ -209,6 +226,9 @@ jobs:
     permissions:
       actions: read
       contents: write
+      # Keyless SLSA build provenance for the published release binaries.
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -231,6 +251,12 @@ jobs:
           pattern: aionforge-*
           path: release-artifacts
           merge-multiple: true
+      # Sign SLSA build provenance for each release tarball (keyless, via Sigstore).
+      # Verify with: gh attestation verify <file>.tar.gz --repo jscott3201/aionforge-memory
+      - name: attest release binary provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: release-artifacts/*.tar.gz
       - name: create the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}

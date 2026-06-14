@@ -1,27 +1,23 @@
 //! Streamable HTTP helpers for mounting the MCP server in host applications.
 
 use std::convert::Infallible;
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::Arc;
-use std::task::{Context, Poll};
 
 use aionforge_domain::contracts::Embedder;
 use aionforge_engine::Memory;
 use bytes::Bytes;
-use http::header::{AUTHORIZATION, WWW_AUTHENTICATE};
-use http::{HeaderMap, Request, Response, StatusCode};
-use http_body_util::{BodyExt, Full, combinators::BoxBody};
+use http::Response;
+use http_body_util::combinators::BoxBody;
 use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
 };
 use serde::Serialize;
-use tower_service::Service;
 
 use crate::AionforgeMcp;
 use crate::http_body_limit::{
     DEFAULT_MAX_REQUEST_BODY_BYTES, RequestBodyLimitService, validate_max_request_body_bytes,
 };
+use crate::status::AuthPosture;
 
 /// The path hosts should mount the Streamable HTTP service under.
 pub const STREAMABLE_HTTP_ENDPOINT: &str = "/mcp";
@@ -38,10 +34,6 @@ type AionforgeRawStreamableHttpService<E> =
 /// The rmcp Streamable HTTP service for Aionforge Memory.
 pub type AionforgeStreamableHttpService<E> =
     RequestBodyLimitService<AionforgeRawStreamableHttpService<E>>;
-
-/// The bearer-authenticated Streamable HTTP service for Aionforge Memory.
-pub type AionforgeAuthenticatedStreamableHttpService<E> =
-    BearerAuthService<AionforgeStreamableHttpService<E>>;
 
 /// Return the RFC 9728 well-known path for an MCP endpoint path.
 ///
@@ -249,8 +241,6 @@ pub enum StreamableHttpConfigError {
         /// The zero-based index of the bad origin entry.
         index: usize,
     },
-    /// The configured bearer token is empty or whitespace.
-    EmptyBearerToken,
     /// The configured request body limit is zero.
     ZeroMaxRequestBodyBytes,
 }
@@ -268,7 +258,6 @@ impl std::fmt::Display for StreamableHttpConfigError {
                     "streamable HTTP allowed_origins[{index}] cannot be blank"
                 )
             }
-            Self::EmptyBearerToken => f.write_str("streamable HTTP bearer token cannot be empty"),
             Self::ZeroMaxRequestBodyBytes => {
                 f.write_str("streamable HTTP max_request_body_bytes cannot be zero")
             }
@@ -299,163 +288,6 @@ fn validate_non_empty_entries(
     Ok(())
 }
 
-/// A bearer token for Streamable HTTP authentication.
-#[derive(Clone, PartialEq, Eq)]
-pub struct BearerToken(String);
-
-impl BearerToken {
-    /// Build a bearer token from host configuration.
-    ///
-    /// # Errors
-    /// Returns [`StreamableHttpConfigError::EmptyBearerToken`] when `raw` is empty
-    /// or whitespace.
-    pub fn new(raw: impl Into<String>) -> Result<Self, StreamableHttpConfigError> {
-        let raw = raw.into();
-        let trimmed = raw.trim();
-        if trimmed.is_empty() {
-            return Err(StreamableHttpConfigError::EmptyBearerToken);
-        }
-        Ok(Self(trimmed.to_string()))
-    }
-
-    fn matches_authorization_header(&self, headers: &HeaderMap) -> bool {
-        let Some(value) = headers.get(AUTHORIZATION) else {
-            return false;
-        };
-        let Ok(raw) = value.to_str() else {
-            return false;
-        };
-        let Some((scheme, token)) = raw.split_once(' ') else {
-            return false;
-        };
-        scheme.eq_ignore_ascii_case("Bearer") && constant_time_eq(token.trim(), &self.0)
-    }
-}
-
-impl std::fmt::Debug for BearerToken {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("BearerToken(<redacted>)")
-    }
-}
-
-/// `WWW-Authenticate: Bearer` challenge metadata for protected HTTP deployments.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BearerAuthChallenge {
-    realm: String,
-    resource_metadata_url: Option<String>,
-    scope: Option<String>,
-}
-
-impl Default for BearerAuthChallenge {
-    fn default() -> Self {
-        Self {
-            realm: "aionforge-mcp".to_string(),
-            resource_metadata_url: None,
-            scope: None,
-        }
-    }
-}
-
-impl BearerAuthChallenge {
-    /// Set the bearer realm.
-    #[must_use]
-    pub fn with_realm(mut self, realm: impl Into<String>) -> Self {
-        self.realm = realm.into();
-        self
-    }
-
-    /// Advertise the RFC 9728 Protected Resource Metadata URL.
-    #[must_use]
-    pub fn with_resource_metadata_url(mut self, url: impl Into<String>) -> Self {
-        self.resource_metadata_url = Some(url.into());
-        self
-    }
-
-    /// Advertise the minimum scopes required for the current protected resource.
-    #[must_use]
-    pub fn with_scope(mut self, scope: impl Into<String>) -> Self {
-        self.scope = Some(scope.into());
-        self
-    }
-
-    /// Render the value for a `WWW-Authenticate` response header.
-    #[must_use]
-    pub fn header_value(&self) -> String {
-        let mut out = format!("Bearer realm={}", quoted_auth_param(&self.realm));
-        if let Some(url) = &self.resource_metadata_url {
-            out.push_str(", resource_metadata=");
-            out.push_str(&quoted_auth_param(url));
-        }
-        if let Some(scope) = &self.scope {
-            out.push_str(", scope=");
-            out.push_str(&quoted_auth_param(scope));
-        }
-        out
-    }
-}
-
-/// Tower service wrapper that requires `Authorization: Bearer <token>`.
-#[derive(Clone)]
-pub struct BearerAuthService<S> {
-    inner: S,
-    token: BearerToken,
-    challenge: BearerAuthChallenge,
-}
-
-impl<S> BearerAuthService<S> {
-    /// Wrap an HTTP service with static bearer-token authentication.
-    #[must_use]
-    pub fn new(inner: S, token: BearerToken) -> Self {
-        Self::with_challenge(inner, token, BearerAuthChallenge::default())
-    }
-
-    /// Wrap an HTTP service with static bearer-token authentication and a custom challenge.
-    #[must_use]
-    pub fn with_challenge(inner: S, token: BearerToken, challenge: BearerAuthChallenge) -> Self {
-        Self {
-            inner,
-            token,
-            challenge,
-        }
-    }
-
-    /// Consume the wrapper and return the inner service.
-    #[must_use]
-    pub fn into_inner(self) -> S {
-        self.inner
-    }
-
-    /// Check whether a request header map carries the configured bearer token.
-    #[must_use]
-    pub fn is_authorized_headers(&self, headers: &HeaderMap) -> bool {
-        self.token.matches_authorization_header(headers)
-    }
-}
-
-impl<S, B> Service<Request<B>> for BearerAuthService<S>
-where
-    S: Service<Request<B>, Response = HttpResponse, Error = Infallible> + Send + 'static,
-    S::Future: Send + 'static,
-    B: Send + 'static,
-{
-    type Response = HttpResponse;
-    type Error = Infallible;
-    type Future =
-        Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send + 'static>>;
-
-    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.inner.poll_ready(cx)
-    }
-
-    fn call(&mut self, request: Request<B>) -> Self::Future {
-        if !self.token.matches_authorization_header(request.headers()) {
-            let challenge = self.challenge.clone();
-            return Box::pin(async move { Ok(unauthorized_response(&challenge)) });
-        }
-        Box::pin(self.inner.call(request))
-    }
-}
-
 /// Build rmcp's Streamable HTTP config from Aionforge options.
 ///
 /// # Errors
@@ -467,94 +299,32 @@ pub fn streamable_http_config(
     options.into_rmcp_config()
 }
 
-/// Build an unauthenticated Streamable HTTP service.
+/// Build the Streamable HTTP service, selecting the OAuth resource-server posture.
 ///
-/// Mount the returned service under [`STREAMABLE_HTTP_ENDPOINT`].
+/// Mount the returned service under [`STREAMABLE_HTTP_ENDPOINT`]. The `auth` posture's `enabled`
+/// flag drives the handler: [`AuthPosture::disabled`] (the default-off path) reproduces today's
+/// body-only behavior exactly; an enabled posture requires a validated request extension on every
+/// identity-resolving tool (which a Tower validator inserts upstream — see
+/// [`AuthValidators`](crate::AuthValidators)). The posture's issuer origins ride `server_status`.
 ///
 /// # Errors
 /// Returns [`StreamableHttpConfigError`] when the options are invalid.
 pub fn streamable_http_service<E: Embedder + 'static>(
     memory: Arc<Memory<E>>,
     options: StreamableHttpOptions,
+    auth: AuthPosture,
 ) -> Result<AionforgeStreamableHttpService<E>, StreamableHttpConfigError> {
     let max_request_body_bytes = options.max_request_body_bytes;
     let config = streamable_http_config(options)?;
     let service = StreamableHttpService::new(
-        move || Ok(AionforgeMcp::new(Arc::clone(&memory))),
+        move || {
+            Ok(AionforgeMcp::new_with_auth_posture(
+                Arc::clone(&memory),
+                auth.clone(),
+            ))
+        },
         Arc::new(LocalSessionManager::default()),
         config,
     );
     RequestBodyLimitService::new(service, max_request_body_bytes)
-}
-
-/// Build a bearer-authenticated Streamable HTTP service.
-///
-/// Mount the returned service under [`STREAMABLE_HTTP_ENDPOINT`].
-///
-/// # Errors
-/// Returns [`StreamableHttpConfigError`] when the options are invalid.
-pub fn streamable_http_service_with_auth<E: Embedder + 'static>(
-    memory: Arc<Memory<E>>,
-    options: StreamableHttpOptions,
-    token: BearerToken,
-) -> Result<AionforgeAuthenticatedStreamableHttpService<E>, StreamableHttpConfigError> {
-    streamable_http_service_with_auth_challenge(
-        memory,
-        options,
-        token,
-        BearerAuthChallenge::default(),
-    )
-}
-
-/// Build a bearer-authenticated Streamable HTTP service with a custom challenge.
-///
-/// Mount the returned service under [`STREAMABLE_HTTP_ENDPOINT`].
-///
-/// # Errors
-/// Returns [`StreamableHttpConfigError`] when the options are invalid.
-pub fn streamable_http_service_with_auth_challenge<E: Embedder + 'static>(
-    memory: Arc<Memory<E>>,
-    options: StreamableHttpOptions,
-    token: BearerToken,
-    challenge: BearerAuthChallenge,
-) -> Result<AionforgeAuthenticatedStreamableHttpService<E>, StreamableHttpConfigError> {
-    Ok(BearerAuthService::with_challenge(
-        streamable_http_service(memory, options)?,
-        token,
-        challenge,
-    ))
-}
-
-fn unauthorized_response(challenge: &BearerAuthChallenge) -> HttpResponse {
-    Response::builder()
-        .status(StatusCode::UNAUTHORIZED)
-        .header(WWW_AUTHENTICATE, challenge.header_value())
-        .body(Full::new(Bytes::from_static(b"Unauthorized: bearer token required")).boxed())
-        .expect("valid unauthorized response")
-}
-
-fn quoted_auth_param(value: &str) -> String {
-    let mut out = String::with_capacity(value.len() + 2);
-    out.push('"');
-    for ch in value.chars().filter(|ch| !ch.is_ascii_control()) {
-        if ch == '"' || ch == '\\' {
-            out.push('\\');
-        }
-        out.push(ch);
-    }
-    out.push('"');
-    out
-}
-
-fn constant_time_eq(left: &str, right: &str) -> bool {
-    let left = left.as_bytes();
-    let right = right.as_bytes();
-    let len = left.len().max(right.len());
-    let mut diff = left.len() ^ right.len();
-    for i in 0..len {
-        let a = left.get(i).copied().unwrap_or(0);
-        let b = right.get(i).copied().unwrap_or(0);
-        diff |= usize::from(a ^ b);
-    }
-    diff == 0
 }

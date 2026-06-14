@@ -1,9 +1,7 @@
 //! The capture-path error space.
 //!
-//! The capture path fails closed: a privacy-filter error or a store/commit error
-//! aborts the capture rather than writing unfiltered or partial state. An embedding
-//! failure is *not* in this space — it degrades to a vector-less write recorded on
-//! the receipt (04 §1, §8.1), so capture never blocks on the embedder.
+//! The capture path fails closed: a privacy-filter, embedder, or store/commit error
+//! aborts the capture rather than writing unfiltered, vectorless, or partial state.
 
 /// An error from the capture path.
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
@@ -16,6 +14,12 @@ pub enum CaptureError {
     /// A store read, the commit, or a translation failed.
     #[error("the capture store operation failed")]
     Store(#[from] aionforge_store::StoreError),
+
+    /// Embedding was enabled for capture, but the embedder failed or returned no vector. The
+    /// episode is not written; hosts that intentionally want vectorless capture disable
+    /// embedding in configuration.
+    #[error("the capture embedder failed: {0}")]
+    Embedder(String),
 
     /// The write was refused by namespace authorization: the agent is not permitted to write the
     /// target namespace (06 §1). The attempt is recorded as a `namespace_denied` audit before this
@@ -81,5 +85,12 @@ impl CaptureError {
     /// generic seam, so it is captured as text here).
     pub(crate) fn filter(error: impl std::fmt::Display) -> Self {
         Self::Filter(error.to_string())
+    }
+
+    /// Wrap an embedder error by display text. The concrete embedder error type is a generic
+    /// seam, so the capture surface keeps the stable failure class and an operator-readable
+    /// reason.
+    pub(crate) fn embedder(error: impl std::fmt::Display) -> Self {
+        Self::Embedder(error.to_string())
     }
 }

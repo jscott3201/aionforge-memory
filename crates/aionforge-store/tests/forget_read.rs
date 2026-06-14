@@ -11,7 +11,7 @@ use aionforge_domain::nodes::episodic::{ConsolidationState, Episode, Role};
 use aionforge_domain::nodes::semantic::{Fact, FactStatus};
 use aionforge_domain::time::Timestamp;
 use aionforge_domain::value::ObjectValue;
-use aionforge_store::{BoundQuery, ForgetCursor, Store, StoreConfig, Value};
+use aionforge_store::{BoundQuery, ForgetCursor, ResolvedMemory, Store, StoreConfig, Value};
 
 fn ts(text: &str) -> Timestamp {
     text.parse().expect("valid zoned datetime literal")
@@ -100,6 +100,64 @@ fn support_edge(store: &Store, from: &Id, to: &Id) {
     .bind("weight", Value::Float(1.0))
     .unwrap();
     store.execute(&query).expect("insert SUPPORTS edge");
+}
+
+#[test]
+fn resolved_memory_by_id_decodes_the_right_variant_and_leaves_expiry_to_the_caller() {
+    let store = store();
+    let live_episode = episode(false);
+    let live_fact = fact(false);
+    let expired_fact = fact(true);
+    store.insert_episode(&live_episode).expect("insert episode");
+    store.insert_fact(&live_fact).expect("insert fact");
+    store
+        .insert_fact(&expired_fact)
+        .expect("insert expired fact");
+
+    // Each label maps to its own variant; the decoded body carries the matching id.
+    let resolved = store
+        .resolved_memory_by_id(&live_fact.identity.id, &[Episode::LABEL, Fact::LABEL])
+        .expect("resolve")
+        .expect("the fact is found");
+    match resolved {
+        ResolvedMemory::Fact(f) => assert_eq!(f.identity.id, live_fact.identity.id),
+        other => panic!("expected a Fact variant, got {other:?}"),
+    }
+    let resolved = store
+        .resolved_memory_by_id(&live_episode.identity.id, &[Episode::LABEL, Fact::LABEL])
+        .expect("resolve")
+        .expect("the episode is found");
+    assert!(matches!(resolved, ResolvedMemory::Episode(_)));
+
+    // A label set that excludes the node's actual kind resolves nothing (ids are unique per
+    // kind and the label set is disjoint, so a wrong-label probe is a clean miss).
+    assert!(
+        store
+            .resolved_memory_by_id(&live_fact.identity.id, &[Episode::LABEL])
+            .expect("resolve")
+            .is_none(),
+        "a fact id under the Episode label is not found"
+    );
+
+    // A never-stored id is Ok(None), never an error.
+    assert!(
+        store
+            .resolved_memory_by_id(&Id::generate(), &[Episode::LABEL, Fact::LABEL])
+            .expect("resolve")
+            .is_none()
+    );
+
+    // The resolver does NOT filter expired_at: it returns the expired node with its expiry
+    // intact, leaving the drop to the caller's visibility gate. This is the contract the
+    // single-snapshot read gate relies on (the gate reads expired_at off this same body).
+    let resolved = store
+        .resolved_memory_by_id(&expired_fact.identity.id, &[Fact::LABEL])
+        .expect("resolve")
+        .expect("an expired node still resolves");
+    assert!(
+        resolved.identity().expired_at.is_some(),
+        "the expired node is returned with its expiry intact for the caller to gate"
+    );
 }
 
 #[test]

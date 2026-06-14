@@ -61,6 +61,10 @@ pub struct EpisodeEntry {
     pub ingested_at: Timestamp,
     /// Soft-expiry instant, if any (only present on history queries).
     pub expired_at: Option<Timestamp>,
+    /// Writer-asserted replacement hint this episode made, if any.
+    pub supersedes: Option<Id>,
+    /// Newest live episode that claims to replace this one, if any.
+    pub superseded_by: Option<Id>,
     /// Writer trust.
     pub trust: f64,
     /// The fused RRF score.
@@ -258,8 +262,9 @@ const COMPACT_SNIPPET_CHARS: usize = 160;
 
 impl RecallBundle {
     /// Render a token-thrifty view: a one-line summary, then one line per memory
-    /// (serialization id, role, score, snippet). `verbose` adds the namespace, trust,
-    /// and per-signal contributions as attributes on each memory line.
+    /// (serialization id, role, score, score band, snippet). `verbose` adds a trusted route/signal
+    /// explanation plus the namespace, trust, and per-signal contributions as attributes
+    /// on each memory line.
     ///
     /// Memories are listed in fused score order (most relevant first) — the order a
     /// caller wants for a ranked result, with the score shown so the ranking is
@@ -289,9 +294,28 @@ impl RecallBundle {
             out.push_str(&format!(" | +{more} more"));
         }
         out.push('\n');
+        if verbose {
+            out.push_str(&format!(
+                "explain: route={route} embedder={embedder} signals={signals} weights={weights}\n",
+                route = class_tag(explanation.class),
+                embedder = if explanation.embedder_available {
+                    "up"
+                } else {
+                    "down(dense skipped)"
+                },
+                signals = signal_list(&explanation.signals_run),
+                weights = weight_list(&explanation.weights, &explanation.signals_run),
+            ));
+        }
 
         out.push_str(RECALLED_MEMORY_CONTEXT_OPEN);
         out.push('\n');
+        let max_ranked_score = self
+            .structured
+            .iter()
+            .filter(|entry| !matches!(entry, StructuredEntry::CoreBlock(_)))
+            .map(StructuredEntry::score)
+            .fold(0.0_f64, f64::max);
         for entry in &self.structured {
             let id = entry.id();
             let sid = entry.serialization_id();
@@ -302,10 +326,13 @@ impl RecallBundle {
             // extracted value cannot break out of its attribute quotes (07 §4). The fused score
             // is common to both kinds, so it is read through the accessor and appended once.
             match entry {
-                StructuredEntry::Episode(e) => out.push_str(&format!(
-                    "<memory id=\"{id}\" sid=\"{sid}\" kind=\"episode\" role=\"{role}\"",
-                    role = role_tag(e.role),
-                )),
+                StructuredEntry::Episode(e) => {
+                    out.push_str(&format!(
+                        "<memory id=\"{id}\" sid=\"{sid}\" kind=\"episode\" role=\"{role}\"",
+                        role = role_tag(e.role),
+                    ));
+                    push_episode_supersedes_attrs(&mut out, e);
+                }
                 StructuredEntry::Fact(f) => out.push_str(&format!(
                     "<memory id=\"{id}\" sid=\"{sid}\" kind=\"fact\" predicate=\"{predicate}\" status=\"{status}\"",
                     predicate = attr_escape(&f.predicate),
@@ -320,7 +347,11 @@ impl RecallBundle {
             // instead of a score, so a 0.0000 cannot read as "barely relevant".
             match entry {
                 StructuredEntry::CoreBlock(_) => out.push_str(" always=\"true\""),
-                _ => out.push_str(&format!(" score=\"{:.4}\"", entry.score())),
+                _ => out.push_str(&format!(
+                    " score=\"{:.4}\" score_band=\"{}\"",
+                    entry.score(),
+                    score_band(entry.score(), max_ranked_score),
+                )),
             }
             if verbose {
                 let via = entry
@@ -377,12 +408,55 @@ fn class_tag(class: QueryClass) -> &'static str {
 fn signal_tag(signal: Signal) -> &'static str {
     match signal {
         Signal::Lexical => "lexical",
+        Signal::LexicalAnchor => "lexical_anchor",
         Signal::Dense => "dense",
         Signal::Support => "support",
         Signal::Graph => "graph",
         Signal::Recency => "recency",
         Signal::Importance => "importance",
         Signal::Trust => "trust",
+    }
+}
+
+/// A stable compact list of the signals that actually ran.
+fn signal_list(signals: &[Signal]) -> String {
+    if signals.is_empty() {
+        return "none".to_string();
+    }
+
+    signals
+        .iter()
+        .map(|signal| signal_tag(*signal))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+/// A stable compact list of non-zero weights for the signals that ran.
+fn weight_list(weights: &SignalWeights, signals_run: &[Signal]) -> String {
+    let rendered = signals_run
+        .iter()
+        .map(|signal| (*signal, weights.weight(*signal)))
+        .filter(|(_, weight)| *weight > 0.0)
+        .map(|(signal, weight)| format!("{}:{weight:.2}", signal_tag(signal)))
+        .collect::<Vec<_>>();
+    if rendered.is_empty() {
+        "none".to_string()
+    } else {
+        rendered.join(",")
+    }
+}
+
+fn score_band(score: f64, max_score: f64) -> &'static str {
+    if max_score <= 0.0 || score <= 0.0 {
+        return "low";
+    }
+    let ratio = score / max_score;
+    if ratio >= 0.85 {
+        "high"
+    } else if ratio >= 0.50 {
+        "medium"
+    } else {
+        "low"
     }
 }
 
@@ -403,6 +477,21 @@ fn status_tag(status: FactStatus) -> &'static str {
         FactStatus::Active => "active",
         FactStatus::Quarantined => "quarantined",
         FactStatus::Superseded => "superseded",
+    }
+}
+
+fn push_episode_supersedes_attrs(out: &mut String, entry: &EpisodeEntry) {
+    if let Some(supersedes) = &entry.supersedes {
+        out.push_str(&format!(
+            " supersedes=\"{}\"",
+            attr_escape(&supersedes.to_string())
+        ));
+    }
+    if let Some(superseded_by) = &entry.superseded_by {
+        out.push_str(&format!(
+            " superseded_by=\"{}\"",
+            attr_escape(&superseded_by.to_string())
+        ));
     }
 }
 
@@ -437,10 +526,14 @@ pub fn render(entries: &[StructuredEntry]) -> String {
         // The body — the episode content or the fact statement — is `tag_escape`d so it
         // cannot forge or close a `memory` tag (07).
         match entry {
-            StructuredEntry::Episode(e) => out.push_str(&format!(
-                "<memory id=\"{sid}\" kind=\"episode\" role=\"{}\">\n",
-                role_tag(e.role),
-            )),
+            StructuredEntry::Episode(e) => {
+                out.push_str(&format!(
+                    "<memory id=\"{sid}\" kind=\"episode\" role=\"{}\"",
+                    role_tag(e.role),
+                ));
+                push_episode_supersedes_attrs(&mut out, e);
+                out.push_str(">\n");
+            }
             StructuredEntry::Fact(f) => out.push_str(&format!(
                 "<memory id=\"{sid}\" kind=\"fact\" predicate=\"{}\" status=\"{}\">\n",
                 attr_escape(&f.predicate),
@@ -486,4 +579,117 @@ fn attr_escape(value: &str) -> String {
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn compact_test_bundle() -> RecallBundle {
+        let id = Id::generate();
+        let entry = EpisodeEntry {
+            id,
+            serialization_id: SerializationId::derive("episode", id.to_string().as_bytes()),
+            namespace: Namespace::Agent("agent-a".to_string()),
+            role: Role::User,
+            ingested_at: ts("2026-06-06T09:30:00-05:00[America/Chicago]"),
+            expired_at: None,
+            supersedes: None,
+            superseded_by: None,
+            trust: 0.8,
+            score: 1.0,
+            contributions: vec![
+                Contribution {
+                    signal: Signal::Lexical,
+                    rank: 0,
+                    weight: 1.0,
+                },
+                Contribution {
+                    signal: Signal::Dense,
+                    rank: 1,
+                    weight: 1.0,
+                },
+            ],
+            content: "ranked compact memory".to_string(),
+        };
+        RecallBundle {
+            structured: vec![StructuredEntry::Episode(entry)],
+            rendered: String::new(),
+            explanation: RecallExplanation {
+                class: QueryClass::SingleHopFactual,
+                weights: SignalWeights {
+                    lexical: 1.0,
+                    lexical_anchor: 1.0,
+                    dense: 1.0,
+                    support: 0.0,
+                    graph: 0.3,
+                    recency: 0.3,
+                    importance: 0.3,
+                    trust: 1.0,
+                },
+                signals_run: vec![Signal::Lexical, Signal::Dense],
+                embedder_available: true,
+                candidates_considered: 1,
+                returned: 1,
+                timings_ms: StageTimings::default(),
+            },
+        }
+    }
+
+    fn ts(text: &str) -> Timestamp {
+        text.parse().expect("valid test timestamp")
+    }
+
+    #[test]
+    fn compact_verbose_explains_route_signals_and_active_weights() {
+        let bundle = compact_test_bundle();
+        let plain = bundle.render_compact(false);
+        let verbose = bundle.render_compact(true);
+
+        assert!(
+            !plain.contains("explain:"),
+            "non-verbose compact view stays terse: {plain}"
+        );
+        assert!(
+            verbose.starts_with(
+                "hits: 1 of 1 considered | class=single_hop_factual | embedder=up\n\
+                 explain: route=single_hop_factual embedder=up signals=lexical,dense \
+                 weights=lexical:1.00,dense:1.00\n"
+            ),
+            "verbose compact view explains the route and active signals: {verbose}"
+        );
+        assert!(
+            verbose.contains("via=\"lexical#0 dense#1\""),
+            "verbose memory lines keep per-hit contributions: {verbose}"
+        );
+        assert!(
+            verbose.contains("score=\"1.0000\" score_band=\"high\""),
+            "ranked hits expose a coarse score band next to the raw RRF score: {verbose}"
+        );
+    }
+
+    #[test]
+    fn score_bands_are_relative_to_the_top_ranked_hit() {
+        assert_eq!(score_band(0.85, 1.0), "high");
+        assert_eq!(score_band(0.50, 1.0), "medium");
+        assert_eq!(score_band(0.49, 1.0), "low");
+        assert_eq!(score_band(0.0, 1.0), "low");
+        assert_eq!(score_band(1.0, 0.0), "low");
+    }
+
+    #[test]
+    fn compact_render_marks_superseded_episodes() {
+        let mut bundle = compact_test_bundle();
+        let replacement = Id::generate();
+        let StructuredEntry::Episode(entry) = &mut bundle.structured[0] else {
+            panic!("fixture episode");
+        };
+        entry.superseded_by = Some(replacement);
+
+        let rendered = bundle.render_compact(false);
+        assert!(
+            rendered.contains(&format!("superseded_by=\"{replacement}\"")),
+            "superseded episode is explicitly annotated: {rendered}"
+        );
+    }
 }

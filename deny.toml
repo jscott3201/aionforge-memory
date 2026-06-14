@@ -26,13 +26,9 @@ db-path = "~/.cargo/advisory-db"
 db-urls = ["https://github.com/rustsec/advisory-db"]
 yanked = "deny"
 # Documented advisory ignores must carry reason + owner.
-ignore = [
-  # owner: jscott. atomic-polyfill is unmaintained (RUSTSEC-2023-0089) but is not a
-  # vulnerability. It enters only transitively through the selene-db substrate
-  # (postcard -> selene-persist), which Aionforge consumes read-only and pins; the fix
-  # belongs upstream in selene-db, not here. Accepted so the nightly audit stays green.
-  { id = "RUSTSEC-2023-0089", reason = "unmaintained, non-vuln; transitive via selene-db (postcard); fixed upstream; owner jscott" },
-]
+# (none — selene-db 1.2.0 dropped the transitive atomic-polyfill that prompted the
+# former RUSTSEC-2023-0089 ignore.)
+ignore = []
 
 [licenses]
 version = 2
@@ -81,7 +77,7 @@ deny = [
   { name = "aws-lc-rs" },
   { name = "aws-lc-sys" },
 ]
-# Duplicate-version lines inherited through the selene-db git dep plus the tokio /
+# Duplicate-version lines inherited through the selene-db substrate plus the tokio /
 # reqwest / hyper / ratatui / dalek tree. Each entry needs a documented,
 # owner-attributed reason added here after a lockfile review; re-audit on every
 # `cargo update` and when the substrate pin moves.
@@ -121,7 +117,6 @@ skip-tree = []
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-# selene-db is consumed as a git dependency tracking its `development` branch.
-# Cargo.lock pins the exact commit (reproducible; CI builds `--locked`); the branch
-# source is allow-listed here.
-allow-git = ["ssh://git@github.com/Aionforge-Labs/selene-db.git"]
+# selene-db is now consumed from crates.io (pinned to 1.2.0), so no git sources are
+# allowed; every dependency must resolve from the crates.io registry above.
+allow-git = []

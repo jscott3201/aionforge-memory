@@ -192,6 +192,7 @@ async fn seed_trait_corpus(memory: &Memory<ProbeEmbedder>) -> Namespace {
                 teams: Vec::new(),
                 session_id: None,
                 captured_at: now(),
+                ingested_at: now(),
                 writer: WriterContext {
                     model_family: WRITER_FAMILY.to_string(),
                     model_version: Some("1".to_string()),

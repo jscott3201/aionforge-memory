@@ -8,19 +8,15 @@ use aionforge_domain::embedding::{EmbedderModel, Embedding};
 use aionforge_domain::time::Timestamp;
 use aionforge_engine::{Memory, MemoryConfig};
 use aionforge_mcp::{
-    BearerAuthChallenge, BearerToken, DEFAULT_MAX_REQUEST_BODY_BYTES,
-    OAuthProtectedResourceMetadata, STREAMABLE_HTTP_ENDPOINT, StreamableHttpConfigError,
-    StreamableHttpOptions, oauth_protected_resource_well_known_path, streamable_http_service,
-    streamable_http_service_with_auth, streamable_http_service_with_auth_challenge,
+    AuthPosture, DEFAULT_MAX_REQUEST_BODY_BYTES, OAuthProtectedResourceMetadata,
+    STREAMABLE_HTTP_ENDPOINT, StreamableHttpConfigError, StreamableHttpOptions,
+    oauth_protected_resource_well_known_path, streamable_http_service,
 };
 use bytes::Bytes;
-use http::header::{
-    ACCEPT, AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE, HOST, ORIGIN, WWW_AUTHENTICATE,
-};
+use http::header::{ACCEPT, CONTENT_LENGTH, CONTENT_TYPE, HOST, ORIGIN};
 use http::{Method, Request, StatusCode};
 use http_body_util::{BodyExt, Full};
 use serde_json::json;
-use tower_service::Service;
 
 type TestResult = Result<(), Box<dyn std::error::Error + Send + Sync>>;
 
@@ -117,9 +113,29 @@ fn initialize_request(host: &str, origin: Option<&str>) -> Request<Full<Bytes>> 
         .expect("valid initialize request")
 }
 
+fn tool_call_request(host: &str, name: &str, arguments: serde_json::Value) -> Request<Full<Bytes>> {
+    let body = json!({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/call",
+        "params": {
+            "name": name,
+            "arguments": arguments
+        }
+    });
+    Request::builder()
+        .method(Method::POST)
+        .header(ACCEPT, "application/json, text/event-stream")
+        .header(CONTENT_TYPE, "application/json")
+        .header(HOST, host)
+        .header("MCP-Protocol-Version", "2025-03-26")
+        .body(Full::new(Bytes::from(body.to_string())))
+        .expect("valid tool call request")
+}
+
 #[tokio::test]
 async fn streamable_http_advertises_mcp_capabilities() -> TestResult {
-    let service = streamable_http_service(memory(), json_options())?;
+    let service = streamable_http_service(memory(), json_options(), AuthPosture::disabled())?;
     let response = service
         .handle(initialize_request("localhost:3918", None))
         .await;
@@ -142,7 +158,7 @@ async fn streamable_http_advertises_mcp_capabilities() -> TestResult {
 
 #[tokio::test]
 async fn streamable_http_rejects_disallowed_hosts_and_origins() -> TestResult {
-    let service = streamable_http_service(memory(), json_options())?;
+    let service = streamable_http_service(memory(), json_options(), AuthPosture::disabled())?;
 
     let response = service
         .handle(initialize_request("attacker.example", None))
@@ -172,6 +188,7 @@ async fn streamable_http_rejects_oversized_request_bodies() -> TestResult {
     let service = streamable_http_service(
         memory(),
         json_options().with_max_request_body_bytes("{}".len()),
+        AuthPosture::disabled(),
     )?;
 
     let response = service
@@ -191,6 +208,7 @@ async fn streamable_http_rejects_content_length_over_limit_before_reading() -> T
     let service = streamable_http_service(
         memory(),
         json_options().with_max_request_body_bytes(DEFAULT_MAX_REQUEST_BODY_BYTES),
+        AuthPosture::disabled(),
     )?;
     let mut request = initialize_request("localhost:3918", None);
     request.headers_mut().insert(
@@ -204,81 +222,27 @@ async fn streamable_http_rejects_content_length_over_limit_before_reading() -> T
 }
 
 #[tokio::test]
-async fn bearer_auth_service_requires_authorization_header() -> TestResult {
-    let token = BearerToken::new("test-secret")?;
-    let mut service = streamable_http_service_with_auth(memory(), json_options(), token)?;
+async fn http_tool_calls_do_not_require_authorization_header() -> TestResult {
+    let alice = "018f0cc0-40f3-7cc4-b8b4-9ca41f88d012";
+    let service = streamable_http_service(memory(), json_options(), AuthPosture::disabled())?;
 
-    let response = service
-        .call(initialize_request("localhost:3918", None))
-        .await?;
-    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-    assert_eq!(
-        response
-            .headers()
-            .get(WWW_AUTHENTICATE)
-            .and_then(|h| h.to_str().ok()),
-        Some(r#"Bearer realm="aionforge-mcp""#)
+    let request = tool_call_request(
+        "localhost:3918",
+        "capture",
+        json!({
+            "content": "the local HTTP baseline has no transport auth secret",
+            "agent_id": alice,
+        }),
     );
-
-    let mut wrong = initialize_request("localhost:3918", None);
-    wrong
-        .headers_mut()
-        .insert(AUTHORIZATION, "Bearer wrong".parse()?);
-    assert_eq!(
-        service.call(wrong).await?.status(),
-        StatusCode::UNAUTHORIZED
-    );
-
-    let mut allowed = initialize_request("localhost:3918", None);
-    allowed
-        .headers_mut()
-        .insert(AUTHORIZATION, "Bearer test-secret".parse()?);
-    assert_eq!(service.call(allowed).await?.status(), StatusCode::OK);
+    let response = service.handle(request).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await?.to_bytes();
+    let parsed: serde_json::Value = serde_json::from_slice(&body)?;
+    let text = parsed["result"]["content"][0]["text"]
+        .as_str()
+        .expect("tool text");
+    assert!(text.starts_with("[capture] "), "tool response: {parsed}");
     Ok(())
-}
-
-#[tokio::test]
-async fn bearer_auth_challenge_can_advertise_oauth_metadata() -> TestResult {
-    let token = BearerToken::new("test-secret")?;
-    let metadata_url = "https://memory.example.com/.well-known/oauth-protected-resource/mcp";
-    let challenge = BearerAuthChallenge::default()
-        .with_resource_metadata_url(metadata_url)
-        .with_scope("aionforge:read aionforge:write");
-    let mut service =
-        streamable_http_service_with_auth_challenge(memory(), json_options(), token, challenge)?;
-
-    let response = service
-        .call(initialize_request("localhost:3918", None))
-        .await?;
-    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-    let challenge = response
-        .headers()
-        .get(WWW_AUTHENTICATE)
-        .and_then(|h| h.to_str().ok())
-        .expect("www-authenticate");
-    assert!(challenge.starts_with(r#"Bearer realm="aionforge-mcp""#));
-    assert!(
-        challenge.contains(&format!(r#"resource_metadata="{metadata_url}""#)),
-        "{challenge}"
-    );
-    assert!(
-        challenge.contains(r#"scope="aionforge:read aionforge:write""#),
-        "{challenge}"
-    );
-    Ok(())
-}
-
-#[test]
-fn bearer_auth_challenge_quotes_header_parameters() {
-    let challenge = BearerAuthChallenge::default()
-        .with_realm(r#"prod "mcp"\realm"#)
-        .with_resource_metadata_url("https://memory.example.com/oauth\r\nmetadata")
-        .with_scope("aionforge:read");
-
-    assert_eq!(
-        challenge.header_value(),
-        r#"Bearer realm="prod \"mcp\"\\realm", resource_metadata="https://memory.example.com/oauthmetadata", scope="aionforge:read""#
-    );
 }
 
 #[test]

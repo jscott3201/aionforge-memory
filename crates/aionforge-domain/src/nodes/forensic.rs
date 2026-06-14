@@ -137,6 +137,10 @@ pub enum AuditKind {
     KeyRotation,
     /// An agent was retired.
     AgentRetired,
+    /// A work item's `work_status` was advanced (work-structure design §2). The payload records
+    /// the `from`/`to` states; the event's `subject_id` is the work item and its `occurred_at` is
+    /// when the transition happened, so a work item's lifecycle is the by-subject audit history.
+    WorkStatusChange,
 }
 
 /// A single forensic audit record — the highest-cardinality kind (02 §4.11).

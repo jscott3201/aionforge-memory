@@ -55,15 +55,19 @@ fn migrated_store_doctor_reports_current_catalog_and_providers() {
     assert!(report.schema.ok);
     assert_eq!(report.schema.current_version, SCHEMA_VERSION);
     assert_eq!(report.schema.target_version, SCHEMA_VERSION);
-    assert_eq!(report.schema.node_type_count, 17);
+    // 17 base kinds + WorkItem + Tag (work-tracking facet).
+    assert_eq!(report.schema.node_type_count, 19);
     assert!(report.indexes.ok);
     assert_eq!(report.indexes.expected_embedder_dimension, 4);
     assert!(report.indexes.vector_dimension_mismatches.is_empty());
     assert!(report.indexes.vector_kind_mismatches.is_empty());
     assert_eq!(report.indexes.vector_indexes.actual.len(), 7);
     assert_eq!(report.indexes.text_indexes.actual.len(), 5);
-    assert_eq!(report.indexes.property_indexes.actual.len(), 51);
-    assert_eq!(report.indexes.composite_indexes.actual.len(), 5);
+    // +6 scalar (WorkItem id/parent_id/work_status/level, Tag id/slug) and +2 namespace
+    // (one per new node kind): 51 -> 59.
+    assert_eq!(report.indexes.property_indexes.actual.len(), 59);
+    // +1 composite (cidx_workitem_parent_ordinal): 5 -> 6.
+    assert_eq!(report.indexes.composite_indexes.actual.len(), 6);
     assert!(report.providers.ok);
     assert_eq!(report.providers.candidate_state_infos.len(), 5);
     assert_eq!(report.consolidation_lag.episodes_pending, 0);

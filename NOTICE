@@ -14,7 +14,7 @@ notices required by Apache-2.0 / BSD / MPL-2.0 / etc.) are maintained in
 THIRDPARTY.md at the repo root, generated automatically from Cargo.lock by
 cargo-about. CI verifies the file is current; drift is a merge block.
 
-This product builds on selene-db (https://github.com/Aionforge-Labs/selene-db),
+This product builds on selene-db (https://github.com/jscott3201/selene-db),
 also dual-licensed MIT OR Apache-2.0, consumed as a git dependency.
 
 This NOTICE file lists source-level adaptations or vendored source fixtures:

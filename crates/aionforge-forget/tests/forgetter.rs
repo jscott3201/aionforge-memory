@@ -15,6 +15,7 @@ use aionforge_domain::nodes::episodic::{ConsolidationState, Episode, Role};
 use aionforge_domain::nodes::forensic::{AuditEvent, AuditKind};
 use aionforge_domain::nodes::procedural::{BadPattern, Skill};
 use aionforge_domain::nodes::semantic::{Entity, Fact, FactStatus};
+use aionforge_domain::nodes::work::{WorkItem, WorkStatus};
 use aionforge_domain::time::Timestamp;
 use aionforge_domain::value::ObjectValue;
 use aionforge_forget::{Forgetter, ForgettingPolicy, PointForget, PointUnforget, SpareReason};
@@ -573,5 +574,35 @@ fn a_same_instant_forget_cycle_is_three_distinct_audit_rows() {
             .events
             .len(),
         2
+    );
+}
+
+#[test]
+fn a_work_item_is_invisible_to_point_forget() {
+    let store = store();
+    let forgetter = forgetter(&store);
+    let item = WorkItem {
+        identity: identity_in(Namespace::Agent("alice".to_string())),
+        title: "ship the facet".to_string(),
+        body: None,
+        level: "task".to_string(),
+        work_status: WorkStatus::InProgress,
+        parent_id: None,
+        ordinal: 0,
+    };
+    store.save_work_item(&item).expect("save work item");
+
+    // A work item is Stats-less and absent from ALL_MEMORY_LABELS, so the point-forget resolver
+    // never finds it: NotFound, NOT Protected (Protected is reserved for in-set kinds an axis
+    // spares). An active work item can therefore never be forgotten or unforgotten.
+    assert_eq!(
+        forgetter.forget(&item.identity.id, &now()).expect("forget"),
+        PointForget::NotFound,
+    );
+    assert_eq!(
+        forgetter
+            .unforget(&item.identity.id, &now())
+            .expect("unforget"),
+        PointUnforget::NotFound,
     );
 }

@@ -10,8 +10,8 @@ homepage.workspace = true
 description = "Multi-provider chat-completion client (OpenAI Chat Completions, OpenAI Responses, Anthropic Messages) behind one provider-agnostic Completer seam."
 
 [dependencies]
-aionforge-domain = { path = "../aionforge-domain", version = "0.1.0" }
-aionforge-config = { path = "../aionforge-config", version = "0.1.0" }
+aionforge-domain = { path = "../aionforge-domain", version = "0.2.0" }
+aionforge-config = { path = "../aionforge-config", version = "0.2.0" }
 reqwest = { workspace = true }
 rustls = { workspace = true }
 secrecy = { workspace = true }

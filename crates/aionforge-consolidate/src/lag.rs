@@ -8,8 +8,8 @@ use aionforge_store::LagSnapshot;
 /// A point-in-time view of the consolidation backlog.
 ///
 /// `oldest_pending_lag` is the wall-clock from the oldest unconsolidated episode's
-/// `captured_at` to *now* — the "capture to derived" latency the SLA tracks. It is zero
-/// when nothing is pending.
+/// `ingested_at` to *now* — the queue age the SLA tracks. It is zero when nothing is
+/// pending, and it intentionally ignores historical event time for backfilled captures.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConsolidationLag {
     /// Wall-clock lag of the oldest pending episode (zero when the backlog is empty).
@@ -27,9 +27,9 @@ impl ConsolidationLag {
     #[must_use]
     pub fn from_snapshot(snapshot: &LagSnapshot, now: &Timestamp) -> Self {
         let oldest_pending_lag = snapshot
-            .oldest_pending_captured_at
+            .oldest_pending_ingested_at
             .as_ref()
-            .map(|captured| lag_between(now, captured))
+            .map(|ingested| lag_between(now, ingested))
             .unwrap_or_default();
         Self {
             oldest_pending_lag,
@@ -40,12 +40,12 @@ impl ConsolidationLag {
     }
 }
 
-/// The non-negative wall-clock duration from `captured` to `now`.
+/// The non-negative wall-clock duration from `ingested` to `now`.
 ///
 /// Computed over the underlying instant's whole seconds, which is robust across
 /// time-zone representations and ample for a lag metric; a negative delta (a clock
-/// stepping backward, or a future-stamped capture) clamps to zero.
-fn lag_between(now: &Timestamp, captured: &Timestamp) -> Duration {
-    let seconds = now.timestamp().as_second() - captured.timestamp().as_second();
+/// stepping backward, or a future-stamped ingestion) clamps to zero.
+fn lag_between(now: &Timestamp, ingested: &Timestamp) -> Duration {
+    let seconds = now.timestamp().as_second() - ingested.timestamp().as_second();
     Duration::from_secs(seconds.max(0).unsigned_abs())
 }

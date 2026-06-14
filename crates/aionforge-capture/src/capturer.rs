@@ -5,9 +5,9 @@
 //! the [`PrivacyFilter`] and [`Embedder`] domain seams, so it names neither the
 //! concrete security filter nor the HTTP embedder — only the contracts.
 //!
-//! Failure shape (04 §1, §8.1): a filter or store failure aborts the capture (fail
-//! closed); an embedder failure does not — the episode is written without a vector
-//! and embedded later by consolidation, recorded as [`EmbeddingOutcome::Skipped`].
+//! Failure shape (04 §1, §8.1): a filter, embedder, or store failure aborts the capture
+//! (fail closed). Hosts that intentionally want vectorless writes disable
+//! `embed_on_capture`; a configured embedder must be healthy before a new episode lands.
 
 use std::future::Future;
 use std::sync::Arc;
@@ -232,15 +232,16 @@ where
             });
         }
 
-        // 4. Embedding. Degradable: a failure leaves the episode vector-less for
-        //    consolidation to embed later, never blocking capture (§8.1).
+        // 4. Embedding. When enabled, this is part of capture correctness: a failed
+        //    embedder refuses the write before any episode/provenance/audit state lands.
+        //    Hosts that explicitly want vectorless writes set `embed_on_capture = false`.
         let (embedding, embedding_outcome) = self
             .embed(&outcome.cleaned)
             .instrument(tracing::info_span!(
                 "aionforge.capture.stage",
                 stage = "embed"
             ))
-            .await;
+            .await?;
 
         // 2. Deduplication, near half. Without a vector we cannot judge similarity, so
         //    the verdict is `New`. Episodes are immutable, so a near-duplicate is still
@@ -268,14 +269,14 @@ where
         let episode = Episode {
             identity: Identity {
                 id: episode_id,
-                ingested_at: request.captured_at.clone(),
+                ingested_at: request.ingested_at.clone(),
                 namespace: namespace.clone(),
                 expired_at: None,
             },
             stats: Stats {
                 importance: CAPTURE_IMPORTANCE,
                 trust,
-                last_access: request.captured_at.clone(),
+                last_access: request.ingested_at.clone(),
                 access_count_recent: 0,
                 referenced_count: 0,
                 surprise: 0.0,
@@ -309,7 +310,7 @@ where
         let provenance = ProvenanceRecord {
             identity: Identity {
                 id: Id::generate(),
-                ingested_at: request.captured_at.clone(),
+                ingested_at: request.ingested_at.clone(),
                 namespace,
                 expired_at: None,
             },
@@ -326,7 +327,7 @@ where
         let audit = AuditEvent {
             identity: Identity {
                 id: Id::generate(),
-                ingested_at: request.captured_at.clone(),
+                ingested_at: request.ingested_at.clone(),
                 namespace: Namespace::System,
                 expired_at: None,
             },
@@ -339,7 +340,7 @@ where
                 "injection_flags": outcome.injection_flags.clone(),
             }),
             signature: String::new(),
-            occurred_at: request.captured_at,
+            occurred_at: request.ingested_at,
         };
         let audit_id = audit.identity.id;
 
@@ -359,21 +360,21 @@ where
         })
     }
 
-    /// Embed the cleaned content, degrading to a recorded skip on any failure.
-    async fn embed(&self, cleaned: &str) -> (Option<Embedding>, EmbeddingOutcome) {
+    /// Embed the cleaned content when configured. A configured embedder is fail-closed.
+    async fn embed(
+        &self,
+        cleaned: &str,
+    ) -> Result<(Option<Embedding>, EmbeddingOutcome), CaptureError> {
         if !self.config.embed_on_capture {
-            return (None, EmbeddingOutcome::NotRequested);
+            return Ok((None, EmbeddingOutcome::NotRequested));
         }
         let inputs = [cleaned.to_string()];
         match self.embedder.embed(&inputs).await {
             Ok(vectors) => match vectors.into_iter().next() {
-                Some(vector) => (Some(vector), EmbeddingOutcome::Embedded),
-                None => (
-                    None,
-                    EmbeddingOutcome::Skipped("the embedder returned no vector".to_string()),
-                ),
+                Some(vector) => Ok((Some(vector), EmbeddingOutcome::Embedded)),
+                None => Err(CaptureError::embedder("the embedder returned no vector")),
             },
-            Err(error) => (None, EmbeddingOutcome::Skipped(error.to_string())),
+            Err(error) => Err(CaptureError::embedder(error)),
         }
     }
 
@@ -551,7 +552,6 @@ fn capture_verdict_label(verdict: &CaptureVerdict) -> &'static str {
 fn embedding_label(outcome: &EmbeddingOutcome) -> &'static str {
     match outcome {
         EmbeddingOutcome::Embedded => "embedded",
-        EmbeddingOutcome::Skipped(_) => "skipped",
         EmbeddingOutcome::NotRequested => "not_requested",
     }
 }
@@ -561,6 +561,7 @@ fn capture_error_label(error: &CaptureError) -> &'static str {
         CaptureError::Filter(_) => "filter",
         CaptureError::Store(_) => "store",
         CaptureError::Unauthorized(_) => "unauthorized",
+        CaptureError::Embedder(_) => "embedder",
         CaptureError::InvalidSignature => "invalid_signature",
         CaptureError::ClockSkew { .. } => "clock_skew",
         CaptureError::ProvenanceUnavailable(_) => "provenance_unavailable",
@@ -579,7 +580,7 @@ fn supersedes_rejected_audit(request: &CaptureRequest, target: &Id, cause: &str)
     AuditEvent {
         identity: Identity {
             id: Id::generate(),
-            ingested_at: request.captured_at.clone(),
+            ingested_at: request.ingested_at.clone(),
             namespace: Namespace::System,
             expired_at: None,
         },
@@ -592,7 +593,7 @@ fn supersedes_rejected_audit(request: &CaptureRequest, target: &Id, cause: &str)
             "claimed_target": target.to_string(),
         }),
         signature: String::new(),
-        occurred_at: request.captured_at.clone(),
+        occurred_at: request.ingested_at.clone(),
     }
 }
 
@@ -605,7 +606,7 @@ fn residue_rejected_audit(request: &CaptureRequest, outcome: &FilterOutcome) -> 
     AuditEvent {
         identity: Identity {
             id: Id::generate(),
-            ingested_at: request.captured_at.clone(),
+            ingested_at: request.ingested_at.clone(),
             namespace: Namespace::System,
             expired_at: None,
         },
@@ -620,7 +621,7 @@ fn residue_rejected_audit(request: &CaptureRequest, outcome: &FilterOutcome) -> 
             "cleaned_len": outcome.cleaned.len(),
         }),
         signature: String::new(),
-        occurred_at: request.captured_at.clone(),
+        occurred_at: request.ingested_at.clone(),
     }
 }
 
@@ -632,7 +633,7 @@ fn system_role_denied_audit(request: &CaptureRequest) -> AuditEvent {
     AuditEvent {
         identity: Identity {
             id: Id::generate(),
-            ingested_at: request.captured_at.clone(),
+            ingested_at: request.ingested_at.clone(),
             namespace: Namespace::System,
             expired_at: None,
         },
@@ -645,7 +646,7 @@ fn system_role_denied_audit(request: &CaptureRequest) -> AuditEvent {
             "agent": request.agent_id.to_string(),
         }),
         signature: String::new(),
-        occurred_at: request.captured_at.clone(),
+        occurred_at: request.ingested_at.clone(),
     }
 }
 
@@ -660,7 +661,7 @@ fn namespace_denied_audit(
     AuditEvent {
         identity: Identity {
             id: Id::generate(),
-            ingested_at: request.captured_at.clone(),
+            ingested_at: request.ingested_at.clone(),
             namespace: Namespace::System,
             expired_at: None,
         },
@@ -673,7 +674,7 @@ fn namespace_denied_audit(
             "agent": denial.agent,
         }),
         signature: String::new(),
-        occurred_at: request.captured_at.clone(),
+        occurred_at: request.ingested_at.clone(),
     }
 }
 
@@ -691,7 +692,7 @@ fn provenance_rejected_audit(
     AuditEvent {
         identity: Identity {
             id: Id::generate(),
-            ingested_at: request.captured_at.clone(),
+            ingested_at: request.ingested_at.clone(),
             namespace: Namespace::System,
             expired_at: None,
         },
@@ -700,7 +701,7 @@ fn provenance_rejected_audit(
         actor_id: request.agent_id,
         payload,
         signature: String::new(),
-        occurred_at: request.captured_at.clone(),
+        occurred_at: request.ingested_at.clone(),
     }
 }
 

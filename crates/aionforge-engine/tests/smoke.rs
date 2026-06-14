@@ -82,6 +82,7 @@ async fn open_capture_then_search_round_trips() {
             teams: Vec::new(),
             session_id: None,
             captured_at: now(),
+            ingested_at: now(),
             writer: WriterContext {
                 model_family: "host-model".to_string(),
                 model_version: Some("1".to_string()),
@@ -129,6 +130,7 @@ async fn an_exact_duplicate_is_not_recaptured() {
         teams: Vec::new(),
         session_id: None,
         captured_at: now(),
+        ingested_at: now(),
         writer: WriterContext {
             model_family: "host-model".to_string(),
             model_version: None,
@@ -234,6 +236,7 @@ fn capture_request(agent: &Id, content: &str) -> CaptureRequest {
         teams: Vec::new(),
         session_id: None,
         captured_at: now(),
+        ingested_at: now(),
         writer: WriterContext {
             model_family: "host-model".to_string(),
             model_version: None,

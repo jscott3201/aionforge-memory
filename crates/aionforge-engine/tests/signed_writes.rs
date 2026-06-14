@@ -134,7 +134,8 @@ fn signed_request(
         agent_id: agent,
         teams: Vec::new(),
         session_id: None,
-        captured_at,
+        captured_at: captured_at.clone(),
+        ingested_at: captured_at,
         writer: WriterContext {
             model_family: "test".to_string(),
             model_version: None,
@@ -256,6 +257,7 @@ async fn an_unsigned_write_is_rejected_under_a_signed_policy() {
         teams: Vec::new(),
         session_id: None,
         captured_at: Timestamp::now(),
+        ingested_at: Timestamp::now(),
         writer: WriterContext {
             model_family: "test".to_string(),
             model_version: None,
@@ -297,6 +299,7 @@ async fn signed_writes_off_admits_an_unsigned_write_unchanged() {
         teams: Vec::new(),
         session_id: None,
         captured_at: migrate_ts(),
+        ingested_at: migrate_ts(),
         writer: WriterContext {
             model_family: "test".to_string(),
             model_version: None,

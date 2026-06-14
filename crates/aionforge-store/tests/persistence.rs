@@ -8,11 +8,14 @@
 
 use std::path::PathBuf;
 
-use aionforge_domain::blocks::Identity;
-use aionforge_domain::ids::Id;
+use aionforge_domain::blocks::{Identity, Stats};
+use aionforge_domain::ids::{ContentHash, Id};
 use aionforge_domain::namespace::Namespace;
+use aionforge_domain::nodes::episodic::{ConsolidationState, Episode, Role};
 use aionforge_domain::nodes::forensic::{AuditEvent, AuditKind};
-use aionforge_store::{BoundQuery, QueryResult, SCHEMA_VERSION, Store, StoreConfig, Value};
+use aionforge_store::{
+    BoundQuery, QueryResult, SCHEMA_VERSION, Store, StoreConfig, StoreError, Value,
+};
 
 use jiff::Zoned;
 
@@ -98,6 +101,43 @@ fn insert_fact(store: &Store, id: &str, subject: &str) {
     .bind_str("stmt", "a canonical statement")
     .unwrap();
     store.execute(&query).expect("insert fact");
+}
+
+fn insert_raw_episode(store: &Store, content: &str, captured_at: &str) -> Id {
+    let captured_at: Zoned = captured_at
+        .parse::<jiff::Timestamp>()
+        .expect("valid captured_at")
+        .to_zoned(jiff::tz::TimeZone::UTC);
+    let id = tag_id(content);
+    let episode = Episode {
+        identity: Identity {
+            id,
+            ingested_at: now(),
+            namespace: Namespace::Agent("test".to_string()),
+            expired_at: None,
+        },
+        stats: Stats {
+            importance: 0.5,
+            trust: 0.8,
+            last_access: now(),
+            access_count_recent: 0,
+            referenced_count: 0,
+            surprise: 0.0,
+            is_pinned: false,
+        },
+        content: content.to_string(),
+        role: Role::User,
+        captured_at,
+        agent_id: tag_id("agent:test"),
+        session_id: Some(tag_id("session:test")),
+        content_hash: ContentHash::of(content.as_bytes()),
+        embedding: None,
+        embedder_model: None,
+        consolidation_state: ConsolidationState::Raw,
+        origin: None,
+    };
+    store.insert_episode(&episode).expect("insert episode");
+    id
 }
 
 /// Commit a minimal `AuditEvent` with a specific `occurred_at`, so recovery has a real
@@ -263,8 +303,8 @@ fn persistence_round_trips_schema_data_indexes_and_providers() {
         );
         assert_eq!(store.vector_indexes().len(), 7);
         assert_eq!(store.text_indexes().len(), 5);
-        assert_eq!(store.property_indexes().len(), 51);
-        assert_eq!(store.composite_indexes().len(), 5);
+        assert_eq!(store.property_indexes().len(), 59);
+        assert_eq!(store.composite_indexes().len(), 6);
         assert_eq!(fact_count(&store), 2);
         assert_eq!(provider_count(&store, "current_support_facts"), 1);
         // Drop releases the WAL file lock so recovery can reopen it in this process.
@@ -286,12 +326,12 @@ fn persistence_round_trips_schema_data_indexes_and_providers() {
     assert_eq!(recovered.text_indexes().len(), 5, "text indexes rebuilt");
     assert_eq!(
         recovered.property_indexes().len(),
-        51,
+        59,
         "property indexes rebuilt"
     );
     assert_eq!(
         recovered.composite_indexes().len(),
-        5,
+        6,
         "composite indexes rebuilt"
     );
     // The first ZONED DATETIME property index in the schema rebuilds into the catalog from the WAL.
@@ -416,6 +456,47 @@ fn recovery_runs_the_dimension_consistency_check() {
 }
 
 #[test]
+fn recovery_maps_an_unsupported_on_disk_format_to_a_distinct_error() {
+    let dir = temp_dir("unsupported-format");
+    let config = StoreConfig::default();
+
+    // Write a real, current-format store, then drop it so the WAL file unlocks.
+    {
+        let store =
+            Store::open_persistent_migrated(&dir, config, &now()).expect("open and migrate");
+        drop(store);
+    }
+
+    // Downgrade the persisted WAL's minor format version on disk to one this build
+    // does not read. The 16-byte WAL header is `SLDB` + major(u16-le) + minor(u16-le)
+    // + snapshot_seq(u64-le); patching bytes [6..8] flips only the minor version,
+    // reusing selene's own writer for the magic and major so the test pins
+    // format-version *detection*, not a hand-built header.
+    let wal = dir.join(Store::WAL_FILE_NAME);
+    let mut bytes = std::fs::read(&wal).expect("read persisted WAL");
+    assert_eq!(&bytes[0..4], b"SLDB", "the WAL header magic is stable");
+    bytes[6..8].copy_from_slice(&0u16.to_le_bytes());
+    std::fs::write(&wal, &bytes).expect("rewrite WAL with an older minor version");
+
+    // Recovery must surface the distinct UnsupportedFormat arm — not an opaque
+    // Graph/corruption error — so the runbook can say "recreate fresh", and the
+    // message must carry the on-disk version and the actionable guidance.
+    let error = Store::recover(&dir, config).expect_err("an older on-disk format is rejected");
+    assert!(
+        matches!(error, StoreError::UnsupportedFormat { minor: 0, .. }),
+        "expected a distinct UnsupportedFormat, got: {error:?}"
+    );
+    let rendered = error.to_string();
+    assert!(
+        rendered.contains("unsupported on-disk store format")
+            && rendered.contains("recreate it fresh"),
+        "the runbook message is actionable and distinct from corruption: {rendered}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn open_or_recover_creates_then_recovers() {
     let dir = temp_dir("open-or-recover");
     let config = StoreConfig::default();
@@ -443,6 +524,47 @@ fn open_or_recover_creates_then_recovers() {
         "data from the first run is recovered"
     );
     drop(store);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn recovered_wal_preserves_episode_event_and_ingestion_time() {
+    let dir = temp_dir("episode-timestamps");
+    let config = StoreConfig::default();
+    let episode_id;
+
+    {
+        let store =
+            Store::open_persistent_migrated(&dir, config, &now()).expect("open and migrate");
+        episode_id =
+            insert_raw_episode(&store, "historical captured event", "2026-01-02T03:04:05Z");
+        drop(store);
+    }
+
+    let recovered = Store::recover(&dir, config).expect("recover");
+    let episode = recovered
+        .episode_by_id(&episode_id)
+        .expect("episode lookup")
+        .expect("episode recovered");
+    let historical: Zoned = "2026-01-02T03:04:05Z"
+        .parse::<jiff::Timestamp>()
+        .expect("valid timestamp")
+        .to_zoned(jiff::tz::TimeZone::UTC);
+    assert_eq!(episode.captured_at, historical);
+    assert_eq!(
+        episode.identity.ingested_at,
+        now(),
+        "replay preserves the operational ingestion timestamp separately"
+    );
+    assert_eq!(
+        recovered
+            .consolidation_lag()
+            .expect("lag")
+            .oldest_pending_ingested_at,
+        Some(now()),
+        "current-format replay drives backlog age from ingestion time"
+    );
+    drop(recovered);
     let _ = std::fs::remove_dir_all(&dir);
 }
 

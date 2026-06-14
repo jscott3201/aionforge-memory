@@ -403,3 +403,29 @@ impl Forgetter {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use aionforge_domain::nodes::work::{Tag, WorkItem};
+
+    use super::{ALL_MEMORY_LABELS, POINT_LABELS};
+
+    /// The exemption-by-omission keystone, locked directly at the const level: the
+    /// work-tracking kinds must never appear in the forget resolution sets. The integration
+    /// tests prove the *behavior* (forget/pin/erase resolve a work item to NotFound); this
+    /// pins the *cause*, so an accidental add of `WorkItem`/`Tag` to either set fails here
+    /// loudly rather than silently dragging the kinds into the forget/pin/erase machinery.
+    #[test]
+    fn the_work_tracking_kinds_are_absent_from_the_forget_resolution_sets() {
+        for label in [WorkItem::LABEL, Tag::LABEL] {
+            assert!(
+                !ALL_MEMORY_LABELS.contains(&label),
+                "{label} must not be a forget/pin/erase resolution target",
+            );
+            assert!(
+                !POINT_LABELS.contains(&label),
+                "{label} must not be point-forgettable",
+            );
+        }
+    }
+}

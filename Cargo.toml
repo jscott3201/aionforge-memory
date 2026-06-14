@@ -11,6 +11,7 @@ members = [
     "crates/aionforge-domain",       # L1 — memory-kind types + contract traits (no I/O)
     "crates/aionforge-store",        # L0 — selene-db SharedGraph + persistence (only crate naming selene-db)
     "crates/aionforge-config",       # layered configuration (file + env + flags); produces StoreConfig
+    "crates/aionforge-auth",         # L2 — OIDC/JWKS discovery + RS256-pinned JWT validator (PR2, fork#3)
     "crates/aionforge-embed",        # L2 — OpenAI-compatible embedding/rerank client
     "crates/aionforge-chat",         # L2 — multi-provider chat-completion client (OpenAI/Anthropic/open)
     "crates/aionforge-capture",      # L2 — fast capture path
@@ -30,13 +31,13 @@ members = [
 exclude = ["_spec", "_goalslogs"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.95.0"
 authors = ["Justin Scott"]
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/Aionforge-Labs/aionforge-memory"
-homepage = "https://github.com/Aionforge-Labs/aionforge-memory"
+repository = "https://github.com/jscott3201/aionforge-memory"
+homepage = "https://github.com/jscott3201/aionforge-memory"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
@@ -81,6 +82,13 @@ reqwest = { version = "0.13", default-features = false, features = ["rustls-no-p
 # aws-lc-rs default. aionforge-embed installs it as the process default before it
 # builds a client (rustls-no-provider panics on a client built with no provider).
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
+# JWT validation (RS256-pinned, ring-backed, constant-time). Spike 2026-06-13 chose v9 over v10:
+# v10 dropped ring, forcing either aws-lc-rs (cmake/Go, breaks musl) or rust_crypto (carries
+# RUSTSEC-2023-0071 Marvin advisory + rand duplicate); v9 reuses ring v0.17.14 (already in-tree
+# via rustls), pulls 11 new crates (time, simple_asn1, num-bigint), passes cargo deny clean with
+# ZERO carve-outs. Quarantined in aionforge-auth; resource server only does public-key verify
+# (never private ops), and jsonwebtoken types never leak into that crate's public API (fork#3).
+jsonwebtoken = { version = "9.3" }
 # Capture-side privacy/injection filter patterns (M1.T02). Already in the tree
 # transitively via selene-db, so this direct pin reuses that exact locked version.
 regex = "1"
@@ -116,32 +124,31 @@ wiremock = "0.6"
 # Object-safe async traits for the consolidation pass seam (M2.T03).
 async-trait = "0.1"
 
-# --- selene-db substrate (public git dep tracking the `development` branch). ---
-# selene-db is public and under active development, so we track its `development`
-# branch over HTTPS (not a path dep into a sibling working tree). The source is
-# the branch, but Cargo.lock pins the exact commit: builds stay reproducible and CI
-# runs `--locked`. `cargo update` pulls newer `development` commits on demand, and the
-# nightly workflow runs that update on a schedule so we never silently fall behind.
-# `cargo build` fetches with the system git binary (.cargo/config.toml).
+# --- selene-db substrate (published crates.io release, pinned to 1.2.0). ---
+# selene-db 1.2 is published to crates.io under renamed packages (selene-db-core,
+# -graph, -persist, -gql, -algorithms). We consume them through stable local alias
+# keys (selene-core, ...) via Cargo's `package =` rename, so every `use selene_core`
+# in aionforge-store and the store-only-selene gate's pattern stay unchanged above L0.
+# The `1.2.0` requirement pins the released line; Cargo.lock locks the exact build and
+# CI runs `--locked`. `cargo update` moves within 1.2.x. selene-db denies
+# multiple-versions, so the shared transitive tree must agree (see the pins above).
 # For tight co-development against a local checkout, use the commented `[patch]` below.
-# A `version` accompanies the git source so the dep is not a bare `*` wildcard (the
-# `bans.wildcards = "deny"` gate). The `"1"` requirement is a sanity floor against the
-# selene 1.x line; Cargo.lock still pins the exact `development` commit that builds.
-selene-core = { git = "https://github.com/Aionforge-Labs/selene-db.git", branch = "development", version = "1" }
-selene-graph = { git = "https://github.com/Aionforge-Labs/selene-db.git", branch = "development", version = "1" }
-selene-persist = { git = "https://github.com/Aionforge-Labs/selene-db.git", branch = "development", version = "1" }
-selene-gql = { git = "https://github.com/Aionforge-Labs/selene-db.git", branch = "development", version = "1" }
-selene-algorithms = { git = "https://github.com/Aionforge-Labs/selene-db.git", branch = "development", version = "1" }
+selene-core = { package = "selene-db-core", version = "1.2.0" }
+selene-graph = { package = "selene-db-graph", version = "1.2.0" }
+selene-persist = { package = "selene-db-persist", version = "1.2.0" }
+selene-gql = { package = "selene-db-gql", version = "1.2.0" }
+selene-algorithms = { package = "selene-db-algorithms", version = "1.2.0" }
 
 # Co-development escape hatch: to build against a local selene-db checkout instead of
-# the fetched branch, uncomment and point these at your sibling checkout. Do not
-# commit the uncommented form.
-# [patch."https://github.com/Aionforge-Labs/selene-db.git"]
-# selene-core = { path = "../selene-db/crates/selene-core" }
-# selene-graph = { path = "../selene-db/crates/selene-graph" }
-# selene-persist = { path = "../selene-db/crates/selene-persist" }
-# selene-gql = { path = "../selene-db/crates/selene-gql" }
-# selene-algorithms = { path = "../selene-db/crates/selene-algorithms" }
+# the published release, uncomment and point these at your sibling checkout. Patch by
+# the published package name (the crates.io source), not our alias key. Do not commit
+# the uncommented form.
+# [patch.crates-io]
+# selene-db-core = { path = "../selene-db/crates/selene-core" }
+# selene-db-graph = { path = "../selene-db/crates/selene-graph" }
+# selene-db-persist = { path = "../selene-db/crates/selene-persist" }
+# selene-db-gql = { path = "../selene-db/crates/selene-gql" }
+# selene-db-algorithms = { path = "../selene-db/crates/selene-algorithms" }
 
 # Heavier frameworks (tokio, reqwest, rustls, rmcp, axum, ed25519-dalek, ratatui,
 # clap, tracing-subscriber, dev-deps) are added to this floor at the task that first

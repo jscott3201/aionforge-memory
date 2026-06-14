@@ -1,0 +1,61 @@
+name: Feature request
+description: Propose a new capability or an enhancement to an existing one.
+title: "[Feature]: "
+labels: [enhancement, triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the idea. Please search [existing issues](https://github.com/jscott3201/aionforge-memory/issues?q=is%3Aissue) first to avoid duplicates.
+
+        Keep this focused on user-facing behavior and outcomes. For substantial design changes, see the "Design proposal (RFC)" form instead.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / motivation
+      description: What can't you do today, and why does it matter? Describe the use case, not a solution.
+      placeholder: As an agent operator, I can't ... which forces me to ...
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What behavior would you like? Sketch the desired tool, flag, config, or API surface if you have one in mind.
+    validations:
+      required: false
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches or workarounds you've weighed, and why they fall short.
+    validations:
+      required: false
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Affected surface
+      description: Which part of the system would this most likely touch?
+      options:
+        - MCP server / tools (aionforge-mcp)
+        - CLI (aionforge-cli)
+        - Capture / retrieval / consolidation / forgetting pipeline
+        - Trust, security, or namespace policy
+        - Auth / server / operator console
+        - Embedding or chat provider integration
+        - Config, packaging, or deployment
+        - Docs
+        - Not sure
+    validations:
+      required: false
+  - type: checkboxes
+    id: acknowledgements
+    attributes:
+      label: Acknowledgements
+      options:
+        - label: I searched existing issues and this is not a duplicate.
+          required: true
+        - label: I understand a non-trivial design may be asked to go through a design proposal (RFC) before implementation.
+          required: false
+        - label: This request contains no secrets, private planning notes, or customer data.
+          required: true

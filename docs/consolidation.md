@@ -184,9 +184,10 @@ documented in [distillation](distillation.md); it never replaces these canonical
 ## Observability
 
 Each tick reports what it accomplished — episodes consolidated, retried, failed, and the backlog
-still pending — and emits lag gauges (`consolidation_lag_seconds`, `consolidation_episodes_pending`,
+still pending — and emits backlog-age gauges (`consolidation_lag_seconds`, `consolidation_episodes_pending`,
 `consolidation_episodes_failed`) plus per-tick counters for supersessions, contradictions,
-quarantines, and summaries. When the oldest pending episode is older than `lag_ceiling` (default 5s),
-the scheduler warns. The lifecycle of every episode — and every refusal, failure, canonicalize
+quarantines, and summaries. When the oldest pending episode's `ingested_at` is older than
+`lag_ceiling` (default 5s), the scheduler warns. Historical `captured_at` backfills do not inflate
+this live queue-age metric. The lifecycle of every episode — and every refusal, failure, canonicalize
 decision, and quarantine — lands in the audit trail, so the whole pipeline is reconstructable after
 the fact.

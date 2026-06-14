@@ -24,7 +24,7 @@ dependencies = [
 
 [[package]]
 name = "aionforge"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "aionforge-domain",
  "aionforge-engine",
@@ -34,8 +34,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "aionforge-auth"
+version = "0.2.0"
+dependencies = [
+ "aionforge-config",
+ "base64",
+ "jsonwebtoken",
+ "miette",
+ "reqwest",
+ "rustls",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "wiremock",
+]
+
+[[package]]
 name = "aionforge-capture"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "aionforge-domain",
  "aionforge-security",
@@ -50,7 +67,7 @@ dependencies = [
 
 [[package]]
 name = "aionforge-chat"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "aionforge-config",
  "aionforge-domain",
@@ -67,7 +84,7 @@ dependencies = [
 
 [[package]]
 name = "aionforge-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "aionforge",
  "aionforge-config",
@@ -86,11 +103,12 @@ dependencies = [
  "tokio",
  "tower-service",
  "url",
+ "wiremock",
 ]
 
 [[package]]
 name = "aionforge-config"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "aionforge-domain",
  "aionforge-store",
@@ -104,7 +122,7 @@ dependencies = [
 
 [[package]]
 name = "aionforge-consolidate"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "aionforge-domain",
  "aionforge-security",
@@ -120,7 +138,7 @@ dependencies = [
 
 [[package]]
 name = "aionforge-domain"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "blake3",
  "jiff",
@@ -133,7 +151,7 @@ dependencies = [
 
 [[package]]
 name = "aionforge-embed"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "aionforge-config",
  "aionforge-domain",
@@ -150,7 +168,7 @@ dependencies = [
 
 [[package]]
 name = "aionforge-engine"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "aionforge-capture",
  "aionforge-consolidate",
@@ -174,7 +192,7 @@ dependencies = [
 
 [[package]]
 name = "aionforge-forget"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "aionforge-domain",
  "aionforge-embed",
@@ -185,26 +203,35 @@ dependencies = [
 
 [[package]]
 name = "aionforge-mcp"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
+ "aionforge-auth",
+ "aionforge-config",
  "aionforge-domain",
  "aionforge-engine",
+ "aionforge-store",
+ "base64",
  "bytes",
  "http",
  "http-body",
  "http-body-util",
  "jiff",
+ "jsonwebtoken",
+ "metrics",
  "rmcp",
  "schemars",
  "serde",
  "serde_json",
+ "thiserror",
  "tokio",
  "tower-service",
+ "tracing",
+ "wiremock",
 ]
 
 [[package]]
 name = "aionforge-procedural"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "aionforge-domain",
  "aionforge-store",
@@ -215,7 +242,7 @@ dependencies = [
 
 [[package]]
 name = "aionforge-redteam"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "aionforge-domain",
  "aionforge-engine",
@@ -230,7 +257,7 @@ dependencies = [
 
 [[package]]
 name = "aionforge-retrieval"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "aionforge-domain",
  "aionforge-store",
@@ -244,7 +271,7 @@ dependencies = [
 
 [[package]]
 name = "aionforge-security"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "aionforge-domain",
  "aionforge-store",
@@ -256,16 +283,17 @@ dependencies = [
 
 [[package]]
 name = "aionforge-store"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "aionforge-domain",
  "jiff",
  "metrics",
  "miette",
  "proptest",
- "selene-core",
- "selene-gql",
- "selene-graph",
+ "selene-db-core",
+ "selene-db-gql",
+ "selene-db-graph",
+ "selene-db-persist",
  "serde",
  "serde_json",
  "thiserror",
@@ -274,7 +302,7 @@ dependencies = [
 
 [[package]]
 name = "aionforge-trust"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "aionforge-domain",
  "aionforge-store",
@@ -293,7 +321,7 @@ dependencies = [
 
 [[package]]
 name = "aionforge-tui"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "aionforge-domain",
  "aionforge-engine",
@@ -434,15 +462,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a89cbf775b137e9b968e67227ef7f775587cde3fd31b0d8599dbd0f598a48340"
 dependencies = [
  "bytemuck",
-]
-
-[[package]]
-name = "atomic-polyfill"
-version = "1.0.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8cf2bce30dfe09ef0bfaef228b9d414faaf7e563035494d7fe092dba54b300f4"
-dependencies = [
- "critical-section",
 ]
 
 [[package]]
@@ -770,12 +789,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "critical-section"
-version = "1.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "790eea4361631c5e7d22598ecd5723ff611904e3344ce8720784c93e3d83d40b"
-
-[[package]]
 name = "crossbeam-deque"
 version = "0.8.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -897,6 +910,15 @@ checksum = "e7c1832837b905bbfb5101e07cc24c8deddf52f93225eee6ead5f4d63d53ddcb"
 dependencies = [
  "const-oid",
  "zeroize",
+]
+
+[[package]]
+name = "deranged"
+version = "0.5.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7cd812cc2bc1d69d4764bd80df88b4317eaef9e773c75226407d9bc0876b211c"
+dependencies = [
+ "powerfmt",
 ]
 
 [[package]]
@@ -1157,8 +1179,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ff2abc00be7fca6ebc474524697ae276ad847ad0a6b3faa4bcb027e9a4614ad0"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "wasi",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -1207,15 +1231,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hash32"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0c35f58762feb77d74ebe43bdbc3210f09be9fe6742234d573bacc26ed92b67"
-dependencies = [
- "byteorder",
-]
-
-[[package]]
 name = "hashbrown"
 version = "0.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1249,20 +1264,6 @@ name = "hashbrown"
 version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
-
-[[package]]
-name = "heapless"
-version = "0.7.17"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cdc6457c0eb62c71aac4bc17216026d8410337c4126773b9c5daba343f17964f"
-dependencies = [
- "atomic-polyfill",
- "hash32",
- "rustc_version",
- "serde",
- "spin",
- "stable_deref_trait",
-]
 
 [[package]]
 name = "heck"
@@ -1693,6 +1694,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "jsonwebtoken"
+version = "9.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a87cc7a48537badeae96744432de36f4be2b4a34a05a5ef32e9dd8a1c169dde"
+dependencies = [
+ "base64",
+ "js-sys",
+ "pem",
+ "ring",
+ "serde",
+ "serde_json",
+ "simple_asn1",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1816,6 +1832,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "num-bigint"
+version = "0.4.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a5e44f723f1133c9deac646763579fdb3ac745e418f2a7af9cd0c431da1f20b9"
+dependencies = [
+ "num-integer",
+ "num-traits",
+]
+
+[[package]]
+name = "num-conv"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "521739c6d2bac4aa25192232afe6841231376b2b26d4d9fae5ecf8ca5772e441"
+
+[[package]]
+name = "num-integer"
+version = "0.1.46"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7969661fd2958a5cb096e56c8e1ad0444ac2bbcd0061bd28660485a44879858f"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
 name = "num-traits"
 version = "0.2.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1914,6 +1955,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "pem"
+version = "3.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d30c53c26bc5b31a98cd02d20f25a7c8567146caf63ed593a9d87b2775291be"
+dependencies = [
+ "base64",
+ "serde_core",
+]
+
+[[package]]
 name = "percent-encoding"
 version = "2.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2008,7 +2059,6 @@ dependencies = [
  "cobs",
  "embedded-io 0.4.0",
  "embedded-io 0.6.1",
- "heapless",
  "serde",
 ]
 
@@ -2020,6 +2070,12 @@ checksum = "0103b1cef7ec0cf76490e969665504990193874ea05c85ff9bab8b911d0a0564"
 dependencies = [
  "zerovec",
 ]
+
+[[package]]
+name = "powerfmt"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "439ee305def115ba05938db6eb1644ff94165c5ab5e9420d1c1bcedbba909391"
 
 [[package]]
 name = "ppv-lite86"
@@ -2753,27 +2809,30 @@ dependencies = [
 ]
 
 [[package]]
-name = "selene-algorithms"
-version = "1.1.0"
-source = "git+https://github.com/Aionforge-Labs/selene-db.git?branch=development#e0234a3c9438619d2e219ed6c02fced596a412af"
+name = "selene-db-algorithms"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c060cde63b1c4c0876cb0cab6d4f30b3a69baa7b73e1004bf491039bdabe2fc9"
 dependencies = [
  "parking_lot",
  "rayon",
  "roaring",
  "rustc-hash",
- "selene-core",
- "selene-graph",
+ "selene-db-core",
+ "selene-db-graph",
  "smallvec",
  "thiserror",
 ]
 
 [[package]]
-name = "selene-core"
-version = "1.1.0"
-source = "git+https://github.com/Aionforge-Labs/selene-db.git?branch=development#e0234a3c9438619d2e219ed6c02fced596a412af"
+name = "selene-db-core"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "58b08ddd59238d09bdcbcd08853469566721af8a87fb8314bd9040e8571a6090"
 dependencies = [
  "bytes",
  "jiff",
+ "metrics",
  "miette",
  "parking_lot",
  "rkyv 0.8.16",
@@ -2787,9 +2846,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "selene-gql"
-version = "1.1.0"
-source = "git+https://github.com/Aionforge-Labs/selene-db.git?branch=development#e0234a3c9438619d2e219ed6c02fced596a412af"
+name = "selene-db-gql"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a82621ea728fa05b4ea60f89ec1eaacce8e48f5516b712bf19c997227790898c"
 dependencies = [
  "jiff",
  "lru",
@@ -2799,9 +2859,9 @@ dependencies = [
  "pest_derive",
  "rust_decimal",
  "rustc-hash",
- "selene-algorithms",
- "selene-core",
- "selene-graph",
+ "selene-db-algorithms",
+ "selene-db-core",
+ "selene-db-graph",
  "serde",
  "serde_json",
  "smallvec",
@@ -2813,9 +2873,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "selene-graph"
-version = "1.1.0"
-source = "git+https://github.com/Aionforge-Labs/selene-db.git?branch=development#e0234a3c9438619d2e219ed6c02fced596a412af"
+name = "selene-db-graph"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "37d3e12a6f9fc44d37ca15690843e4f4cec02fda67eab65da6995593fb64d270"
 dependencies = [
  "arc-swap",
  "imbl",
@@ -2828,26 +2889,28 @@ dependencies = [
  "roaring",
  "rust_decimal",
  "rustc-hash",
- "selene-core",
- "selene-persist",
+ "selene-db-core",
+ "selene-db-persist",
  "serde",
  "smallvec",
  "thiserror",
  "tracing",
  "triomphe",
  "uuid",
+ "wide",
 ]
 
 [[package]]
-name = "selene-persist"
-version = "1.1.0"
-source = "git+https://github.com/Aionforge-Labs/selene-db.git?branch=development#e0234a3c9438619d2e219ed6c02fced596a412af"
+name = "selene-db-persist"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aeb851c2056780c8da870714cd65d0c2d1d9aa9591d9bba1fc17c61c03b20946"
 dependencies = [
  "blake3",
  "miette",
  "postcard",
  "rayon",
- "selene-core",
+ "selene-db-core",
  "serde",
  "thiserror",
  "tracing",
@@ -2977,6 +3040,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3a9fe34e3e7a50316060351f37187a3f546bce95496156754b601a5fa71b76e"
 
 [[package]]
+name = "simple_asn1"
+version = "0.6.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0d585997b0ac10be3c5ee635f1bab02d512760d14b7c468801ac8a01d9ae5f1d"
+dependencies = [
+ "num-bigint",
+ "num-traits",
+ "thiserror",
+ "time",
+]
+
+[[package]]
 name = "slab"
 version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2999,15 +3074,6 @@ checksum = "52d1cfed4120b4d927bf7c0f86d2087a4a7d6027c906d9f9d525a80573b9be51"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "spin"
-version = "0.9.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6980e8d7511241f8acf4aebddbb1ff938df5eebe98691418c4468d0b72a96a67"
-dependencies = [
- "lock_api",
 ]
 
 [[package]]
@@ -3143,6 +3209,37 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
+]
+
+[[package]]
+name = "time"
+version = "0.3.47"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "743bd48c283afc0388f9b8827b976905fb217ad9e647fae3a379a9283c4def2c"
+dependencies = [
+ "deranged",
+ "itoa",
+ "num-conv",
+ "powerfmt",
+ "serde_core",
+ "time-core",
+ "time-macros",
+]
+
+[[package]]
+name = "time-core"
+version = "0.1.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7694e1cfe791f8d31026952abf09c69ca6f6fa4e1a1229e18988f06a04a12dca"
+
+[[package]]
+name = "time-macros"
+version = "0.2.27"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2e70e4c5a0e0a8a4823ad65dfe1a6930e4f4d756dcd9dd7939022b5e8c501215"
+dependencies = [
+ "num-conv",
+ "time-core",
 ]
 
 [[package]]

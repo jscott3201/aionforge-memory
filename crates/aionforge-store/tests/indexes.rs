@@ -39,12 +39,22 @@ fn migrated() -> Store {
 fn migration_registers_all_native_indexes() {
     let store = migrated();
 
-    // §7: one HNSW/cosine vector index per embedding property, pinned at the configured
-    // dimension.
+    // §7: one cosine vector index per embedding property, pinned at the configured
+    // dimension. Episode and Fact — the largest corpora — use the TurboQuant cosine
+    // index (selene 1.2); the smaller corpora stay on HNSW cosine.
     let vectors = store.vector_indexes();
     assert_eq!(vectors.len(), 7, "vector index count: {vectors:?}");
     for vector in &vectors {
-        assert_eq!(vector.kind, "HnswCosine", "{} is HNSW/cosine", vector.label);
+        let expected_kind = if matches!(vector.label.as_str(), "Episode" | "Fact") {
+            "TurboQuantCosine"
+        } else {
+            "HnswCosine"
+        };
+        assert_eq!(
+            vector.kind, expected_kind,
+            "{} has the expected cosine index kind",
+            vector.label
+        );
         assert_eq!(
             vector.dimension, DEFAULT_EMBEDDING_DIMENSION,
             "{} pinned at the configured dimension",
@@ -68,17 +78,19 @@ fn migration_registers_all_native_indexes() {
     // collision pre-check (M4.T03), Fact.id for the quorum-promotion global-copy
     // idempotency probe (M4.T04), AuditEvent.actor_id + AuditEvent.occurred_at (the
     // first datetime property index) for the M4.T06 audit-history readers, and
-    // BadPattern.id + CoreBlock.id for the forgetting point-op resolver (M5.T02)) = 51.
+    // BadPattern.id + CoreBlock.id for the forgetting point-op resolver (M5.T02)) = 51,
+    // plus the work-tracking facet: +6 scalar (WorkItem id/parent_id/work_status/level,
+    // Tag id/slug) and +2 namespace (one per new node kind) = 59.
     assert_eq!(
         store.property_indexes().len(),
-        51,
+        59,
         "scalar property index count"
     );
 
-    // §8: the three pure-scalar composites plus the two AuditEvent temporal composites
-    // (now that selene indexes ZONED DATETIME).
+    // §8: the three pure-scalar composites, the two AuditEvent temporal composites (now
+    // that selene indexes ZONED DATETIME), and the work-item sibling-ordering composite.
     let composites = store.composite_indexes();
-    assert_eq!(composites.len(), 5, "composite index count: {composites:?}");
+    assert_eq!(composites.len(), 6, "composite index count: {composites:?}");
     assert!(
         composites
             .iter()
@@ -106,6 +118,55 @@ fn migration_registers_all_native_indexes() {
             .any(|(label, prop)| label == "AuditEvent" && prop == "occurred_at"),
         "AuditEvent.occurred_at datetime property index present"
     );
+}
+
+#[test]
+fn vector_index_stats_project_per_index_memory_and_turbo_quant_flags() {
+    let store = migrated();
+    let stats = store.vector_index_stats();
+    assert_eq!(stats.len(), 7, "one stats row per vector index: {stats:?}");
+
+    // Episode and Fact carry the TurboQuant accelerator; the rest stay HNSW.
+    let mut turbo: Vec<&str> = stats
+        .iter()
+        .filter(|s| s.is_turbo_quant)
+        .map(|s| s.label.as_str())
+        .collect();
+    turbo.sort_unstable();
+    assert_eq!(
+        turbo,
+        ["Episode", "Fact"],
+        "only Episode/Fact are TurboQuant"
+    );
+
+    for s in &stats {
+        let expect_turbo = matches!(s.label.as_str(), "Episode" | "Fact");
+        assert_eq!(s.is_turbo_quant, expect_turbo, "{} turbo flag", s.label);
+        assert_eq!(
+            s.kind,
+            if expect_turbo {
+                "TurboQuantCosine"
+            } else {
+                "HnswCosine"
+            },
+            "{} kind",
+            s.label
+        );
+        // No IVF index is registered, so nothing recommends an IVF rebuild.
+        assert!(
+            !s.ivf_rebuild_recommended,
+            "{} should not recommend rebuild",
+            s.label
+        );
+        // The reachable upper bound is never below the index-owned estimate.
+        assert!(s.estimated_reachable_bytes >= s.estimated_index_bytes);
+    }
+
+    // The doctor carries the same per-index stats and stays healthy — the stats are
+    // diagnostics, not a health gate.
+    let report = store.doctor_report().expect("doctor report");
+    assert_eq!(report.indexes.vector_index_stats.len(), 7);
+    assert!(report.indexes.ok, "stats do not flip index health");
 }
 
 #[test]

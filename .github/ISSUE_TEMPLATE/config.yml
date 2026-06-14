@@ -1,0 +1,28 @@
+# GitHub issue chooser configuration.
+# Docs: https://docs.github.com/en/communities/using-templates-to-encourage-useful-issues-and-pull-requests/configuring-issue-templates-for-your-repository
+#
+# Forcing template selection routes every report through a structured form
+# (bug / feature / RFC), matching this repo's design culture. Maintainers can
+# still open blank issues from the repo's Issues tab.
+blank_issues_enabled: false
+
+contact_links:
+  # Security/vulnerability reports must never go through a public issue.
+  # Use GitHub's private vulnerability reporting; the policy is in SECURITY.md
+  # (rendered at the /security/policy tab).
+  #
+  # TODO(maintainer): Enable "Private vulnerability reporting" in
+  # Settings > Security > Advanced Security for the /security/advisories/new
+  # link below to be live. Until then it 404s for non-maintainers; point
+  # contributors at the /security/policy tab (SECURITY.md) for the contact.
+  - name: Report a security vulnerability (private)
+    url: https://github.com/jscott3201/aionforge-memory/security/advisories/new
+    about: Disclose security issues privately. Do NOT open a public issue. See SECURITY.md (the Security tab) for the reporting policy.
+
+  # TODO(maintainer): GitHub Discussions is NOT currently enabled on this repo
+  # (verified: hasDiscussionsEnabled=false). Enable Discussions in
+  # Settings > General > Features, or swap/remove this link. Leaving it as-is
+  # 404s for contributors.
+  - name: Questions & general discussion
+    url: https://github.com/jscott3201/aionforge-memory/discussions
+    about: Ask usage questions or discuss ideas here instead of opening an issue.

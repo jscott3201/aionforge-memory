@@ -3,9 +3,9 @@
 # Runs on a schedule and on push to `main`. Catches RUSTSEC advisories that
 # appear between release gates (the release gate audits at PR time; advisories
 # land continuously) and re-runs the full macOS validation off the per-PR path.
-# As the substrate moves on `development`, the scheduled run also surfaces
-# substrate drift early: it `cargo update`s the selene-db git dependency to the
-# latest `development` commit before building, rather than running --locked.
+# selene-db is pinned to a crates.io release, but the scheduled run still surfaces
+# substrate drift early: it `cargo update`s the selene-db crates to the latest
+# semver-compatible 1.x release before building, rather than running --locked.
 #
 # Security: no `${{ github.event.* }}` in any `run:` (confined to if:/with:/env:).
 
@@ -38,7 +38,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.95.0
       - name: pull the latest substrate commit (drift)
-        run: cargo update -p selene-core -p selene-graph -p selene-persist -p selene-gql -p selene-algorithms
+        run: cargo update -p selene-db-core -p selene-db-graph -p selene-db-persist -p selene-db-gql -p selene-db-algorithms
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-audit
@@ -58,10 +58,10 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: nextest
-      # Nightly builds against the latest substrate commit to surface drift early, so it
-      # updates the pinned commit rather than building --locked.
+      # Nightly builds against the latest released substrate to surface drift early, so it
+      # updates the selene-db crates within the 1.x line rather than building --locked.
       - name: pull the latest substrate commit (drift)
-        run: cargo update -p selene-core -p selene-graph -p selene-persist -p selene-gql -p selene-algorithms
+        run: cargo update -p selene-db-core -p selene-db-graph -p selene-db-persist -p selene-db-gql -p selene-db-algorithms
       - name: clippy + tests
         run: |
           cargo clippy --workspace --all-targets --all-features -- -D warnings

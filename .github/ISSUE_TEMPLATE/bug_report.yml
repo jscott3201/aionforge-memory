@@ -1,0 +1,72 @@
+name: Bug report
+description: Report a defect in Aionforge Memory (store, CLI, MCP server, library, or plugin).
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug. Before you submit:
+        - Search existing issues to avoid duplicates.
+        - Do not paste secrets, bearer tokens, or private data — redact logs and config before sharing.
+        - For a security vulnerability, do NOT open a public issue; use the policy in `SECURITY.md`.
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened, and what did you expect?
+      description: Describe the actual behavior and the behavior you expected instead.
+      placeholder: |
+        Actual: `capture` returns an error when ...
+        Expected: the memory is captured and retrievable via `search`.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: The exact commands, inputs, or steps to reproduce. Smaller is better.
+      placeholder: |
+        1. aionforge serve http --data-dir /tmp/af --bearer-token-env AIONFORGE_MCP_TOKEN
+        2. Call `capture` with { ... }
+        3. Observe ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit
+      description: Output of `aionforge --version`, the container image tag, or the git SHA you built from.
+      placeholder: "aionforge 0.2.0 (or git SHA abc1234)"
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Affected surface / crate
+      description: Where does the bug occur?
+      options:
+        - "MCP server (aionforge-mcp)"
+        - "CLI (aionforge-cli)"
+        - "Rust library (aionforge) / engine (aionforge-engine)"
+        - "Capture"
+        - "Retrieval"
+        - "Consolidation"
+        - "Store (aionforge-store / selene-db)"
+        - "Config (aionforge-config)"
+        - "Claude Code plugin"
+        - "Other / not sure"
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs or output
+      description: Paste any error output. This is rendered as a code block — no Markdown needed.
+      render: shell
+  - type: checkboxes
+    id: acknowledgements
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and this is not a duplicate.
+          required: true
+        - label: This report contains no secrets, tokens, or private data.
+          required: true

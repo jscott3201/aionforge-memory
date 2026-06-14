@@ -214,6 +214,7 @@ async fn capture_text(
             teams: Vec::new(),
             session_id: None,
             captured_at: now(),
+            ingested_at: now(),
             writer: WriterContext {
                 model_family: family.to_string(),
                 model_version: None,

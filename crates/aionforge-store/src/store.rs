@@ -2,6 +2,7 @@
 //! parameter-bound GQL.
 
 use std::{
+    collections::{HashMap, HashSet, hash_map::Entry},
     path::Path,
     sync::Arc,
     time::{Duration, Instant},
@@ -17,13 +18,13 @@ use aionforge_domain::nodes::episodic::Episode;
 use aionforge_domain::nodes::semantic::{Entity, Fact};
 use aionforge_domain::time::Timestamp;
 use selene_core::{GraphId, NodeId, Value, db_string};
-use selene_gql::{BindingTable, BuiltinProcedureRegistry, Session, StatementOutput};
+use selene_gql::{CallPlanCache, SharedPlanCache};
 use selene_graph::{DEFAULT_WAL_FILE_NAME, GraphTypeDef, SeleneGraph, SharedGraph, WalConfig};
 
 use crate::config::StoreConfig;
-use crate::convert::{as_id, as_namespace};
+use crate::convert::{as_id, as_namespace, id_value};
 use crate::error::StoreError;
-use crate::gql::{BoundQuery, QueryResult, Rows};
+use crate::gql::{BoundQuery, QueryResult};
 use crate::providers::candidate_state_provider;
 use crate::search::SearchKind;
 use crate::{agent, entity, episode, fact};
@@ -55,6 +56,11 @@ pub struct Store {
     /// (two signers across one store's life, a determinism hazard) structurally impossible.
     audit_signer:
         std::sync::OnceLock<std::sync::Arc<dyn aionforge_domain::verify::AuditEventSigner>>,
+    /// Shared per-graph GQL plan caches, built once and cloned into every session, so
+    /// the fixed-source request plans are parsed and lowered once and reused across the
+    /// many short-lived sessions. See [`crate::plan_cache`].
+    pub(crate) shared_plan_cache: Arc<SharedPlanCache>,
+    pub(crate) call_plan_cache: Arc<CallPlanCache>,
 }
 
 impl std::fmt::Debug for Store {
@@ -90,6 +96,21 @@ impl Store {
         self.audit_signer.get().map(std::sync::Arc::as_ref)
     }
 
+    /// Assemble a store over an opened graph, building its per-store plan caches.
+    ///
+    /// Every constructor funnels through here so the cache pair and the audit-signer
+    /// latch are initialized identically regardless of how the graph was opened.
+    fn assemble(graph: SharedGraph, config: StoreConfig) -> Self {
+        let (shared_plan_cache, call_plan_cache) = crate::plan_cache::new_plan_caches();
+        Self {
+            graph,
+            config,
+            audit_signer: std::sync::OnceLock::new(),
+            shared_plan_cache,
+            call_plan_cache,
+        }
+    }
+
     /// Open an in-memory store with no persistence and no schema applied yet.
     ///
     /// The graph is closed but bound to an empty type, so it accepts catalog DDL but
@@ -118,11 +139,7 @@ impl Store {
             .bound_to(empty_graph_type()?)?
             .with_provider(candidate_state_provider()?)
             .build()?;
-        Ok(Self {
-            graph,
-            config,
-            audit_signer: std::sync::OnceLock::new(),
-        })
+        Ok(Self::assemble(graph, config))
     }
 
     /// Open a WAL-backed store at `dir`, with no schema applied yet.
@@ -145,11 +162,7 @@ impl Store {
             .bound_to(empty_graph_type()?)?
             .with_provider(candidate_state_provider()?)
             .build()?;
-        Ok(Self {
-            graph,
-            config,
-            audit_signer: std::sync::OnceLock::new(),
-        })
+        Ok(Self::assemble(graph, config))
     }
 
     /// Open a WAL-backed store at `dir` with the full schema already applied.
@@ -194,12 +207,9 @@ impl Store {
             graph_id(),
             empty_graph_type()?,
             vec![candidate_state_provider()?],
-        )?;
-        let store = Self {
-            graph,
-            config,
-            audit_signer: std::sync::OnceLock::new(),
-        };
+        )
+        .map_err(StoreError::from_recovery)?;
+        let store = Self::assemble(graph, config);
         store.dimension_consistency_check(config.embedding_dimension)?;
         store.audit_signature_latch_check()?;
         Ok(store)
@@ -298,6 +308,136 @@ impl Store {
         }
     }
 
+    /// Read an episode by its domain id from a fresh snapshot.
+    ///
+    /// This returns live and soft-forgotten episodes; caller-facing read surfaces must
+    /// still enforce visibility and `expired_at` policy before rendering the value.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the id lookup or stored episode decode fails.
+    pub fn episode_by_id(&self, id: &Id) -> Result<Option<Episode>, StoreError> {
+        let snapshot = self.graph.read();
+        let Some(node) = crate::convert::node_by_id(&snapshot, Episode::LABEL, id)? else {
+            return Ok(None);
+        };
+        match snapshot.node_properties(node) {
+            Some(props) => Ok(Some(episode::from_properties(props)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Live episodes for a session id, ordered by ingestion and capped by `limit`.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the lookup or episode decode fails.
+    pub fn live_episodes_by_session_id(
+        &self,
+        session_id: &Id,
+        limit: usize,
+    ) -> Result<Vec<Episode>, StoreError> {
+        let snapshot = self.graph.read();
+        let label = db_string(Episode::LABEL)?;
+        let prop = db_string("session_id")?;
+        let value = id_value(session_id)?;
+        let Some(rows) = snapshot.nodes_with_property_eq(&label, &prop, &value) else {
+            return Ok(Vec::new());
+        };
+        let mut episodes = Vec::new();
+        for row in rows.iter() {
+            let Some(node) = snapshot.node_id_for_row(selene_graph::RowIndex::new(row)) else {
+                continue;
+            };
+            let Some(props) = snapshot.node_properties(node) else {
+                continue;
+            };
+            let episode = episode::from_properties(props)?;
+            if episode.identity.expired_at.is_none() {
+                episodes.push(episode);
+            }
+        }
+        episodes.sort_by(|left, right| {
+            left.identity
+                .ingested_at
+                .to_string()
+                .cmp(&right.identity.ingested_at.to_string())
+                .then_with(|| {
+                    left.identity
+                        .id
+                        .to_string()
+                        .cmp(&right.identity.id.to_string())
+                })
+        });
+        episodes.truncate(limit);
+        Ok(episodes)
+    }
+
+    /// The newest live episode that explicitly supersedes `id`, if one exists.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if episode decode fails.
+    pub fn live_episode_superseded_by(&self, id: &Id) -> Result<Option<Id>, StoreError> {
+        let mut by_target = self.live_episode_superseded_by_many([id])?;
+        Ok(by_target.remove(id))
+    }
+
+    /// The newest live episode that explicitly supersedes each target id.
+    ///
+    /// This is the recall-scale reverse lookup for episode supersession metadata. It
+    /// scans the live episode label set once, records only claims whose `origin.supersedes`
+    /// points at one of the requested targets, and keeps the newest replacement per target.
+    /// Callers that need annotations for many candidates should use this instead of N
+    /// calls to [`Store::live_episode_superseded_by`].
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if episode decode fails.
+    pub fn live_episode_superseded_by_many<'a>(
+        &self,
+        ids: impl IntoIterator<Item = &'a Id>,
+    ) -> Result<HashMap<Id, Id>, StoreError> {
+        let targets: HashSet<Id> = ids.into_iter().copied().collect();
+        if targets.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let snapshot = self.graph.read();
+        let label = db_string(Episode::LABEL)?;
+        let Some(rows) = snapshot.nodes_with_label(&label) else {
+            return Ok(HashMap::new());
+        };
+        let mut newest: HashMap<Id, Episode> = HashMap::new();
+        for row in rows.iter() {
+            let Some(node) = snapshot.node_id_for_row(selene_graph::RowIndex::new(row)) else {
+                continue;
+            };
+            let Some(props) = snapshot.node_properties(node) else {
+                continue;
+            };
+            let episode = episode::from_properties(props)?;
+            if episode.identity.expired_at.is_some() {
+                continue;
+            }
+            let Some(target) = episode.origin.as_ref().and_then(|origin| origin.supersedes) else {
+                continue;
+            };
+            if !targets.contains(&target) {
+                continue;
+            }
+            match newest.entry(target) {
+                Entry::Vacant(slot) => {
+                    slot.insert(episode);
+                }
+                Entry::Occupied(mut slot) => {
+                    if episode_is_newer(&episode, slot.get()) {
+                        slot.insert(episode);
+                    }
+                }
+            }
+        }
+        Ok(newest
+            .into_iter()
+            .map(|(target, replacement)| (target, replacement.identity.id))
+            .collect())
+    }
+
     /// Whether any episode — live or soft-forgotten — already carries this domain id.
     ///
     /// The signed-write collision pre-check (06 §3, M4.T03): a signed write adopts a
@@ -333,55 +473,6 @@ impl Store {
             }
         }
         Ok(false)
-    }
-
-    /// Execute a parameter-bound GQL statement.
-    ///
-    /// The query's source is fixed and trusted; every caller value travels as a
-    /// bound parameter, so the parsed statement never depends on caller input.
-    /// Statements run against the engine's full builtin procedure registry, so the
-    /// native `CALL selene.*` / `CALL algo.*` surfaces (vector, BM25, candidate-state,
-    /// and graph algorithms — 03 §1–§4) are available through this one seam.
-    ///
-    /// # Errors
-    /// Returns [`StoreError`] if the statement fails to parse, plan, or execute.
-    pub fn execute(&self, query: &BoundQuery) -> Result<QueryResult, StoreError> {
-        let mut session = Session::new(&self.graph);
-        for (name, value) in query.params() {
-            session.bind_parameter(name.clone(), value.clone());
-        }
-        let registry = BuiltinProcedureRegistry::new();
-        let output = session.execute_source(query.source(), &registry)?;
-        materialize(output)
-    }
-
-    /// Run a sequence of parameter-bound statements in one engine session, returning the
-    /// last statement's result.
-    ///
-    /// Unlike [`Store::execute`] — which opens a fresh session per call — every statement
-    /// here shares one session. selene graph-algorithm projections live in the session,
-    /// not the graph, so a projection a `CALL algo.projection_build` statement registers is
-    /// visible to a later `CALL algo.pagerank` over it; running them through two separate
-    /// `execute` calls would lose the projection between them. Each source is fixed and
-    /// trusted and every caller value travels as a bound parameter, exactly as in
-    /// [`Store::execute`].
-    ///
-    /// # Errors
-    /// Returns [`StoreError`] if any statement fails to parse, plan, or execute.
-    pub(crate) fn execute_session(
-        &self,
-        statements: &[BoundQuery],
-    ) -> Result<QueryResult, StoreError> {
-        let registry = BuiltinProcedureRegistry::new();
-        let mut session = Session::new(&self.graph);
-        let mut result = QueryResult::Empty;
-        for query in statements {
-            for (name, value) in query.params() {
-                session.bind_parameter(name.clone(), value.clone());
-            }
-            result = materialize(session.execute_source(query.source(), &registry)?)?;
-        }
-        Ok(result)
     }
 
     /// The id of a live episode with this content hash, if one exists.
@@ -813,6 +904,18 @@ impl Store {
     }
 }
 
+fn episode_is_newer(candidate: &Episode, current: &Episode) -> bool {
+    let candidate_key = (
+        candidate.identity.ingested_at.to_string(),
+        candidate.identity.id.to_string(),
+    );
+    let current_key = (
+        current.identity.ingested_at.to_string(),
+        current.identity.id.to_string(),
+    );
+    candidate_key > current_key
+}
+
 fn emit_open_metrics(mode: &'static str, result: &Result<Store, StoreError>, elapsed: Duration) {
     let outcome = if result.is_ok() { "success" } else { "error" };
     metrics::counter!(
@@ -922,37 +1025,4 @@ fn empty_graph_type() -> Result<GraphTypeDef, StoreError> {
         node_types: Vec::new(),
         edge_types: Vec::new(),
     })
-}
-
-/// Convert an owned engine [`StatementOutput`] into the owned [`QueryResult`].
-///
-/// A data-modifying statement carrying a `RETURN` auto-commits and still yields
-/// rows; those are carried through on [`QueryResult::Written`] rather than dropped.
-fn materialize(output: StatementOutput) -> Result<QueryResult, StoreError> {
-    match output {
-        StatementOutput::Empty => Ok(QueryResult::Empty),
-        StatementOutput::Written(outcome) => Ok(QueryResult::Written {
-            generation: outcome.generation,
-            rows: outcome.rows.map(materialize_table),
-        }),
-        StatementOutput::Rows(table) => Ok(QueryResult::Rows(materialize_table(table))),
-        other => Err(StoreError::decode(format!(
-            "unrecognized statement output: {other:?}"
-        ))),
-    }
-}
-
-/// Materialize an owned engine binding table into the owned [`Rows`].
-fn materialize_table(table: BindingTable) -> Rows {
-    let columns = table
-        .schema()
-        .columns
-        .iter()
-        .map(|column| column.name.as_ref().map(|name| name.as_str().to_string()))
-        .collect();
-    let rows = table
-        .iter()
-        .map(|binding| binding.values().to_vec())
-        .collect();
-    Rows::new(columns, rows)
 }

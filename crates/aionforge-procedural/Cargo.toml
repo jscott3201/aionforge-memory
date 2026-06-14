@@ -10,8 +10,8 @@ homepage.workspace = true
 description = "Procedural memory: skills-as-data and bad patterns with success-weighted retrieval."
 
 [dependencies]
-aionforge-domain = { path = "../aionforge-domain", version = "0.1.0" }
-aionforge-store = { path = "../aionforge-store", version = "0.1.0" }
+aionforge-domain = { path = "../aionforge-domain", version = "0.2.0" }
+aionforge-store = { path = "../aionforge-store", version = "0.2.0" }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 

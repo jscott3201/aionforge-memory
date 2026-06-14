@@ -98,6 +98,7 @@ async fn capture_then_start_consolidation_derives_a_fact() {
             teams: Vec::new(),
             session_id: None,
             captured_at: now(),
+            ingested_at: now(),
             writer: WriterContext {
                 model_family: "host".to_string(),
                 model_version: None,
@@ -161,6 +162,7 @@ async fn capture_then_consolidate_once_derives_a_fact() {
             teams: Vec::new(),
             session_id: None,
             captured_at: now(),
+            ingested_at: now(),
             writer: WriterContext {
                 model_family: "host".to_string(),
                 model_version: None,
@@ -222,6 +224,7 @@ async fn consolidation_lag_reports_a_pending_capture_without_reaching_into_the_s
             teams: Vec::new(),
             session_id: None,
             captured_at: now(),
+            ingested_at: now(),
             writer: WriterContext {
                 model_family: "host".to_string(),
                 model_version: None,

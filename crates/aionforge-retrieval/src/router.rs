@@ -41,6 +41,9 @@ pub enum QueryClass {
 pub struct SignalWeights {
     /// Lexical (BM25) weight.
     pub lexical: f64,
+    /// Lexical-anchor weight. This is a factual-query guard over the highest BM25 hits,
+    /// not a separate search path.
+    pub lexical_anchor: f64,
     /// Dense (vector) weight.
     pub dense: f64,
     /// Support-expansion weight (03 §4, M3.T02): the graph-guided dense scoring over a
@@ -63,6 +66,7 @@ impl SignalWeights {
     pub fn weight(&self, signal: Signal) -> f64 {
         match signal {
             Signal::Lexical => self.lexical,
+            Signal::LexicalAnchor => self.lexical_anchor,
             Signal::Dense => self.dense,
             Signal::Support => self.support,
             Signal::Graph => self.graph,
@@ -105,11 +109,13 @@ const OFF: f64 = 0.0;
 #[must_use]
 pub fn profile_for(class: QueryClass) -> RetrievalProfile {
     match class {
-        // factual: heavy lexical + dense, light graph, heavy trust, light recency.
+        // factual: heavy lexical + lexical anchor + dense, light graph, heavy trust,
+        // light recency.
         QueryClass::SingleHopFactual => RetrievalProfile {
             class,
             weights: SignalWeights {
                 lexical: HEAVY,
+                lexical_anchor: HEAVY,
                 dense: HEAVY,
                 support: OFF,
                 graph: LIGHT,
@@ -128,6 +134,7 @@ pub fn profile_for(class: QueryClass) -> RetrievalProfile {
             class,
             weights: SignalWeights {
                 lexical: LIGHT,
+                lexical_anchor: OFF,
                 dense: HEAVY,
                 support: MODERATE,
                 graph: HEAVY,
@@ -146,6 +153,7 @@ pub fn profile_for(class: QueryClass) -> RetrievalProfile {
             class,
             weights: SignalWeights {
                 lexical: MODERATE,
+                lexical_anchor: OFF,
                 dense: HEAVY,
                 support: OFF,
                 graph: OFF,
@@ -164,6 +172,7 @@ pub fn profile_for(class: QueryClass) -> RetrievalProfile {
             class,
             weights: SignalWeights {
                 lexical: MODERATE,
+                lexical_anchor: OFF,
                 dense: MODERATE,
                 support: MODERATE,
                 graph: HEAVY,
@@ -182,6 +191,7 @@ pub fn profile_for(class: QueryClass) -> RetrievalProfile {
             class,
             weights: SignalWeights {
                 lexical: HEAVY,
+                lexical_anchor: HEAVY,
                 dense: OFF,
                 support: OFF,
                 graph: OFF,
@@ -233,17 +243,31 @@ static INTERROGATIVE: LazyLock<Regex> = LazyLock::new(|| {
     .expect("valid static pattern")
 });
 
+/// Source/file anchors: paths, common source/doc extensions, or multiple hyphen/underscore
+/// anchor tokens. These are exact lookup cues even when they contain dates.
+static SOURCE_PATH_MARKERS: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?i)(?:^|\s)(?:[./~]?[\w.-]+/[\w./-]+|[\w./-]+\.(?:rs|md|toml|json|jsonl|yaml|yml|lock|txt|sh|ts|tsx|js|jsx|py|go|java|rb|sql|proto|drawio))(?:\s|$)",
+    )
+    .expect("valid static pattern")
+});
+
+static SOURCE_ANCHOR_TOKEN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\b[A-Za-z0-9]+[-_][A-Za-z0-9][A-Za-z0-9_-]*\b").expect("valid static pattern")
+});
+
 /// Sort a query into a [`QueryClass`] by heuristic (03 §3).
 ///
-/// Precedence runs from most specific to least: an explicit quoted phrase, then
-/// temporal markers, then a bare proper-noun entity, then associative cue words, and
+/// Precedence runs from most specific to least: an explicit quoted phrase, source/file
+/// anchors, temporal markers, a bare proper-noun entity, associative cue words, and
 /// finally the single-hop factual default. The order matters — a temporal phrase that
 /// also reads like a multi-hop question is routed temporal so the bi-temporal filter
-/// applies.
+/// applies, unless the temporal-looking token is inside a source path such as
+/// `docs/2026-plan.md`.
 #[must_use]
 pub fn classify(query: &str) -> QueryClass {
     let query = query.trim();
-    if QUOTED_PHRASE.is_match(query) {
+    if QUOTED_PHRASE.is_match(query) || looks_like_source_anchor(query) {
         QueryClass::Quote
     } else if TEMPORAL_MARKERS.is_match(query) {
         QueryClass::Temporal
@@ -254,6 +278,10 @@ pub fn classify(query: &str) -> QueryClass {
     } else {
         QueryClass::SingleHopFactual
     }
+}
+
+pub(crate) fn looks_like_source_anchor(query: &str) -> bool {
+    SOURCE_PATH_MARKERS.is_match(query) || SOURCE_ANCHOR_TOKEN.find_iter(query).take(2).count() >= 2
 }
 
 /// A bare entity lookup: a one- or two-token query with no question words whose

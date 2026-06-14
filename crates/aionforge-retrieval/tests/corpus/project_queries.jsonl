@@ -1,0 +1,13 @@
+{"id":"pq-0001","query":"what do we know about disk pressure","embedding":"ops_noise","expected_top":"pm-0001","source":"sanitized-project-memory-pattern"}
+{"id":"pq-0002","query":"store identity embedder dimension","embedding":"embedder","expected_top":"pm-0004","source":"sanitized-project-memory-pattern"}
+{"id":"pq-0003","query":"backup stopped-server snapshot WAL restore","embedding":"backup","expected_top":"pm-0008","source":"sanitized-project-memory-pattern"}
+{"id":"pq-0004","query":"multiple bearer tokens attribution","embedding":"auth","expected_top":"pm-0006","source":"sanitized-project-memory-pattern"}
+{"id":"pq-0005","query":"WAL codec recovery doctor JSON","embedding":"doctor","expected_top":"pm-0005","source":"sanitized-project-memory-pattern"}
+{"id":"pq-0006","query":"recall explanation active weights contributions","embedding":"retrieval","expected_top":"pm-0009","source":"sanitized-project-memory-pattern"}
+{"id":"pq-0007","query":"release images linux amd64 arm64 defer Docker Hub","embedding":"release","expected_top":"pm-0003","source":"sanitized-project-memory-pattern"}
+{"id":"pq-0008","query":"plugin cache stale MCP manifest installed version","embedding":"plugin","expected_top":"pm-0007","source":"sanitized-project-memory-pattern"}
+{"id":"pq-0009","query":"local OCI runtime smoke standard Docker build","embedding":"container","expected_top":"pm-0010","source":"sanitized-project-memory-pattern"}
+{"id":"pq-0010","query":"rotate MCP bearer token update clients remove retired binding","embedding":"auth","expected_top":"pm-0011","source":"sanitized-project-memory-pattern"}
+{"id":"pq-0011","query":"public PR summary code behavior changes local filesystem paths secret-shaped values","embedding":"public_docs","expected_top":"pm-0012","source":"sanitized-project-memory-pattern"}
+{"id":"pq-0012","query":"docs/mcp-clients.md host verified principal identity connection","embedding":"public_docs","expected_top":"pm-0013","source":"sanitized-project-memory-pattern"}
+{"id":"pq-0013","query":"architecture embedding-guide graph-algorithms contributing vector-provider procedures external extension providers","embedding":"public_docs","expected_top":"pm-0015","source":"sanitized-project-memory-pattern"}

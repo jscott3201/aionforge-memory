@@ -10,9 +10,17 @@ private and keeps shared spaces from being written behind the host's back.
 A namespace is the owning scope of a record:
 
 - **Agent** — an agent's own private space. Each agent has exactly one.
-- **Team** — a space shared by the members of a named team.
+- **Team** — a space shared by the members of a named team. Project or workspace
+  sharing uses this same namespace shape, for example `team:aionforge-memory` or
+  `team:project-alpha`.
 - **Global** — the shared, promoted space every reader can see.
 - **System** — internal substrate bookkeeping, never an agent's to read or write.
+
+There is no separate first-class `Project` namespace today. The current policy model
+already authorizes shared project memory through host-asserted team membership, and
+adding another namespace kind would require a domain enum, schema, client-tool, and
+authorization migration. Until that migration has a distinct security need, project
+scopes should be represented as named team namespaces.
 
 ## The principal
 

@@ -1,0 +1,102 @@
+name: Design proposal (RFC)
+description: Propose a substantial design or architectural change for adversarial review before implementation.
+title: "[RFC]: "
+labels: ["design", "rfc"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for proposing a design. Substantial design decisions in this
+        project are explored as RFC-style docs and hardened with adversarial,
+        multi-agent review before any code lands.
+
+        Before filing:
+        - Search existing issues (open and closed) to avoid duplicates.
+        - Read the core invariants and crate layering in `AGENTS.md` at the
+          repository root — they are the single source of truth and your
+          proposal will be judged against them.
+        - Keep every field crisp; depth belongs in the design, not the prose.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: One paragraph describing what you are proposing and why it matters.
+      placeholder: A short, self-contained abstract a reviewer can grasp in 30 seconds.
+    validations:
+      required: true
+  - type: textarea
+    id: problem-goals
+    attributes:
+      label: Problem and goals
+      description: The concrete problem this solves and the explicit goals (and non-goals) of the change.
+      placeholder: |
+        Problem: ...
+        Goals: ...
+        Non-goals: ...
+    validations:
+      required: true
+  - type: textarea
+    id: proposed-design
+    attributes:
+      label: Proposed design
+      description: The approach in enough detail to evaluate. Cover affected crates, data/wire/graph shapes, and behavior changes.
+      placeholder: How it works, where it lives in the layered crate graph, and what changes observable behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives and trade-offs
+      description: Other approaches you considered and why this one wins. Include the cost of doing nothing.
+      placeholder: |
+        Alternative A — rejected because ...
+        Alternative B — rejected because ...
+    validations:
+      required: true
+  - type: textarea
+    id: invariant-impact
+    attributes:
+      label: Impact on core invariants
+      description: |
+        State how this proposal interacts with each core invariant from AGENTS.md.
+        Write "no impact" where it does not apply.
+        - Crate layering: dependency direction stays acyclic; `selene-db` types stay confined to `aionforge-store`.
+        - Determinism: capture, consolidation, and retrieval stay deterministic; any LLM-backed layer stays off the canonical path.
+        - Recalled memory: stays untrusted third-party data inside the `<recalled-memory-context>` envelope, never executable instructions.
+        - Namespace boundaries: agent-private, team, global, and system stay separate policy surfaces.
+        - Security gates: no raw GQL interpolation (parameter binding only), audit-keygen confinement, no secret-bearing fixtures.
+      placeholder: |
+        Crate layering: ...
+        Determinism: ...
+        Recalled memory: ...
+        Namespace boundaries: ...
+        Security gates: ...
+    validations:
+      required: true
+  - type: textarea
+    id: implementation-sketch
+    attributes:
+      label: Implementation sketch and PR sequencing
+      description: Optional. Rough breakdown into PRs against `development`, in landing order, with any migration or rollout notes.
+      placeholder: |
+        PR1 — ...
+        PR2 — ...
+    validations:
+      required: false
+  - type: textarea
+    id: open-questions
+    attributes:
+      label: Open questions
+      description: Optional. Unresolved decisions you want reviewers to weigh in on.
+      placeholder: What you are unsure about and where you want pushback.
+    validations:
+      required: false
+  - type: checkboxes
+    id: acknowledgements
+    attributes:
+      label: Acknowledgements
+      options:
+        - label: I have read the core invariants and crate layering in AGENTS.md and addressed them above.
+          required: true
+        - label: This proposal describes design, behavior, and validation only — no private planning notes, internal handoff text, agent transcripts, secrets, or customer data.
+          required: true

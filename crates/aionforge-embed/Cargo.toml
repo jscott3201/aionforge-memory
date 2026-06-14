@@ -10,8 +10,8 @@ homepage.workspace = true
 description = "OpenAI-compatible embedding/chat/rerank client with order-preserving batching and write-path normalization."
 
 [dependencies]
-aionforge-domain = { path = "../aionforge-domain", version = "0.1.0" }
-aionforge-config = { path = "../aionforge-config", version = "0.1.0" }
+aionforge-domain = { path = "../aionforge-domain", version = "0.2.0" }
+aionforge-config = { path = "../aionforge-config", version = "0.2.0" }
 reqwest = { workspace = true }
 rustls = { workspace = true }
 secrecy = { workspace = true }
@@ -21,7 +21,7 @@ thiserror = { workspace = true }
 miette = { workspace = true }
 
 [dev-dependencies]
-aionforge-domain = { path = "../aionforge-domain", version = "0.1.0" }
+aionforge-domain = { path = "../aionforge-domain", version = "0.2.0" }
 secrecy = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }

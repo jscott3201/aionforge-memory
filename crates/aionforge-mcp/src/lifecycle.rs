@@ -18,11 +18,16 @@ use aionforge_domain::nodes::semantic::{Entity, Fact};
 use aionforge_domain::time::Timestamp;
 use aionforge_engine::{
     AuditCursor, AuditPage, AuditRecord, AuditVerification, ConsolidationConfig, Memory,
-    PassConfig, PointForget, PointUnforget, Principal, RuleExtractor, RuleInducer, RuleSummarizer,
-    TickReport,
+    PassConfig, PointForget, PointPin, PointUnforget, PointUnpin, RuleExtractor, RuleInducer,
+    RuleSummarizer, TickReport,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
+
+use crate::principal::{
+    AuthEnabled, HostPrincipalToolParam, refuse_read_only_write, resolve_reader,
+};
+use crate::validated::ValidatedPrincipal;
 
 const DEFAULT_CONSOLIDATION_MAX_TICKS: usize = 1;
 const MAX_CONSOLIDATION_MAX_TICKS: usize = 5;
@@ -30,7 +35,14 @@ const DEFAULT_AUDIT_LIMIT: usize = 20;
 const MAX_AUDIT_LIMIT: usize = 50;
 const PAYLOAD_PREVIEW_CHARS: usize = 240;
 
-const MCP_MEMORY_LABELS: [&str; 6] = [
+/// The lifecycle kinds the MCP surface resolves by id for the **forgettable/pointable**
+/// path — `forget`/`unforget`/`pin`/`unpin` (here) and the base of `read_memory`'s read set
+/// (`inspect.rs`). Shared so read and write breadth stay in lockstep when a kind is added.
+///
+/// Deliberately excludes `CoreBlock`: core blocks are forgetting-exempt, so they are not a
+/// valid forget/pin target. `read_memory` resolves them too, by appending `CoreBlock::LABEL`
+/// to its own read set rather than widening this write-side set.
+pub(crate) const MCP_MEMORY_LABELS: [&str; 6] = [
     Episode::LABEL,
     Fact::LABEL,
     Entity::LABEL,
@@ -65,10 +77,15 @@ pub struct MemoryLifecycleToolParams {
     #[schemars(description = "The memory id to mutate.")]
     pub memory_id: String,
     /// The acting agent namespace, `agent:<id>`. The memory must be in this agent's writable set.
+    #[serde(default)]
     #[schemars(
-        description = "The acting agent namespace, agent:<id>. The target memory must be in this agent's writable set."
+        description = "The acting agent namespace, agent:<id>. Legacy shorthand for principal.agent_id."
     )]
-    pub viewer: String,
+    pub viewer: Option<String>,
+    /// Explicit host-verified principal. OAuth-capable hosts can pass the verified
+    /// token subject and teams here instead of asking the server to infer them.
+    #[schemars(description = "Explicit host-verified principal. Optional.")]
+    pub principal: Option<HostPrincipalToolParam>,
     /// Teams the host asserts this reader belongs to.
     #[serde(default)]
     #[schemars(description = "Teams the host asserts this reader belongs to. Optional.")]
@@ -96,8 +113,13 @@ pub struct AuditHistoryToolParams {
     )]
     pub subject_id: Option<String>,
     /// The reading agent namespace, `agent:<id>`.
+    #[serde(default)]
     #[schemars(description = "The reading agent namespace, agent:<id>.")]
-    pub viewer: String,
+    pub viewer: Option<String>,
+    /// Explicit host-verified principal. OAuth-capable hosts can pass the verified
+    /// token subject and teams here instead of asking the server to infer them.
+    #[schemars(description = "Explicit host-verified principal. Optional.")]
+    pub principal: Option<HostPrincipalToolParam>,
     /// Teams the host asserts this reader belongs to.
     #[serde(default)]
     #[schemars(description = "Teams the host asserts this reader belongs to. Optional.")]
@@ -135,7 +157,7 @@ pub fn consolidation_status_tool<E: Embedder>(
         .consolidation_lag(now)
         .map_err(|error| format!("ERR_CONSOLIDATION_STATUS: {error}"))?;
     let mut out = format!(
-        "[consolidation] pending={} failed={} oldest_pending_lag_s={} generation={}",
+        "[consolidation] pending={} failed={} oldest_pending_age_s={} generation={}",
         lag.episodes_pending,
         lag.episodes_failed,
         duration_seconds(lag.oldest_pending_lag),
@@ -214,8 +236,18 @@ pub fn forget_tool<E: Embedder>(
     memory: &Memory<E>,
     params: MemoryLifecycleToolParams,
     now: &Timestamp,
+    extension: Option<ValidatedPrincipal>,
+    auth_enabled: AuthEnabled,
 ) -> Result<String, String> {
-    let target = writable_memory(memory, &params.memory_id, &params.viewer, params.teams)?;
+    let target = writable_memory(
+        memory,
+        &params.memory_id,
+        params.viewer.as_deref(),
+        params.teams,
+        params.principal,
+        extension,
+        auth_enabled,
+    )?;
     let outcome = memory
         .forget(&target.id, now)
         .map_err(|error| format!("ERR_FORGET: {error}"))?;
@@ -237,8 +269,18 @@ pub fn unforget_tool<E: Embedder>(
     memory: &Memory<E>,
     params: MemoryLifecycleToolParams,
     now: &Timestamp,
+    extension: Option<ValidatedPrincipal>,
+    auth_enabled: AuthEnabled,
 ) -> Result<String, String> {
-    let target = writable_memory(memory, &params.memory_id, &params.viewer, params.teams)?;
+    let target = writable_memory(
+        memory,
+        &params.memory_id,
+        params.viewer.as_deref(),
+        params.teams,
+        params.principal,
+        extension,
+        auth_enabled,
+    )?;
     let outcome = memory
         .unforget(&target.id, now)
         .map_err(|error| format!("ERR_UNFORGET: {error}"))?;
@@ -251,6 +293,81 @@ pub fn unforget_tool<E: Embedder>(
     ))
 }
 
+/// Pin one writable memory by id so decay and forgetting spare it (05 §2, M5.T02 rider).
+///
+/// Resolves and authorizes the target exactly like `forget`, then calls the always-available
+/// engine pin (there is no off-switch: a pin can only spare, never doom, and read-time decay
+/// honors it whether or not active forgetting is enabled). Idempotent: pinning an
+/// already-pinned memory is a no-op `already_pinned` outcome, audited only on a real change.
+///
+/// # Errors
+/// Returns a structured `ERR_*` string if parameters are invalid, the target is not
+/// writable by the viewer, or the engine returns an error.
+pub fn pin_tool<E: Embedder>(
+    memory: &Memory<E>,
+    params: MemoryLifecycleToolParams,
+    now: &Timestamp,
+    extension: Option<ValidatedPrincipal>,
+    auth_enabled: AuthEnabled,
+) -> Result<String, String> {
+    let target = writable_memory(
+        memory,
+        &params.memory_id,
+        params.viewer.as_deref(),
+        params.teams,
+        params.principal,
+        extension,
+        auth_enabled,
+    )?;
+    let outcome = memory
+        .pin(&target.id, now)
+        .map_err(|error| format!("ERR_PIN: {error}"))?;
+    Ok(format!(
+        "[pin] {} kind={} ns={} outcome={}",
+        target.id,
+        target.label,
+        target.namespace,
+        point_pin_outcome(outcome)
+    ))
+}
+
+/// Lift the pin on one writable memory by id so decay and forgetting eligibility re-arm.
+///
+/// A pin is a stay, not a vault: unpinning silently re-arms decay and sweep eligibility, and
+/// the memory is forgotten later only if every eligibility axis independently holds low.
+/// Idempotent: unpinning a memory that is not pinned is a no-op `not_pinned` outcome.
+///
+/// # Errors
+/// Returns a structured `ERR_*` string if parameters are invalid, the target is not
+/// writable by the viewer, or the engine returns an error.
+pub fn unpin_tool<E: Embedder>(
+    memory: &Memory<E>,
+    params: MemoryLifecycleToolParams,
+    now: &Timestamp,
+    extension: Option<ValidatedPrincipal>,
+    auth_enabled: AuthEnabled,
+) -> Result<String, String> {
+    let target = writable_memory(
+        memory,
+        &params.memory_id,
+        params.viewer.as_deref(),
+        params.teams,
+        params.principal,
+        extension,
+        auth_enabled,
+    )?;
+    let outcome = memory
+        .unpin(&target.id, now)
+        .map_err(|error| format!("ERR_UNPIN: {error}"))?;
+    Ok(format!(
+        "[unpin] {} kind={} ns={} outcome={}",
+        target.id,
+        target.label,
+        target.namespace,
+        point_unpin_outcome(outcome)
+    ))
+}
+
 /// Read a principal-scoped audit history page for a subject.
 ///
 /// # Errors
@@ -258,13 +375,21 @@ pub fn unforget_tool<E: Embedder>(
 pub fn audit_history_tool<E: Embedder>(
     memory: &Memory<E>,
     params: AuditHistoryToolParams,
+    extension: Option<ValidatedPrincipal>,
+    auth_enabled: AuthEnabled,
 ) -> Result<String, String> {
     let subject = params
         .subject_id
         .as_deref()
         .map(|subject| parse_id(subject.trim(), "SUBJECT_ID"))
         .transpose()?;
-    let principal = parse_principal(&params.viewer, params.teams)?;
+    let principal = resolve_reader(
+        params.viewer.as_deref(),
+        params.teams,
+        params.principal,
+        extension,
+        auth_enabled,
+    )?;
     let after = params.after.map(parse_audit_cursor).transpose()?;
     let limit = params
         .limit
@@ -319,11 +444,20 @@ fn duration_seconds(duration: Duration) -> u64 {
 fn writable_memory<E: Embedder>(
     memory: &Memory<E>,
     raw_id: &str,
-    raw_viewer: &str,
+    raw_viewer: Option<&str>,
     teams: Vec<String>,
+    principal: Option<HostPrincipalToolParam>,
+    extension: Option<ValidatedPrincipal>,
+    auth_enabled: AuthEnabled,
 ) -> Result<WritableMemory, String> {
     let id = parse_id(raw_id, "MEMORY_ID")?;
-    let principal = parse_principal(raw_viewer, teams)?;
+    // forget/unforget/pin/unpin are writes (they mutate durable memory). The point ops resolve
+    // identity through the read scope (`resolve_reader`) and then namespace-authorize the write,
+    // so the read-only write-guard does not flow through `resolve_writer` here — apply the *same*
+    // shared guard `resolve_writer` uses, so a validated read-only/ephemeral identity may never
+    // mutate durable memory and there is no second, drift-prone copy of the check.
+    refuse_read_only_write(extension.as_ref(), auth_enabled)?;
+    let principal = resolve_reader(raw_viewer, teams, principal, extension, auth_enabled)?;
     let candidate = memory
         .store()
         .memory_by_id(&id, &MCP_MEMORY_LABELS)
@@ -343,18 +477,6 @@ fn writable_memory<E: Embedder>(
         label: candidate.label,
         namespace: candidate.identity.namespace,
     })
-}
-
-fn parse_principal(raw_viewer: &str, teams: Vec<String>) -> Result<Principal, String> {
-    let viewer: Namespace = raw_viewer
-        .parse()
-        .map_err(|_| "ERR_INVALID_VIEWER: viewer must be agent:<id>".to_string())?;
-    let Namespace::Agent(agent_id) = viewer else {
-        return Err("ERR_INVALID_VIEWER: a reader must be an agent (agent:<id>)".to_string());
-    };
-    let agent = Id::parse(&agent_id)
-        .map_err(|_| "ERR_INVALID_VIEWER: viewer agent id must be a UUID".to_string())?;
-    Ok(Principal::new(agent, teams))
 }
 
 fn parse_id(raw: &str, field: &str) -> Result<Id, String> {
@@ -449,7 +571,7 @@ fn point_forget_outcome(outcome: PointForget) -> String {
         PointForget::AlreadyForgotten => "already_forgotten".to_string(),
         PointForget::NotFound => "not_found".to_string(),
         PointForget::Protected(reason) => format!("protected({reason:?})"),
-        PointForget::Disabled => "disabled".to_string(),
+        PointForget::Disabled => "disabled reason=forgetting.enabled=false".to_string(),
     }
 }
 
@@ -459,7 +581,23 @@ fn point_unforget_outcome(outcome: PointUnforget) -> String {
         PointUnforget::NotForgotten => "not_forgotten".to_string(),
         PointUnforget::NotFound => "not_found".to_string(),
         PointUnforget::Protected(reason) => format!("protected({reason:?})"),
-        PointUnforget::Disabled => "disabled".to_string(),
+        PointUnforget::Disabled => "disabled reason=forgetting.enabled=false".to_string(),
+    }
+}
+
+fn point_pin_outcome(outcome: PointPin) -> &'static str {
+    match outcome {
+        PointPin::Pinned => "pinned",
+        PointPin::AlreadyPinned => "already_pinned",
+        PointPin::NotFound => "not_found",
+    }
+}
+
+fn point_unpin_outcome(outcome: PointUnpin) -> &'static str {
+    match outcome {
+        PointUnpin::Unpinned => "unpinned",
+        PointUnpin::NotPinned => "not_pinned",
+        PointUnpin::NotFound => "not_found",
     }
 }
 

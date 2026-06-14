@@ -291,6 +291,24 @@ fn expected_nodes() -> Vec<(&'static str, Vec<Prop>)> {
                 opt("label", K::String),
             ]),
         ),
+        // Work-tracking facet: Identity-only kinds (no Stats), so `reduced`. `work_status` is
+        // a bounded STRING(32) but value_type stays K::String; the OPEN `level` is unbounded
+        // STRING; `parent_id` is the nullable self-referential containment scalar.
+        (
+            "WorkItem",
+            reduced(vec![
+                req("title", K::String),
+                opt("body", K::String),
+                req("level", K::String),
+                req("work_status", K::String),
+                opt("parent_id", K::Uuid),
+                req("ordinal", K::Uint),
+            ]),
+        ),
+        (
+            "Tag",
+            reduced(vec![req("slug", K::String), opt("display", K::String)]),
+        ),
     ]
 }
 
@@ -327,6 +345,7 @@ fn expected_edges() -> Vec<(&'static str, Vec<Prop>)> {
         ("RELATES_TO", bt(vec![req("relationship_label", K::String)])),
         ("HAS_PROVENANCE", vec![]),
         ("AUDIT", vec![]),
+        ("HAS_TAG", vec![]),
     ]
 }
 

@@ -85,11 +85,11 @@ on when the sweep happened to run.
 
 ## Trust shapes what recall surfaces
 
-Retrieval treats trust as a **re-rank**, not a search. After the lexical, dense, and associative
-signals have each surfaced their candidates, trust orders that same set — facts by their trust,
-episodes by theirs — and folds that ordering into the rank fusion alongside the others. It never
-widens a recall: a fact no other signal found is never pulled in by trust. A low-trust fact sinks
-and a high-trust one rises *within* what was already relevant.
+Retrieval treats trust as a **re-rank**, not a search. After the lexical, lexical-anchor, dense,
+and associative signals have each surfaced their candidates, trust orders that same set — facts by
+their trust, episodes by theirs — and folds that ordering into the rank fusion alongside the others.
+It never widens a recall: a fact no other signal found is never pulled in by trust. A low-trust fact
+sinks and a high-trust one rises *within* what was already relevant.
 
 The ordering uses a competition rank: candidates with equal trust share a position. That detail
 matters because a re-rank covers the whole surfaced set, where many candidates carry the same

@@ -39,7 +39,7 @@ The table below lists deferred work and the current safe posture.
 | Erasure residency | Hard purge removes live graph reachability, but purged values can remain in the WAL until snapshot publication exists. | Compaction-backed residency guarantees. |
 | Pi support | Intentionally deferred. | Read Pi's packaging/extension model and design a native integration. |
 | Semantic contradiction cooling | Drift cooling uses deterministic vector proximity to buy the detector time. | Any LLM contradiction classifier must stay off-cursor and opt-in. |
-| OAuth verifier | The server publishes protected-resource metadata and bearer challenges. | Full remote deployments must add an upstream OAuth verifier. |
+| OAuth verifier | The crate has protected-resource metadata helpers and explicit MCP `principal` parameters for a verified host to pass identity, but the built-in HTTP server does not validate OAuth tokens or infer identity from transport state. | Full remote deployments must add an upstream OAuth verifier and map verified claims into the explicit principal object. |
 
 ## Determinism boundary
 
@@ -65,7 +65,7 @@ OAuth validation, secret custody, and backups.
 The release gate asserts the binding acceptance criteria that exist in code:
 workspace tests, clippy, doctests, rustdoc link checks, dependency audit, license
 attribution, repository policy gates, Docker build, and explicit M6 red-team
-probes. The `0.1.0` release publishes GitHub Release artifacts, Linux and macOS
+probes. The `0.2.0` release publishes GitHub Release artifacts, Linux and macOS
 native binaries, and GHCR runtime images for `linux/amd64` and `linux/arm64`.
 crates.io publishing is deferred until the selene-db 1.x crates are available
 from crates.io. Tagged releases are cut only after human sign-off.

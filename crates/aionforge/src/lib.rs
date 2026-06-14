@@ -25,6 +25,7 @@
 //!         teams: Vec::new(),
 //!         session_id: None,
 //!         captured_at: now.clone(),
+//!         ingested_at: now.clone(),
 //!         writer: WriterContext {
 //!             model_family: "host-model".to_string(),
 //!             model_version: None,

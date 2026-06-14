@@ -93,6 +93,7 @@ fn capture_request(agent: Id, content: &str) -> CaptureRequest {
         teams: Vec::new(),
         session_id: None,
         captured_at: ts(),
+        ingested_at: ts(),
         writer: WriterContext {
             model_family: "attacker-model".to_string(),
             model_version: Some("1".to_string()),

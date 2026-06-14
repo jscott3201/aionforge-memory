@@ -27,6 +27,17 @@ use crate::namespace::Namespace;
 /// ids the agent is a member of; empty ids are dropped at construction — a valid namespace never
 /// has an empty id, so an empty entry could otherwise match a programmatically-built
 /// `Namespace::Team("")` and is meaningless besides.
+///
+/// # The operator capability is server-set-only and never wire-trusted
+///
+/// `operator` is a coarse-grained, in-process system-level capability granted *only* by the
+/// resource-server claims mapper to a principal minted from a validated token that carries the
+/// configured operator permission (see [`Principal::with_operator`]). It is **deserialize-forced
+/// to `false`**: the `#[serde(deserialize_with = "deserialize_operator_false")]` hook below
+/// ignores whatever a JSON body supplies, so an untrusted request body can never set it, and a
+/// `serialize` → `deserialize` round-trip of an operator principal always comes back
+/// `operator == false`. Operator is a live capability, never a persisted or forgeable value — it
+/// must be re-minted from a fresh validated token on every process, never read back from the wire.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Principal {
     /// The acting agent's id (the `<id>` of its `agent:<id>` private namespace).
@@ -34,6 +45,12 @@ pub struct Principal {
     /// The team ids this agent is a member of (no empty entries; see [`Principal::new`]).
     #[serde(deserialize_with = "deserialize_non_empty_teams")]
     pub teams: Vec<String>,
+    /// Whether this principal holds the in-process operator capability (system-level console
+    /// visibility). **Server-set-only and deserialize-forced to `false`** — see the type docs:
+    /// no JSON body can set it, and it never survives a wire round-trip. Set to `true` only by
+    /// [`Principal::with_operator`], minted by the claims mapper from a validated operator token.
+    #[serde(default, deserialize_with = "deserialize_operator_false")]
+    pub operator: bool,
 }
 
 /// Filter empty team ids on the deserialization path too, so the no-empty-team invariant holds for
@@ -46,22 +63,70 @@ where
     Ok(teams.into_iter().filter(|team| !team.is_empty()).collect())
 }
 
+/// Force the `operator` bit to `false` on every deserialization path, regardless of the JSON body.
+///
+/// This is the security hinge of the operator capability: it is a server-set-only, in-process
+/// capability, so it must never be derivable from untrusted wire input. The supplied value is
+/// read (so the field is accepted, not rejected) and then **discarded** — deserializing
+/// `{"operator":true}` and `{"operator":false}` both yield `false`, and a serialize→deserialize
+/// round-trip of an operator principal returns a non-operator principal. The only route to
+/// `operator == true` is the server-side [`Principal::with_operator`] constructor.
+fn deserialize_operator_false<'de, D>(deserializer: D) -> Result<bool, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    // Consume whatever is present — a bool, or any other JSON shape — and discard it. Using
+    // `IgnoredAny` (rather than `bool`) makes the "ignore whatever the body supplies" contract
+    // literal: `{"operator":true}`, `{"operator":"true"}`, `{"operator":1}`, `{"operator":null}`,
+    // and an object/array are all accepted and all yield `false`, so a malformed `operator` field
+    // can neither forge the bit nor reject the whole principal.
+    let _ignored = serde::de::IgnoredAny::deserialize(deserializer)?;
+    Ok(false)
+}
+
 impl Principal {
     /// A principal for an agent with an explicit team membership list. Empty team ids are dropped:
     /// a real team namespace never has an empty id, so an empty entry could only match a
-    /// degenerate `Namespace::Team("")` — never a legitimate team.
+    /// degenerate `Namespace::Team("")` — never a legitimate team. The operator bit is `false`:
+    /// only [`Principal::with_operator`] mints an operator principal.
     #[must_use]
     pub fn new(agent_id: Id, teams: Vec<String>) -> Self {
         let teams = teams.into_iter().filter(|team| !team.is_empty()).collect();
-        Self { agent_id, teams }
+        Self {
+            agent_id,
+            teams,
+            operator: false,
+        }
     }
 
-    /// A principal for an agent that belongs to no team (the common single-agent case).
+    /// A principal for an agent that belongs to no team (the common single-agent case). The
+    /// operator bit is `false`.
     #[must_use]
     pub fn agent(agent_id: Id) -> Self {
         Self {
             agent_id,
             teams: Vec::new(),
+            operator: false,
+        }
+    }
+
+    /// **Server-only.** Mint an operator principal — a principal that additionally holds the
+    /// in-process operator capability (system-level console visibility). Empty team ids are
+    /// dropped exactly as in [`Principal::new`].
+    ///
+    /// This is the *sole* route to `operator == true`. It exists for the resource-server claims
+    /// mapper, which calls it only after a token has been cryptographically validated and proven
+    /// to carry the deployment's configured operator permission. The host-asserted MCP principal
+    /// path never calls it, so a host-asserted principal is always `operator == false`. The bit
+    /// is deserialize-forced to `false` (see the type docs), so an operator principal minted here
+    /// degrades to a non-operator principal the moment it crosses the wire.
+    #[must_use]
+    pub fn with_operator(agent_id: Id, teams: Vec<String>) -> Self {
+        let teams = teams.into_iter().filter(|team| !team.is_empty()).collect();
+        Self {
+            agent_id,
+            teams,
+            operator: true,
         }
     }
 
@@ -266,6 +331,13 @@ impl Authorizer for DefaultAuthorizer {
     }
 }
 
+// The operator-aware authority that adds the read-side operator capability lives in its own
+// module (file-split to keep this file under the 700-LOC cap) and is re-exported below so the
+// public path `aionforge_domain::authz::OperatorAwareAuthorizer` is unchanged.
+mod operator;
+
+pub use operator::OperatorAwareAuthorizer;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -403,6 +475,220 @@ mod tests {
             authz
                 .visible_namespaces(&alice)
                 .contains(&Namespace::Global)
+        );
+    }
+
+    #[test]
+    fn the_operator_bit_is_false_on_every_normal_construction_path() {
+        // The two non-operator constructors never set the bit.
+        assert!(!Principal::new(agent_id(b"alice"), vec!["squad".into()]).operator);
+        assert!(!Principal::agent(agent_id(b"solo")).operator);
+        // Only `with_operator` mints it.
+        assert!(Principal::with_operator(agent_id(b"op"), Vec::new()).operator);
+    }
+
+    #[test]
+    fn the_operator_bit_cannot_be_set_from_a_json_body() {
+        // An untrusted body asserting `"operator": true` is forced to `false` by the
+        // deserialize hook: the bit is a server-set-only in-process capability.
+        let json_true = format!(
+            r#"{{"agent_id":"{}","teams":["squad"],"operator":true}}"#,
+            agent_id(b"alice")
+        );
+        let from_true: Principal = serde_json::from_str(&json_true).expect("deserialize");
+        assert!(
+            !from_true.operator,
+            "a body-asserted operator:true must deserialize to operator=false"
+        );
+
+        // An explicit `false` and an omitted field also yield `false`.
+        let json_false = format!(
+            r#"{{"agent_id":"{}","teams":["squad"],"operator":false}}"#,
+            agent_id(b"alice")
+        );
+        assert!(
+            !serde_json::from_str::<Principal>(&json_false)
+                .expect("deserialize")
+                .operator
+        );
+        let json_absent = format!(
+            r#"{{"agent_id":"{}","teams":["squad"]}}"#,
+            agent_id(b"alice")
+        );
+        assert!(
+            !serde_json::from_str::<Principal>(&json_absent)
+                .expect("deserialize")
+                .operator
+        );
+    }
+
+    #[test]
+    fn an_operator_principal_never_survives_a_wire_round_trip() {
+        // An operator is a live capability, never a persisted/forgeable value: serialize an
+        // operator principal and it comes back a non-operator principal.
+        let op = Principal::with_operator(agent_id(b"op"), vec!["squad".into()]);
+        assert!(op.operator, "minted operator");
+        let json = serde_json::to_string(&op).expect("serialize");
+        let back: Principal = serde_json::from_str(&json).expect("deserialize");
+        assert!(
+            !back.operator,
+            "an operator principal must round-trip back to operator=false"
+        );
+        // Everything else round-trips unchanged.
+        assert_eq!(back.agent_id, op.agent_id);
+        assert_eq!(back.teams, op.teams);
+    }
+
+    #[test]
+    fn the_operator_authorizer_grants_the_capability_only_to_operators() {
+        let authz = OperatorAwareAuthorizer::new(DefaultAuthorizer);
+        let regular = alice();
+        let operator = Principal::with_operator(agent_id(b"op"), vec!["squad".into()]);
+
+        // A regular principal: the inner authority is closed, so no system reveal capability.
+        assert!(!authz.may_surface_system(&regular));
+        // An operator: the capability is granted.
+        assert!(authz.may_surface_system(&operator));
+    }
+
+    #[test]
+    fn the_operator_authorizer_never_pre_widens_the_visible_set() {
+        // The authority must NOT widen `visible_namespaces` with the system namespace — not even
+        // for an operator. Widening here is unconditional (no `include_system` in scope) and would
+        // defeat the AND gate at the read sites. The widening is the call site's job, in lockstep
+        // with `include_system`.
+        let authz = OperatorAwareAuthorizer::new(DefaultAuthorizer);
+        let operator = Principal::with_operator(agent_id(b"op"), vec!["squad".into()]);
+
+        let visible = authz.visible_namespaces(&operator);
+        assert!(
+            !visible.contains(&Namespace::System),
+            "the authority must NOT pre-widen an operator's set with the system namespace"
+        );
+        // The ordinary namespaces are present (delegation is verbatim).
+        assert!(visible.contains(&Namespace::Global));
+        assert!(visible.contains(&operator.private()));
+        assert!(visible.contains(&Namespace::Team("squad".to_string())));
+        // A non-operator's set is identical — verbatim delegation either way.
+        let regular = alice();
+        let regular_visible = authz.visible_namespaces(&regular);
+        assert!(!regular_visible.contains(&Namespace::System));
+        assert_eq!(
+            regular_visible,
+            DefaultAuthorizer.visible_namespaces(&regular),
+            "a non-operator's visible set is the inner set, unchanged"
+        );
+    }
+
+    /// Reproduce the read-site composition every call site uses:
+    /// `let mut visible = authorizer.visible_namespaces(p);`
+    /// `let surface_system = include_system && authorizer.may_surface_system(p);`
+    /// `if surface_system { visible = visible.with_system(); }`
+    /// and return the resulting set so a test can assert exactly what a recall would gate on.
+    fn composed_visible_at_an_and_site(
+        authz: &impl Authorizer,
+        principal: &Principal,
+        include_system: bool,
+    ) -> VisibleSet {
+        let mut visible = authz.visible_namespaces(principal);
+        let surface_system = include_system && authz.may_surface_system(principal);
+        if surface_system {
+            visible = visible.with_system();
+        }
+        visible
+    }
+
+    #[test]
+    fn an_operator_surfaces_system_at_an_and_site_only_when_include_system_is_set() {
+        // This is the test that would have caught the over-widening blocker: it composes the
+        // operator authorizer exactly as the AND-gated read sites do, for both values of
+        // `include_system`, and asserts the system namespace gate lifts in lockstep — not before.
+        let authz = OperatorAwareAuthorizer::new(DefaultAuthorizer);
+        let operator = Principal::with_operator(agent_id(b"op"), vec!["squad".into()]);
+
+        // Ordinary recall (include_system = false): an operator does NOT see the system namespace,
+        // so no system-namespace episode and no system-namespace core block can surface.
+        let ordinary = composed_visible_at_an_and_site(&authz, &operator, false);
+        assert!(
+            !ordinary.contains(&Namespace::System),
+            "an operator on an include_system=false recall must NOT surface the system namespace"
+        );
+        // ...but the operator still sees everything it ordinarily would.
+        assert!(ordinary.contains(&Namespace::Global));
+        assert!(ordinary.contains(&operator.private()));
+        assert!(ordinary.contains(&Namespace::Team("squad".to_string())));
+
+        // Opt-in recall (include_system = true): now the system namespace is admitted.
+        let opted_in = composed_visible_at_an_and_site(&authz, &operator, true);
+        assert!(
+            opted_in.contains(&Namespace::System),
+            "an operator on an include_system=true recall surfaces the system namespace"
+        );
+
+        // A non-operator never surfaces system, even asking for it.
+        let regular = alice();
+        assert!(
+            !composed_visible_at_an_and_site(&authz, &regular, true).contains(&Namespace::System),
+            "a non-operator never surfaces the system namespace, opt-in or not"
+        );
+    }
+
+    #[test]
+    fn the_operator_authorizer_never_widens_write_authority() {
+        // The operator capability is read-side only: an operator still writes only its own
+        // private namespace and member teams, exactly like a non-operator.
+        let authz = OperatorAwareAuthorizer::new(DefaultAuthorizer);
+        let operator = Principal::with_operator(agent_id(b"op"), vec!["squad".into()]);
+        assert!(
+            authz
+                .authorize_write(&operator, &operator.private())
+                .is_ok(),
+            "operator writes its own private namespace"
+        );
+        assert!(
+            authz
+                .authorize_write(&operator, &Namespace::Team("squad".to_string()))
+                .is_ok(),
+            "operator writes a member team"
+        );
+        for target in [Namespace::Global, Namespace::System] {
+            assert_eq!(
+                authz
+                    .authorize_write(&operator, &target)
+                    .expect_err("operator may not directly write global/system")
+                    .reason,
+                DenyReason::NotDirectlyWritable,
+                "the operator bit does not unlock global/system writes"
+            );
+        }
+        assert_eq!(
+            authz
+                .authorize_write(&operator, &private_of(b"bob"))
+                .expect_err("operator may not write another agent's private namespace")
+                .reason,
+            DenyReason::NotOwnPrivate,
+        );
+    }
+
+    #[test]
+    fn the_operator_authorizer_delegates_through_an_arc() {
+        // Wrapped behind the retriever's actual `Arc<dyn Authorizer>` shape, the operator
+        // capability and the inner delegation both survive.
+        let authz: std::sync::Arc<dyn Authorizer> =
+            std::sync::Arc::new(OperatorAwareAuthorizer::new(DefaultAuthorizer));
+        let operator = Principal::with_operator(agent_id(b"op"), Vec::new());
+        let regular = Principal::agent(agent_id(b"solo"));
+        assert!(
+            authz.may_surface_system(&operator),
+            "Arc forwards the grant"
+        );
+        assert!(
+            !authz.may_surface_system(&regular),
+            "Arc forwards the inner denial"
+        );
+        assert!(
+            authz.authorize_write(&regular, &regular.private()).is_ok(),
+            "Arc forwards the inner write check"
         );
     }
 }

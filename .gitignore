@@ -9,6 +9,9 @@ node_modules/
 .env
 .env.*
 
+# Per-machine agent memory identity (Aionforge Memory ID + namespace).
+claude-id.json
+
 # Local working directories — spec, planning, research, design artifacts.
 # These are working documents (and the frozen build spec) that never get
 # committed. The leading underscore is the convention; the glob covers all.

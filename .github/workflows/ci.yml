@@ -6,11 +6,14 @@
 #
 # Near-instant gates always run: rustfmt, file-size cap (700 LOC), no-secret scan,
 # the GQL parameter-binding gate, the store-only-selene gate, and the audit-keygen
-# confinement gate. When the source
-# or dependency manifests change, the build-test job (clippy + nextest + doctests
-# on ubuntu) and, on manifest changes, cargo-deny + THIRDPARTY.md currency run too,
-# so a PR cannot merge code that fails to compile, lint, or test. Doc-only PRs skip
-# the compile path and stay fast.
+# confinement gate. When dependency manifests change, cargo-deny + THIRDPARTY.md
+# currency run too.
+#
+# The heavyweight ubuntu build/clippy/test suite deliberately does NOT run on dev
+# PRs. It runs once per release batch at the `development` -> `main` release gate
+# (release-gate.yml, which exercises the full ubuntu + macOS matrix), so test
+# regressions surface in the release workflow rather than on every dev PR. Local
+# pre-commit / pre-push hooks keep dev PRs honest in between.
 #
 # Security: no `${{ github.event.* }}` in any `run:` (confined to if:/with:/env:).
 
@@ -43,7 +46,6 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       deps: ${{ steps.filter.outputs.deps }}
-      code: ${{ steps.filter.outputs.code }}
     steps:
       - uses: actions/checkout@v4
       - id: filter
@@ -57,12 +59,6 @@ jobs:
               - 'deny.toml'
               - 'about.hbs'
               - 'about.toml'
-            code:
-              - 'crates/**'
-              - 'Cargo.toml'
-              - 'Cargo.lock'
-              - '.config/**'
-              - 'rust-toolchain*'
 
   fmt:
     name: fmt
@@ -91,6 +87,14 @@ jobs:
       - uses: actions/checkout@v4
       - run: bash .github/scripts/check-no-secrets.sh
 
+  plugin-package:
+    name: plugin package
+    if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash .github/scripts/check-plugin-package.sh
+
   gql-binding-gate:
     name: GQL parameter-binding gate
     if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
@@ -115,37 +119,13 @@ jobs:
       - uses: actions/checkout@v4
       - run: bash .github/scripts/check-audit-keygen-confined.sh
 
-  build-test:
-    name: build, clippy, test (ubuntu)
-    needs: changes
-    if: |
-      (github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch')
-      && (needs.changes.outputs.code == 'true' || needs.changes.outputs.deps == 'true')
+  principal-gate:
+    name: principal mint-site gate
+    if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    env:
-      # Strip DWARF from the test build graph to keep ubuntu `ld` under the runner
-      # mmap cap (mirrors release.yml / selene-db's CARGO_PROFILE_TEST_DEBUG=0).
-      CARGO_PROFILE_TEST_DEBUG: 0
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.95.0
-        with:
-          components: clippy
-      - uses: Swatinem/rust-cache@v2
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: nextest
-      - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-      - name: nextest + doctests
-        run: |
-          cargo nextest run --workspace --locked --all-features --profile ci
-          cargo test --workspace --locked --all-features --doc
-      - name: rustdoc (no broken intra-doc links)
-        env:
-          RUSTDOCFLAGS: -D warnings
-        # --lib only: the `aionforge` lib and bin share a name, so documenting bins
-        # trips an output-filename collision unrelated to doc quality.
-        run: cargo doc --no-deps --workspace --lib --document-private-items --locked
+      - run: bash .github/scripts/check-principal-gate.sh
 
   deny:
     name: cargo-deny

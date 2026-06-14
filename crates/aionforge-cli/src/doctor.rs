@@ -1,9 +1,9 @@
 //! Doctor command execution and rendering.
 
 use std::fmt::Write as _;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use aionforge::MemoryDoctorReport;
+use aionforge::{MemoryDoctorReport, Store};
 use aionforge_config::Config;
 
 use crate::cli::DoctorArgs;
@@ -26,12 +26,37 @@ fn run_with_config(
     config_path: &Path,
     args: DoctorArgs,
 ) -> Result<DoctorOutcome, CliError> {
-    let memory = open_memory(&config)?;
+    let persistence = PersistenceProbe::inspect(config.data_dir());
+    let memory = match open_memory(&config) {
+        Ok(memory) => memory,
+        Err(error @ CliError::Store(_)) => {
+            let rendered = render_unavailable(
+                "doctor",
+                config_path,
+                config.data_dir(),
+                &persistence,
+                &error.to_string(),
+                args.json,
+            )?;
+            return Ok(DoctorOutcome {
+                ok: false,
+                rendered,
+            });
+        }
+        Err(error) => return Err(error),
+    };
     let report = memory.doctor_report()?;
+    let persistence = persistence.refresh_wal();
     let rendered = if args.json {
-        render_json(config_path, config.data_dir(), &report)?
+        render_json(config_path, config.data_dir(), &persistence, &report)?
     } else {
-        render_human("doctor", config_path, config.data_dir(), &report)?
+        render_human(
+            "doctor",
+            config_path,
+            config.data_dir(),
+            &persistence,
+            &report,
+        )?
     };
     Ok(DoctorOutcome {
         ok: report.ok,
@@ -39,9 +64,65 @@ fn run_with_config(
     })
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PersistenceProbe {
+    open_mode: &'static str,
+    wal_path: PathBuf,
+    wal_present: bool,
+    wal_size_bytes: Option<u64>,
+    wal_metadata_error: Option<String>,
+}
+
+impl PersistenceProbe {
+    pub(crate) fn inspect(data_dir: &Path) -> Self {
+        let wal_path = data_dir.join(Store::WAL_FILE_NAME);
+        let open_mode = if wal_path.is_file() {
+            "recover"
+        } else {
+            "fresh"
+        };
+        Self::from_wal_path(wal_path, open_mode)
+    }
+
+    fn refresh_wal(&self) -> Self {
+        Self::from_wal_path(self.wal_path.clone(), self.open_mode)
+    }
+
+    fn from_wal_path(wal_path: PathBuf, open_mode: &'static str) -> Self {
+        match std::fs::metadata(&wal_path) {
+            Ok(metadata) => Self {
+                open_mode,
+                wal_path,
+                wal_present: true,
+                wal_size_bytes: Some(metadata.len()),
+                wal_metadata_error: None,
+            },
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Self {
+                open_mode,
+                wal_path,
+                wal_present: false,
+                wal_size_bytes: None,
+                wal_metadata_error: None,
+            },
+            Err(error) => Self {
+                open_mode,
+                wal_path,
+                wal_present: false,
+                wal_size_bytes: None,
+                wal_metadata_error: Some(error.to_string()),
+            },
+        }
+    }
+
+    fn mode(&self) -> &'static str {
+        self.open_mode
+    }
+}
+
 pub(crate) fn render_json(
     config_path: &Path,
     data_dir: &Path,
+    persistence: &PersistenceProbe,
     report: &MemoryDoctorReport,
 ) -> Result<String, CliError> {
     let value = serde_json::json!({
@@ -50,6 +131,12 @@ pub(crate) fn render_json(
             "config_path": config_path.display().to_string(),
             "data_dir": data_dir.display().to_string(),
         },
+        "store_open": {
+            "ok": true,
+            "mode": persistence.mode(),
+            "error": null,
+        },
+        "persistence": persistence_json(persistence),
         "store": &report.store,
         "embedder": {
             "ok": report.embedder.ok,
@@ -62,10 +149,49 @@ pub(crate) fn render_json(
     Ok(serde_json::to_string_pretty(&value)?)
 }
 
+pub(crate) fn render_unavailable(
+    command: &str,
+    config_path: &Path,
+    data_dir: &Path,
+    persistence: &PersistenceProbe,
+    error: &str,
+    json: bool,
+) -> Result<String, CliError> {
+    if json {
+        return render_unavailable_json(config_path, data_dir, persistence, error);
+    }
+    render_unavailable_human(command, config_path, data_dir, persistence, error)
+}
+
+fn render_unavailable_json(
+    config_path: &Path,
+    data_dir: &Path,
+    persistence: &PersistenceProbe,
+    error: &str,
+) -> Result<String, CliError> {
+    let value = serde_json::json!({
+        "ok": false,
+        "config": {
+            "config_path": config_path.display().to_string(),
+            "data_dir": data_dir.display().to_string(),
+        },
+        "store_open": {
+            "ok": false,
+            "mode": persistence.mode(),
+            "error": error,
+        },
+        "persistence": persistence_json(persistence),
+        "store": null,
+        "embedder": null,
+    });
+    Ok(serde_json::to_string_pretty(&value)?)
+}
+
 pub(crate) fn render_human(
     command: &str,
     config_path: &Path,
     data_dir: &Path,
+    persistence: &PersistenceProbe,
     report: &MemoryDoctorReport,
 ) -> Result<String, CliError> {
     let store = &report.store;
@@ -83,6 +209,7 @@ pub(crate) fn render_human(
         config_path.display(),
         data_dir.display()
     )?;
+    write_store_open(&mut out, true, persistence, None)?;
     writeln!(
         out,
         "schema: {} version={}/{} bound={} node_types={} edge_types={}",
@@ -104,6 +231,7 @@ pub(crate) fn render_human(
         indexes.vector_dimension_mismatches.len(),
         indexes.vector_kind_mismatches.len()
     )?;
+    write_vector_index_memory(&mut out, indexes)?;
     write_inventory_issues(&mut out, "vector indexes", &indexes.vector_indexes)?;
     write_inventory_issues(&mut out, "text indexes", &indexes.text_indexes)?;
     write_inventory_issues(&mut out, "property indexes", &indexes.property_indexes)?;
@@ -141,10 +269,10 @@ pub(crate) fn render_human(
     )?;
     writeln!(
         out,
-        "consolidation: pending={} failed={} oldest_pending={}",
+        "consolidation: pending={} failed={} oldest_pending_ingested={}",
         lag.episodes_pending,
         lag.episodes_failed,
-        lag.oldest_pending_captured_at
+        lag.oldest_pending_ingested_at
             .as_ref()
             .map_or_else(|| "none".to_owned(), ToString::to_string)
     )?;
@@ -154,6 +282,80 @@ pub(crate) fn render_human(
         capacity.generation, capacity.node_count, capacity.edge_count
     )?;
     Ok(out.trim_end().to_owned())
+}
+
+fn render_unavailable_human(
+    command: &str,
+    config_path: &Path,
+    data_dir: &Path,
+    persistence: &PersistenceProbe,
+    error: &str,
+) -> Result<String, CliError> {
+    let mut out = String::new();
+    writeln!(out, "aionforge {command}: fail")?;
+    writeln!(
+        out,
+        "config: path={} data_dir={}",
+        config_path.display(),
+        data_dir.display()
+    )?;
+    write_store_open(&mut out, false, persistence, Some(error))?;
+    Ok(out.trim_end().to_owned())
+}
+
+fn persistence_json(persistence: &PersistenceProbe) -> serde_json::Value {
+    serde_json::json!({
+        "wal": {
+            "path": persistence.wal_path.display().to_string(),
+            "present": persistence.wal_present,
+            "size_bytes": persistence.wal_size_bytes,
+            "metadata_error": persistence.wal_metadata_error,
+        }
+    })
+}
+
+fn write_store_open(
+    out: &mut String,
+    ok: bool,
+    persistence: &PersistenceProbe,
+    error: Option<&str>,
+) -> Result<(), std::fmt::Error> {
+    write!(
+        out,
+        "store_open: {} mode={} wal_present={} wal_size_bytes={} wal_path={}",
+        status(ok),
+        persistence.mode(),
+        persistence.wal_present,
+        persistence
+            .wal_size_bytes
+            .map_or_else(|| "unknown".to_owned(), |size| size.to_string()),
+        persistence.wal_path.display()
+    )?;
+    if let Some(metadata_error) = &persistence.wal_metadata_error {
+        write!(out, " wal_metadata_error={metadata_error}")?;
+    }
+    if let Some(error) = error {
+        write!(out, " error={error}")?;
+    }
+    writeln!(out)
+}
+
+fn write_vector_index_memory(
+    out: &mut String,
+    indexes: &aionforge_store::IndexDoctorReport,
+) -> Result<(), std::fmt::Error> {
+    let stats = &indexes.vector_index_stats;
+    let total_index_bytes: usize = stats.iter().map(|s| s.estimated_index_bytes).sum();
+    let total_reachable_bytes: usize = stats.iter().map(|s| s.estimated_reachable_bytes).sum();
+    let total_rows: u64 = stats.iter().map(|s| s.indexed_rows).sum();
+    let turbo_quant = stats.iter().filter(|s| s.is_turbo_quant).count();
+    let rebuild_recommended = stats.iter().filter(|s| s.ivf_rebuild_recommended).count();
+    writeln!(
+        out,
+        "vector index memory: rows={total_rows} index_bytes={total_index_bytes} \
+         reachable_bytes={total_reachable_bytes} turbo_quant={turbo_quant}/{} rebuild_recommended={rebuild_recommended}",
+        stats.len()
+    )
 }
 
 fn write_inventory_issues<T: std::fmt::Debug>(
@@ -201,6 +403,7 @@ mod tests {
             outcome.rendered
         );
         assert!(outcome.rendered.contains("aionforge doctor: ok"));
+        assert!(outcome.rendered.contains("store_open: ok mode=fresh"));
         assert!(outcome.rendered.contains("schema: ok"));
         assert!(outcome.rendered.contains("embedder: ok"));
         let _ = std::fs::remove_dir_all(dir);
@@ -221,8 +424,45 @@ mod tests {
         let value: serde_json::Value = serde_json::from_str(&outcome.rendered).expect("valid json");
 
         assert_eq!(value["ok"], true);
+        assert_eq!(value["store_open"]["ok"], true);
+        assert_eq!(value["store_open"]["mode"], "fresh");
+        assert_eq!(value["persistence"]["wal"]["present"], true);
         assert_eq!(value["store"]["ok"], true);
         assert_eq!(value["embedder"]["model"]["dimension"], 1536);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn json_doctor_report_surfaces_corrupt_wal_without_losing_json() {
+        let dir = unique_dir("bad-wal-json");
+        std::fs::create_dir_all(&dir).expect("create data dir");
+        std::fs::write(dir.join(Store::WAL_FILE_NAME), b"not a selene wal").expect("write bad WAL");
+        let mut config = Config::default();
+        config.persistence.data_dir = dir.clone();
+        config.embedder.enabled = false;
+        config.embedder.model.clear();
+        config.embedder.endpoint.clear();
+
+        let outcome = run_with_config(
+            config,
+            Path::new("/tmp/aionforge.toml"),
+            DoctorArgs { json: true },
+        )
+        .expect("doctor renders a structured failure");
+        let value: serde_json::Value = serde_json::from_str(&outcome.rendered).expect("valid json");
+
+        assert!(!outcome.ok);
+        assert_eq!(value["ok"], false);
+        assert_eq!(value["store_open"]["ok"], false);
+        assert_eq!(value["store_open"]["mode"], "recover");
+        assert_eq!(value["persistence"]["wal"]["present"], true);
+        assert!(value["store"].is_null());
+        assert!(value["embedder"].is_null());
+        let error = value["store_open"]["error"].as_str().expect("error string");
+        assert!(
+            error.to_ascii_lowercase().contains("wal"),
+            "error should preserve the WAL failure: {error}"
+        );
         let _ = std::fs::remove_dir_all(dir);
     }
 

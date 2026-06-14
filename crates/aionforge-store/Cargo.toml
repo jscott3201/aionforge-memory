@@ -10,10 +10,23 @@ homepage.workspace = true
 description = "L0 storage over the selene-db SharedGraph: typed read/write, parameter-bound GQL, schema/migration, and persistence."
 
 [dependencies]
-aionforge-domain = { path = "../aionforge-domain", version = "0.1.0" }
-selene-core = { workspace = true }
-selene-graph = { workspace = true }
-selene-gql = { workspace = true }
+aionforge-domain = { path = "../aionforge-domain", version = "0.2.0" }
+# `metrics` lights up selene-db's internal instrumentation (queries, commits, WAL,
+# snapshots, recoveries, cancellations, CALL-plan-cache hits, node/edge gauges) through
+# the same `metrics` 0.24 facade this workspace already records on. Off, every selene
+# emission compiles to a no-op, so the shared plan caches (PR5) and recall deadlines
+# (PR7) are unobservable: `selene.gql.call_plan_cache.hits.total` and
+# `selene.cancellations.total` never reach a recorder. The gating lives entirely in
+# selene-core's helper bodies, so enabling it per crate (not just core) follows selene's
+# public feature contract and stays correct if a future release moves a gate downstream.
+# Like the rest of the tree, this only emits — installing a recorder is the operator's.
+selene-core = { workspace = true, features = ["metrics"] }
+selene-graph = { workspace = true, features = ["metrics"] }
+# selene-persist is named directly only to lift its typed UnsupportedVersion
+# recovery gate into StoreError::UnsupportedFormat (error.rs). The store-only-selene
+# gate permits aionforge-store to name selene-db crates; no other crate may.
+selene-persist = { workspace = true, features = ["metrics"] }
+selene-gql = { workspace = true, features = ["metrics"] }
 thiserror = { workspace = true }
 miette = { workspace = true }
 serde = { workspace = true }

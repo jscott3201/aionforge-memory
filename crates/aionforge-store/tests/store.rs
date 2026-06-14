@@ -157,6 +157,63 @@ fn episode_round_trips_through_the_store() {
 }
 
 #[test]
+fn batched_superseded_lookup_returns_the_newest_live_replacement() {
+    let store = store();
+    let old_a = episode("old alpha memory");
+    let old_b = episode("old beta memory");
+    let old_a_id = old_a.identity.id;
+    let old_b_id = old_b.identity.id;
+    store.insert_episode(&old_a).expect("insert old alpha");
+    store.insert_episode(&old_b).expect("insert old beta");
+
+    let mut first_replacement = episode("first alpha replacement");
+    first_replacement.identity.ingested_at = ts("2026-06-06T09:31:00-05:00[America/Chicago]");
+    first_replacement.origin = Some(origin_superseding(old_a_id));
+    let first_replacement_id = first_replacement.identity.id;
+    store
+        .insert_episode(&first_replacement)
+        .expect("insert first replacement");
+
+    let mut newest_replacement = episode("newest alpha replacement");
+    newest_replacement.identity.ingested_at = ts("2026-06-06T09:32:00-05:00[America/Chicago]");
+    newest_replacement.origin = Some(origin_superseding(old_a_id));
+    let newest_replacement_id = newest_replacement.identity.id;
+    store
+        .insert_episode(&newest_replacement)
+        .expect("insert newest replacement");
+
+    let mut beta_replacement = episode("beta replacement");
+    beta_replacement.identity.ingested_at = ts("2026-06-06T09:33:00-05:00[America/Chicago]");
+    beta_replacement.origin = Some(origin_superseding(old_b_id));
+    let beta_replacement_id = beta_replacement.identity.id;
+    store
+        .insert_episode(&beta_replacement)
+        .expect("insert beta replacement");
+
+    let found = store
+        .live_episode_superseded_by_many([&old_a_id, &old_b_id])
+        .expect("batch lookup");
+    assert_eq!(
+        found.get(&old_a_id),
+        Some(&newest_replacement_id),
+        "newest replacement wins"
+    );
+    assert_eq!(found.get(&old_b_id), Some(&beta_replacement_id));
+    assert_ne!(
+        found.get(&old_a_id),
+        Some(&first_replacement_id),
+        "older replacement is not selected"
+    );
+    assert_eq!(
+        store
+            .live_episode_superseded_by(&old_a_id)
+            .expect("single lookup"),
+        Some(newest_replacement_id),
+        "single helper delegates to the batch behavior"
+    );
+}
+
+#[test]
 fn known_injection_payloads_round_trip_as_data() {
     let store = store();
     // Seed real nodes so an injected mutation would change the count.
@@ -198,6 +255,19 @@ fn known_injection_payloads_round_trip_as_data() {
 
     // No injected statement ran: the graph is exactly as seeded.
     assert_eq!(store.snapshot().node_count(), before);
+}
+
+fn origin_superseding(target: Id) -> Origin {
+    Origin {
+        model_family: Some("test".to_string()),
+        model_version: None,
+        transport: Some("store-test".to_string()),
+        request_id: None,
+        redactions: Vec::new(),
+        injection_flags: Vec::new(),
+        capture_latency_ms: None,
+        supersedes: Some(target),
+    }
 }
 
 proptest! {

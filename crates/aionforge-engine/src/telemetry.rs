@@ -307,7 +307,6 @@ fn capture_verdict_label(verdict: &CaptureVerdict) -> &'static str {
 fn embedding_label(outcome: &EmbeddingOutcome) -> &'static str {
     match outcome {
         EmbeddingOutcome::Embedded => "embedded",
-        EmbeddingOutcome::Skipped(_) => "skipped",
         EmbeddingOutcome::NotRequested => "not_requested",
     }
 }
@@ -316,6 +315,7 @@ fn capture_error_label(error: &CaptureError) -> &'static str {
     match error {
         CaptureError::Filter(_) => "filter",
         CaptureError::Store(_) => "store",
+        CaptureError::Embedder(_) => "embedder",
         CaptureError::Unauthorized(_) => "unauthorized",
         CaptureError::InvalidSignature => "invalid_signature",
         CaptureError::ClockSkew { .. } => "clock_skew",

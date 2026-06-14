@@ -10,6 +10,17 @@
 //! data-model §3–§5). The `INDEXED` markers in the spec tables and the vector / text /
 //! composite indexes and candidate-state providers (§7–§9) are registered separately.
 //!
+//! Fixed-vocabulary and fixed-width columns are bounded with selene 1.2's max-only
+//! `STRING(n)` (the short enums as `STRING(32)`, the 64-hex blake3 hashes as
+//! `STRING(64)`), so an oversize write is rejected at the engine boundary and the
+//! intended width is documented. Two invariants make this safe and must hold on edits:
+//! every type ends in `STRICT` (a bounded type is only *enforced* under STRICT — a
+//! switch to WARN would silently disable the guard), and the form is `STRING(n)`, never
+//! `CHAR(n)`, which pads to `n` and would corrupt the fixed-width hashes and break enum
+//! round-trips. A bounded `STRING(n)` keeps `value_type == String`, so the schema mirror
+//! is unchanged. Variable-length columns (`predicate`, entity `type`, model names, free
+//! text, signatures) are deliberately left unbounded.
+//!
 //! Nullability follows the domain: a property is `NOT NULL` exactly when its domain
 //! field is non-`Option` (so the closed graph rejects a write that omits it, the
 //! fail-fast guarantee in §1.1), and nullable when the domain field is `Option<T>` or a
@@ -28,9 +39,11 @@
 /// The schema version this catalog defines.
 ///
 /// The migration runner bumps the `SchemaVersion` singleton to this value once every
-/// type is declared. A future embedder change or added kind is a new version with its
-/// own forward-only step; this catalog is version 1, the full v1.0.0 surface.
-pub const SCHEMA_VERSION: i64 = 2;
+/// type is declared. A future embedder change or added kind is a new version with its own
+/// forward-only step. Version 3 adds the work-tracking facet (the `WorkItem` and `Tag`
+/// node kinds and the `HAS_TAG` edge) onto the v1.0.0 surface; node/edge types are
+/// `CREATE ... IF NOT EXISTS`, so the bump is a forward-only additive migration.
+pub const SCHEMA_VERSION: i64 = 3;
 
 /// One catalog entry: a type's identifying label and the statement that declares it.
 pub(crate) struct TypeDdl {
@@ -40,7 +53,8 @@ pub(crate) struct TypeDdl {
     pub ddl: &'static str,
 }
 
-/// The 17 node types (data-model §4), in declaration order.
+/// The 19 node types (data-model §4; work-tracking facet appends `WorkItem` + `Tag`), in
+/// declaration order.
 pub(crate) const NODE_TYPES: &[TypeDdl] = &[
     TypeDdl {
         name: "Episode",
@@ -57,14 +71,14 @@ pub(crate) const NODE_TYPES: &[TypeDdl] = &[
             surprise :: FLOAT NOT NULL,
             is_pinned :: BOOLEAN NOT NULL DEFAULT FALSE,
             content :: STRING NOT NULL,
-            role :: STRING NOT NULL,
+            role :: STRING(32) NOT NULL,
             captured_at :: ZONED DATETIME NOT NULL IMMUTABLE,
             agent_id :: UUID NOT NULL,
             session_id :: UUID,
-            content_hash :: STRING NOT NULL,
+            content_hash :: STRING(64) NOT NULL,
             embedding_v1 :: VECTOR,
             embedder_model :: STRING,
-            consolidation_state :: STRING NOT NULL DEFAULT 'raw',
+            consolidation_state :: STRING(32) NOT NULL DEFAULT 'raw',
             origin :: JSON
         ) STRICT"#,
     },
@@ -84,11 +98,11 @@ pub(crate) const NODE_TYPES: &[TypeDdl] = &[
             is_pinned :: BOOLEAN NOT NULL DEFAULT FALSE,
             subject_id :: UUID NOT NULL,
             predicate :: STRING NOT NULL,
-            object_kind :: STRING NOT NULL,
+            object_kind :: STRING(32) NOT NULL,
             object_entity_id :: UUID,
             object_value :: JSON,
             confidence :: FLOAT NOT NULL,
-            status :: STRING NOT NULL DEFAULT 'active',
+            status :: STRING(32) NOT NULL DEFAULT 'active',
             cooled_until :: ZONED DATETIME,
             statement :: STRING NOT NULL,
             embedding_v1 :: VECTOR,
@@ -138,7 +152,7 @@ pub(crate) const NODE_TYPES: &[TypeDdl] = &[
             description :: STRING NOT NULL,
             problem_embedding_v1 :: VECTOR,
             embedder_model :: STRING,
-            language :: STRING NOT NULL,
+            language :: STRING(32) NOT NULL,
             body :: STRING NOT NULL,
             params :: JSON NOT NULL,
             preconditions :: JSON,
@@ -147,7 +161,7 @@ pub(crate) const NODE_TYPES: &[TypeDdl] = &[
             success_count :: UINT NOT NULL DEFAULT 0,
             failure_count :: UINT NOT NULL DEFAULT 0,
             mean_latency_ms :: FLOAT,
-            source_hash :: STRING NOT NULL,
+            source_hash :: STRING(64) NOT NULL,
             last_success_at :: ZONED DATETIME,
             last_failure_at :: ZONED DATETIME,
             deprecated_at :: ZONED DATETIME,
@@ -211,8 +225,8 @@ pub(crate) const NODE_TYPES: &[TypeDdl] = &[
             surprise :: FLOAT NOT NULL,
             is_pinned :: BOOLEAN NOT NULL DEFAULT FALSE,
             content :: STRING NOT NULL,
-            block_kind :: STRING NOT NULL,
-            sensitivity :: STRING,
+            block_kind :: STRING(32) NOT NULL,
+            sensitivity :: STRING(32),
             drift_baseline :: JSON,
             embedding_v1 :: VECTOR,
             embedder_model :: STRING
@@ -229,7 +243,7 @@ pub(crate) const NODE_TYPES: &[TypeDdl] = &[
             model_family :: STRING NOT NULL,
             model_version :: STRING,
             trust_scores :: JSON NOT NULL,
-            status :: STRING NOT NULL
+            status :: STRING(32) NOT NULL
         ) STRICT"#,
     },
     TypeDdl {
@@ -292,7 +306,7 @@ pub(crate) const NODE_TYPES: &[TypeDdl] = &[
             candidate_fact_id :: UUID NOT NULL,
             posterior :: FLOAT NOT NULL,
             k :: UINT NOT NULL,
-            status :: STRING NOT NULL,
+            status :: STRING(32) NOT NULL,
             resolved_at :: ZONED DATETIME,
             promoted_fact_id :: UUID
         ) STRICT"#,
@@ -329,7 +343,7 @@ pub(crate) const NODE_TYPES: &[TypeDdl] = &[
             namespace :: STRING NOT NULL,
             expired_at :: ZONED DATETIME,
             name :: STRING NOT NULL,
-            scope_kind :: STRING NOT NULL
+            scope_kind :: STRING(32) NOT NULL
         ) STRICT"#,
     },
     TypeDdl {
@@ -355,9 +369,48 @@ pub(crate) const NODE_TYPES: &[TypeDdl] = &[
             label :: STRING
         ) STRICT"#,
     },
+    // The work-tracking facet (work-structure design, 2026-06-14). `WorkItem` and `Tag`
+    // are Identity-only (no Stats block): they are not retrievable memories and earn their
+    // decay/forgetting exemption by absence from the maintenance scan sets (forget_read.rs
+    // `FORGET_SCAN_LABELS`, forgetter.rs `ALL_MEMORY_LABELS`/`POINT_LABELS`, consolidation.rs
+    // `MEMORY_LABELS`, decay.rs `tier_for_label`) — like the control/anchor kinds, taken one
+    // step further (a work item also stays out of point-forget/pin/erase). `level` is an
+    // OPEN caller-defined label (unbounded STRING, the `predicate`/entity-`type` precedent),
+    // never a closed enum, so any harness brings its own hierarchy vocabulary. `work_status`
+    // is the bounded enum column (STRING(32) DEFAULT 'todo', the `Fact.status` form) and is
+    // deliberately NOT named `status` (forget_write.rs reads a `status` property as a
+    // FactStatus). `parent_id` is the indexed self-referential containment scalar (the
+    // INDEXED marker lives in indexes.rs).
+    TypeDdl {
+        name: "WorkItem",
+        ddl: r#"CREATE NODE TYPE IF NOT EXISTS :WorkItem (
+            id :: UUID NOT NULL UNIQUE IMMUTABLE,
+            ingested_at :: ZONED DATETIME NOT NULL IMMUTABLE,
+            namespace :: STRING NOT NULL,
+            expired_at :: ZONED DATETIME,
+            title :: STRING NOT NULL,
+            body :: STRING,
+            level :: STRING NOT NULL,
+            work_status :: STRING(32) NOT NULL DEFAULT 'todo',
+            parent_id :: UUID,
+            ordinal :: UINT NOT NULL DEFAULT 0
+        ) STRICT"#,
+    },
+    TypeDdl {
+        name: "Tag",
+        ddl: r#"CREATE NODE TYPE IF NOT EXISTS :Tag (
+            id :: UUID NOT NULL UNIQUE IMMUTABLE,
+            ingested_at :: ZONED DATETIME NOT NULL IMMUTABLE,
+            namespace :: STRING NOT NULL,
+            expired_at :: ZONED DATETIME,
+            slug :: STRING NOT NULL,
+            display :: STRING
+        ) STRICT"#,
+    },
 ];
 
-/// The 19 edge types (data-model §5), in declaration order.
+/// The 19 edge types (data-model §5; the work-tracking facet appends `HAS_TAG` onto the
+/// prior 18), in declaration order.
 ///
 /// The four-timestamp bi-temporal block is `valid_from` (NOT NULL), `valid_to`
 /// (nullable), `ingested_at` (NOT NULL IMMUTABLE), `expired_at` (nullable). The engine
@@ -511,5 +564,16 @@ pub(crate) const EDGE_TYPES: &[TypeDdl] = &[
         // carries no extra properties, so the body is empty (Any → Any).
         name: "AUDIT",
         ddl: r#"CREATE EDGE TYPE IF NOT EXISTS :AUDIT () STRICT"#,
+    },
+    TypeDdl {
+        // The classification facet (work-structure design §3): every retrievable kind plus
+        // `WorkItem` may point at a `Tag`. The full FROM-union is declared up front — edge
+        // endpoints are baked into the type and cannot be widened without a store recreate —
+        // so tags retrofit onto all existing kinds, not just work items. A property-less
+        // marker: the edge's presence is the whole signal.
+        name: "HAS_TAG",
+        ddl: r#"CREATE EDGE TYPE IF NOT EXISTS :HAS_TAG (
+            FROM :Episode, :Fact, :Entity, :Skill, :BadPattern, :Note, :CoreBlock, :WorkItem TO :Tag
+        ) STRICT"#,
     },
 ];

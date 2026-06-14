@@ -17,7 +17,7 @@ operation names and bounded fields only:
 | `aionforge.capture.stage` | `stage` | Fixed capture stages: `filter`, `embed`, and `commit`. |
 | `aionforge.recall` | `class`, `temporal`, `sensitive`, `include_expired`, `include_system`, `mode_override`, `deadline`, `fanout`, `limit`, `outcome`, `embedder`, `error`, `returned`, `candidates_considered`, `signals_run` | One recall request. The query text and principal id are never fields. |
 | `aionforge.recall.stage` | `stage` | Fixed recall stages, currently `classify` and `assemble`. |
-| `aionforge.recall.signal` | `signal`, `fanout` | Signal-level work for `query_embed`, `lexical`, `dense`, `support`, `graph`, `trust`, `importance`, and `recency`. |
+| `aionforge.recall.signal` | `signal`, `fanout` | Signal-level work for `query_embed`, `lexical`, `lexical_anchor`, `dense`, `support`, `graph`, `trust`, `importance`, and `recency`. |
 | `aionforge.consolidation.tick` | `batch_size`, `outcome`, `error`, `consolidated`, `retried`, `failed`, `pending_after` | One foreground or background consolidation tick. |
 | `aionforge.consolidation.episode` | `role`, `namespace`, `state`, `outcome`, `error` | One episode processed inside a tick. The episode id and content are never fields. |
 | `aionforge.consolidation.pass` | `pass`, `version`, `outcome`, `error` | One enabled consolidation pass applied to one episode. Pass names are stable rule identifiers from the registered pass set. |
@@ -63,7 +63,7 @@ Recall error labels are `audit`, `store`, `deadline_exceeded`, and `other`.
 | `consolidation_episodes_retried_total` | counter | none | Episodes left raw for retry after transient pass failure. |
 | `consolidation_episodes_failed_total` | counter | none | Episodes marked failed by the scheduler. |
 | `consolidation_recovery_resets_total` | counter | none | `in_progress` episodes reset to `raw` at consolidator startup. |
-| `consolidation_lag_seconds` | gauge | none | Age of the oldest pending episode. |
+| `consolidation_lag_seconds` | gauge | none | Age since `ingested_at` for the oldest pending episode. |
 | `consolidation_episodes_pending` | gauge | none | Pending consolidation backlog size. |
 | `consolidation_episodes_failed` | gauge | none | Failed episode count. |
 | `consolidation_supersessions_total` | counter | none | Supersession decisions materialized by fact extraction. |

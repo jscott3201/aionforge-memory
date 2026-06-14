@@ -1,0 +1,37 @@
+[package]
+name = "aionforge-auth"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "OIDC discovery + RS256-pinned JWT validation with JWKS caching and kid rotation"
+
+[dependencies]
+aionforge-config = { path = "../aionforge-config", version = "0.2.0" }
+reqwest = { workspace = true }
+rustls = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+miette = { workspace = true }
+# JWT validation with constant-time RS256/384/512 via ring (already in-tree via rustls).
+# v9 (ring backend) chosen over v10 (rust_crypto->rsa, carries RUSTSEC-2023-0071 Marvin
+# advisory + rand 0.8 duplicate). v9 reuses ring v0.17.14, pulls 11 new crates
+# (time, simple_asn1, num-bigint), passes cargo deny clean with ZERO carve-outs.
+# Quarantined here; resource server only does public-key verify (never private ops),
+# and no jsonwebtoken type leaks into this crate's public API (fork#3).
+jsonwebtoken = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+wiremock = { workspace = true }
+# Hand-craft an `alg=none` token (header.payload.) for the negative security test.
+base64 = { workspace = true }
+# Mint test RS256 tokens with a test RSA key for fixture validation.
+jsonwebtoken = { workspace = true }
+
+[lints]
+workspace = true

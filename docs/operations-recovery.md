@@ -47,11 +47,13 @@ provider inventory, embedder dimension consistency, consolidation lag, and graph
 Start the MCP server from the same single binary:
 
 ```bash
-AIONFORGE_MCP_TOKEN=change-me \
-  aionforge --config /etc/aionforge/config.toml \
-  serve http --listen 127.0.0.1:3918 \
-  --bearer-token-env AIONFORGE_MCP_TOKEN
+aionforge --config /etc/aionforge/config.toml \
+  serve http --listen 127.0.0.1:3918
 ```
+
+Keep the built-in HTTP server on loopback. For remote or shared deployments,
+place an OAuth resource-server verifier or equivalent perimeter in front of the
+MCP endpoint before exposing it.
 
 ## Recovery validation
 
@@ -75,10 +77,84 @@ Run `recover` with the same config and environment the service uses. A dimension
 the store was created is a hard recovery failure; vector index dimensions are binding storage
 state, not a runtime preference.
 
-## Backup boundary
+## Backup and volume migration
 
 Current v1 persistence is WAL-backed. Recovery replays the WAL into a closed graph and rebuilds
 schema, indexes, and candidate-state providers from primary graph values. The store does not yet
 drive scheduled snapshot publication or WAL truncation, so backups must include the whole data
 directory. This also means hard-erased values can remain in the WAL until snapshot publication is
 wired; see [Erasure](erasure.md) for that residency boundary.
+
+There is no logical export/import command yet. Treat backup and migration as a data-directory
+operation:
+
+1. Stop the MCP server or otherwise quiesce all writers. A live filesystem copy is not a
+   consistency boundary unless your storage layer gives you an atomic volume snapshot.
+2. Copy the entire `persistence.data_dir`, including the WAL and the `audit/` directory.
+3. Restore onto a directory with the same owner-only permissions the service expects.
+4. Run `recover --json` against the restored directory before serving traffic.
+
+For a host directory:
+
+```bash
+systemctl stop aionforge-memory
+tar -C /srv -czf aionforge-memory-backup.tgz aionforge-memory
+mkdir -p /srv/aionforge-memory-restore
+tar -C /srv/aionforge-memory-restore -xzf aionforge-memory-backup.tgz
+chown -R aionforge:aionforge /srv/aionforge-memory-restore/aionforge-memory
+chmod 0700 /srv/aionforge-memory-restore/aionforge-memory
+aionforge --config /etc/aionforge/config.toml \
+  --data-dir /srv/aionforge-memory-restore/aionforge-memory \
+  recover --json
+```
+
+For a Docker named volume:
+
+```bash
+docker stop aionforge-memory
+docker run --rm \
+  -v aionforge-data:/data:ro \
+  -v "$PWD":/backup \
+  alpine \
+  tar -C /data -czf /backup/aionforge-data.tgz .
+
+docker volume create aionforge-data-restore
+docker run --rm \
+  -v aionforge-data-restore:/data \
+  -v "$PWD":/backup \
+  alpine \
+  sh -c 'tar -C /data -xzf /backup/aionforge-data.tgz && \
+    chown -R 10001:10001 /data && \
+    chmod 0700 /data'
+```
+
+After restoring a Docker volume, start the container with the restored volume and the same config
+and environment used by the source service. That includes the embedder model and dimension and
+audit-signing seed custody. If `security.audit_key_env` names an environment-held audit seed, the
+restored service must receive the same environment value; if the seed is file-backed, it is inside
+the copied `audit/` directory.
+
+Use `recover`, not `doctor`, as the restore gate. `doctor` can create a fresh store when the WAL
+is missing; `recover` refuses that case and proves the backup is an existing WAL-backed store.
+
+## Legacy 0.1.0 WAL replay incident
+
+The public regression suite covers current-format WAL recovery. A historical `0.1.0`
+incident also found WAL files that were accepted during live appends but failed
+same-version replay after restart. The preserved archive from that incident is not
+committed to this repository because it was captured from a live dogfood store and may
+contain private memory content.
+
+When preserving or reducing a legacy replay failure, keep the fixture public-safe:
+
+1. Reproduce with the exact released binary or image digest that wrote the WAL.
+2. Reduce the WAL to synthetic records, or create a fresh synthetic WAL that fails the
+   same replay path.
+3. Verify the reduced fixture contains no private prompts, host paths, secrets, tokens,
+   or agent-private memory.
+4. Add the fixture and a recovery test that fails on the legacy replay bug and passes on
+   the fixed reader.
+
+Do not copy production or dogfood WAL archives into the public repository. If reduction
+is not possible, keep the incident as an external operator artifact and rely on the
+current-format recovery tests for the public gate.

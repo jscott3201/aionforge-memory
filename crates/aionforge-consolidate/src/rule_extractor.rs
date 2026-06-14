@@ -110,6 +110,9 @@ impl RuleExtractor {
                 if subject.is_empty() || object.is_empty() {
                     continue;
                 }
+                if looks_like_code_fragment(subject) || looks_like_code_fragment(object) {
+                    continue;
+                }
                 facts.push(ExtractedFact {
                     subject: EntitySurface {
                         surface: subject.to_string(),
@@ -139,6 +142,17 @@ impl RuleExtractor {
         }
         facts
     }
+}
+
+fn looks_like_code_fragment(value: &str) -> bool {
+    value.contains('`')
+        || value.contains("::")
+        || value.contains("=>")
+        || value.contains("->")
+        || value.contains('{')
+        || value.contains('}')
+        || value.contains('(')
+        || value.contains(')')
 }
 
 impl FactExtractor for RuleExtractor {
@@ -180,4 +194,66 @@ fn sentences(content: &str) -> Vec<(usize, &str)> {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use aionforge_domain::blocks::{Identity, Stats};
+    use aionforge_domain::ids::{ContentHash, Id};
+    use aionforge_domain::namespace::Namespace;
+    use aionforge_domain::nodes::episodic::{ConsolidationState, Episode, Role};
+
+    use super::*;
+
+    #[test]
+    fn skips_code_shaped_rule_matches() {
+        let episode =
+            episode("`capture.agent_id` uses raw UUID while `search.viewer` uses `agent:<uuid>`");
+        let facts = RuleExtractor::with_default_rules().extract_sync(&episode);
+        assert!(
+            facts.is_empty(),
+            "code-heavy fragments are not facts: {facts:?}"
+        );
+    }
+
+    #[test]
+    fn still_extracts_plain_prose_matches() {
+        let episode = episode("Alice uses Aionforge Memory");
+        let facts = RuleExtractor::with_default_rules().extract_sync(&episode);
+        assert_eq!(facts.len(), 1);
+        assert_eq!(facts[0].predicate, "uses");
+    }
+
+    fn episode(content: &str) -> Episode {
+        let now: aionforge_domain::time::Timestamp = "2026-06-06T09:30:00-05:00[America/Chicago]"
+            .parse()
+            .expect("valid timestamp");
+        Episode {
+            identity: Identity {
+                id: Id::generate(),
+                ingested_at: now.clone(),
+                namespace: Namespace::Agent("agent".to_string()),
+                expired_at: None,
+            },
+            stats: Stats {
+                importance: 0.5,
+                trust: 0.8,
+                last_access: now.clone(),
+                access_count_recent: 0,
+                referenced_count: 0,
+                surprise: 0.0,
+                is_pinned: false,
+            },
+            content: content.to_string(),
+            role: Role::User,
+            captured_at: now,
+            agent_id: Id::generate(),
+            session_id: None,
+            content_hash: ContentHash::of(content.as_bytes()),
+            embedding: None,
+            embedder_model: None,
+            consolidation_state: ConsolidationState::Raw,
+            origin: None,
+        }
+    }
 }

@@ -1,0 +1,26 @@
+{
+  "name": "aionforge-plugins",
+  "owner": {
+    "name": "Aionforge Labs",
+    "url": "https://github.com/jscott3201"
+  },
+  "metadata": {
+    "description": "Aionforge agent plugins."
+  },
+  "plugins": [
+    {
+      "name": "aionforge-memory",
+      "source": "./plugins/aionforge-memory",
+      "description": "Agent skills for using an externally configured Aionforge Memory MCP server as durable project memory.",
+      "version": "0.2.0",
+      "author": {
+        "name": "Aionforge Labs"
+      },
+      "homepage": "https://github.com/jscott3201/aionforge-memory/tree/development/plugins/aionforge-memory",
+      "repository": "https://github.com/jscott3201/aionforge-memory",
+      "license": "MIT OR Apache-2.0",
+      "keywords": ["memory", "mcp", "agent-skills", "retrieval"],
+      "category": "productivity"
+    }
+  ]
+}

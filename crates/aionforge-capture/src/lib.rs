@@ -9,9 +9,10 @@
 //! store (L0) directly but names neither the concrete security filter nor the HTTP
 //! embedder.
 //!
-//! The path fails closed on a filter or store error and degrades on an embedder
-//! error: a vector-less episode is committed for consolidation to embed later, so
-//! capture never blocks on the embedder (§8.1). It never blocks on consolidation.
+//! The path fails closed on a filter, embedder, or store error. A configured embedder
+//! must produce the vector before an episode is committed; hosts that intentionally
+//! want vectorless writes disable embedding in [`CaptureConfig`]. Capture never blocks
+//! on consolidation.
 
 mod capturer;
 mod config;

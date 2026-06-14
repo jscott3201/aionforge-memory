@@ -40,13 +40,17 @@ pub enum MatchValidator {
     /// The match's digits must satisfy the Luhn checksum (payment-card numbers do; ISBNs,
     /// tracking numbers, and arbitrary digit runs almost never do).
     Luhn,
+    /// The match must be an email address, not the `git@host` user/host prefix of an SSH remote.
+    EmailAddress,
 }
 
 impl MatchValidator {
-    /// Whether `matched` (the raw matched text, separators and all) passes this check.
-    fn accepts(self, matched: &str) -> bool {
+    /// Whether this regex hit passes its structural check.
+    fn accepts(self, content: &str, start: usize, end: usize) -> bool {
+        let matched = &content[start..end];
         match self {
             MatchValidator::Luhn => luhn_valid(matched),
+            MatchValidator::EmailAddress => email_address_valid(content, matched, end),
         }
     }
 }
@@ -115,6 +119,15 @@ fn luhn_valid(candidate: &str) -> bool {
         })
         .sum();
     sum.is_multiple_of(10)
+}
+
+fn email_address_valid(content: &str, matched: &str, end: usize) -> bool {
+    let local = matched.split('@').next().unwrap_or_default();
+    let next = content[end..].chars().next();
+    if local == "git" && matches!(next, Some(':') | Some('/')) {
+        return false;
+    }
+    true
 }
 
 /// A known prompt-injection marker: a regex whose matches are flagged and stripped.
@@ -205,7 +218,7 @@ impl PrivacyFilter for CaptureFilter {
                 // A validated rule (e.g. Luhn for cards) drops matches that fail the check, so a
                 // regex that necessarily over-matches stays low-false-positive.
                 if let Some(validator) = pattern.validator
-                    && !validator.accepts(m.as_str())
+                    && !validator.accepts(content, m.start(), m.end())
                 {
                     continue;
                 }
@@ -304,7 +317,7 @@ const DEFAULT_REDACTIONS: &[(&str, &str, &str, Option<MatchValidator>)] = &[
         "email",
         "email",
         r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}",
-        None,
+        Some(MatchValidator::EmailAddress),
     ),
     (
         "us_phone",

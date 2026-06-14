@@ -1,85 +1,161 @@
 //! MCP server command execution.
 
 use std::convert::Infallible;
-use std::net::{IpAddr, SocketAddr};
+use std::io::Write;
+use std::net::SocketAddr;
 use std::sync::Arc;
 
+use aionforge_config::{AuthConfig, Config, ServerHttpConfig};
 use aionforge_mcp::{
-    AionforgeAuthenticatedStreamableHttpService, AionforgeStreamableHttpService,
-    BearerAuthChallenge, BearerToken, OAuthProtectedResourceMetadata, STREAMABLE_HTTP_ENDPOINT,
-    StreamableHttpOptions, oauth_protected_resource_well_known_path, serve_stdio,
-    streamable_http_service, streamable_http_service_with_auth_challenge,
+    AionforgeStreamableHttpService, AuthPosture, AuthValidators, STREAMABLE_HTTP_ENDPOINT,
+    StreamableHttpOptions, serve_stdio, streamable_http_service,
 };
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full, combinators::BoxBody};
 use hyper::body::Incoming;
+use hyper::header::AUTHORIZATION;
 use hyper::service::service_fn;
 use hyper::{Method, Request, Response, StatusCode};
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto::Builder as AutoHttpBuilder;
 use tokio::net::TcpListener;
 use tower_service::Service;
-use url::Url;
 
 use crate::cli::{ServeArgs, ServeTransport};
 use crate::error::CliError;
-use crate::host::{HostOptions, RuntimeEmbedder, load_config, open_memory};
+use crate::host::{
+    HostOptions, RuntimeEmbedder, StartupEmbedderStatus, check_startup_embedder, load_config,
+    open_memory, render_startup_embedder_status,
+};
 
 type HttpResponse = Response<BoxBody<Bytes, Infallible>>;
 
 pub(crate) async fn run(options: &HostOptions, args: ServeArgs) -> Result<(), CliError> {
     let config = load_config(options)?;
     let memory = open_memory(&config)?;
+    // The OAuth resource-server posture is DEFAULT-OFF: `config.auth.enabled` is `false` unless a
+    // deployment opts in, so the stdio and HTTP transports below reproduce today's behavior exactly.
     match args.transport {
-        ServeTransport::Stdio => serve_stdio(memory)
-            .await
-            .map_err(|error| CliError::Serve(error.to_string())),
-        ServeTransport::Http => serve_http(memory, args).await,
+        ServeTransport::Stdio => {
+            let startup = check_startup_embedder(memory.as_ref()).await?;
+            report_startup_embedder(&startup);
+            // stdio carries no HTTP request, so no Tower validator can run over it; the flag is
+            // threaded only for posture parity (an enabled stdio server has no producer yet).
+            // Auth-on over stdio therefore rejects EVERY identity-bearing tool with
+            // ERR_PRINCIPAL_REQUIRED (fail-closed, never a bypass). Warn LOUDLY at startup so the
+            // operator sees the root cause as a single visible signal, not a stream of per-tool 403s.
+            report_stdio_auth_unsupported(config.auth.enabled);
+            serve_stdio(memory, config.auth.enabled)
+                .await
+                .map_err(|error| CliError::Serve(error.to_string()))
+        }
+        ServeTransport::Http => serve_http(memory, args, &config).await,
     }
+}
+
+/// The Streamable HTTP settings after merging the CLI `serve http` flags over the
+/// `[server]` config block. A flag wins when present; an absent flag inherits the config.
+pub(crate) struct ResolvedHttpSettings {
+    /// The resolved bind address.
+    pub listen: SocketAddr,
+    /// Whether sessions are stateful (the resolved inverse of `--stateless`).
+    pub stateful: bool,
+    /// The resolved Host allow-list; empty defers to the transport's loopback defaults.
+    pub allowed_hosts: Vec<String>,
+    /// The resolved Origin allow-list; empty defers to the transport's loopback defaults.
+    pub allowed_origins: Vec<String>,
+}
+
+/// Merge the CLI `serve http` overrides over the `[server]` config block, the CLI flag
+/// winning whenever it is present (fork#6, PR1.5). An absent `--listen` / `--stateless`
+/// and an empty allow-list each inherit the corresponding config value, so a flag-free
+/// invocation against a default config reproduces today's behavior exactly.
+fn resolve_http_settings(args: &ServeArgs, http: &ServerHttpConfig) -> ResolvedHttpSettings {
+    ResolvedHttpSettings {
+        listen: args.listen.unwrap_or(http.listen),
+        // `--stateless` is the inverse of the stored `stateful` flag: a present flag flips
+        // it, an absent flag inherits config.
+        stateful: match args.session.stateless() {
+            Some(stateless) => !stateless,
+            None => http.stateful,
+        },
+        allowed_hosts: if args.allowed_hosts.is_empty() {
+            http.allowed_hosts.clone()
+        } else {
+            args.allowed_hosts.clone()
+        },
+        allowed_origins: if args.allowed_origins.is_empty() {
+            http.allowed_origins.clone()
+        } else {
+            args.allowed_origins.clone()
+        },
+    }
+}
+
+/// Build the [`StreamableHttpOptions`] handed to the transport from the resolved settings.
+///
+/// Security invariant (fork#6, PR1.5): an *empty* resolved allow-list must never reach the
+/// transport as an empty list. rmcp treats an empty `allowed_origins` as "Origin validation
+/// disabled" (fail-open), and `into_rmcp_config` only rejects an empty *host* list — empty
+/// origins pass through. So an empty resolved list leaves the corresponding
+/// [`StreamableHttpOptions::default`] loopback allow-list in place (the "inherit the secure
+/// default" signal) by *not* calling the `with_allowed_*` setter, rather than overwriting it
+/// with the empty list. A non-empty resolved list replaces the default wholesale.
+fn build_http_options(
+    resolved: &ResolvedHttpSettings,
+    json_response: bool,
+    max_request_body_bytes: Option<usize>,
+) -> StreamableHttpOptions {
+    let mut options = StreamableHttpOptions::default()
+        .with_stateful_mode(resolved.stateful)
+        .with_json_response(json_response);
+    if let Some(max_request_body_bytes) = max_request_body_bytes {
+        options = options.with_max_request_body_bytes(max_request_body_bytes);
+    }
+    if !resolved.allowed_hosts.is_empty() {
+        options = options.with_allowed_hosts(resolved.allowed_hosts.clone());
+    }
+    if !resolved.allowed_origins.is_empty() {
+        options = options.with_allowed_origins(resolved.allowed_origins.clone());
+    }
+    options
 }
 
 async fn serve_http(
     memory: Arc<aionforge::Memory<RuntimeEmbedder>>,
     args: ServeArgs,
+    config: &Config,
 ) -> Result<(), CliError> {
-    let oauth_metadata = oauth_metadata(&args)?;
-    let oauth_challenge = oauth_metadata.as_ref().map(oauth_challenge);
-    let mut options = StreamableHttpOptions::default()
-        .with_stateful_mode(!args.stateless)
-        .with_json_response(args.json_response);
-    if let Some(max_request_body_bytes) = args.max_request_body_bytes {
-        options = options.with_max_request_body_bytes(max_request_body_bytes);
-    }
-    if !args.allowed_hosts.is_empty() {
-        options = options.with_allowed_hosts(args.allowed_hosts);
-    }
-    if !args.allowed_origins.is_empty() {
-        options = options.with_allowed_origins(args.allowed_origins);
-    }
+    let http: &ServerHttpConfig = &config.server;
+    let resolved = resolve_http_settings(&args, http);
+    let options = build_http_options(&resolved, args.json_response, args.max_request_body_bytes);
 
-    let service = match args.bearer_token_env {
-        Some(env) => {
-            let token = std::env::var(&env).map_err(|_| {
-                CliError::Serve(format!(
-                    "bearer token environment variable {env} is not set"
-                ))
-            })?;
-            HttpMcpService::Authenticated(streamable_http_service_with_auth(
-                memory,
-                options,
-                BearerToken::new(token).map_err(|error| CliError::Serve(error.to_string()))?,
-                oauth_challenge,
-            )?)
-        }
-        None => HttpMcpService::Open(streamable_http_service(memory, options)?),
+    let startup = check_startup_embedder(memory.as_ref()).await?;
+    report_startup_embedder(&startup);
+
+    // Build the OAuth resource-server producer ONCE, at startup. DEFAULT-OFF: `build` returns
+    // `None` when `config.auth.enabled` is `false`, so the router below runs no validator, serves
+    // no well-known route, and inserts no extension — byte-for-byte today's behavior. When enabled,
+    // each issuer's JWKS is fetched here so a broken issuer fails fast at startup, not per-request.
+    let validators = AuthValidators::build(&config.auth)
+        .await
+        .map_err(|error| CliError::Serve(error.to_string()))?;
+    report_auth_startup(&config.auth, &validators);
+    let auth_posture = match &validators {
+        Some(validators) => AuthPosture::enabled(validators.issuer_origins().to_vec()),
+        None => AuthPosture::disabled(),
     };
+
+    let service = streamable_http_service(memory, options, auth_posture)?;
     let service = HttpMcpRouter {
         inner: service,
-        oauth_metadata,
+        validators: validators.map(Arc::new),
     };
 
-    let listener = TcpListener::bind(args.listen).await?;
+    let listener = TcpListener::bind(resolved.listen).await?;
     let builder = AutoHttpBuilder::new(TokioExecutor::new());
+    let shutdown = shutdown_signal();
+    tokio::pin!(shutdown);
     loop {
         tokio::select! {
             accepted = listener.accept() => {
@@ -95,8 +171,9 @@ async fn serve_http(
                     let _ = builder.serve_connection(io, hyper_service).await;
                 });
             }
-            interrupted = tokio::signal::ctrl_c() => {
-                interrupted?;
+            shutdown = &mut shutdown => {
+                shutdown?;
+                report_shutdown_signal();
                 break;
             }
         }
@@ -104,220 +181,145 @@ async fn serve_http(
     Ok(())
 }
 
-#[derive(Clone)]
-enum HttpMcpService {
-    Open(AionforgeStreamableHttpService<RuntimeEmbedder>),
-    Authenticated(AionforgeAuthenticatedStreamableHttpService<RuntimeEmbedder>),
+async fn shutdown_signal() -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        let mut terminate =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+        tokio::select! {
+            interrupted = tokio::signal::ctrl_c() => interrupted,
+            _ = terminate.recv() => Ok(()),
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        tokio::signal::ctrl_c().await
+    }
 }
 
+fn report_startup_embedder(status: &StartupEmbedderStatus) {
+    let mut stderr = std::io::stderr().lock();
+    let _ = writeln!(
+        stderr,
+        "aionforge serve: {}",
+        render_startup_embedder_status(status),
+    );
+}
+
+fn report_shutdown_signal() {
+    let mut stderr = std::io::stderr().lock();
+    let _ = writeln!(stderr, "aionforge serve: shutdown signal received");
+}
+
+/// Warn loudly when auth is enabled on the stdio transport, where there is no HTTP producer to
+/// insert a validated principal: every identity-bearing tool then fails closed with
+/// `ERR_PRINCIPAL_REQUIRED`. A no-op when auth is disabled (the default), so the warning never
+/// fires on today's path. Surfaced on stderr (the same channel as the other startup advisories),
+/// since the CLI installs no tracing subscriber.
+fn report_stdio_auth_unsupported(auth_enabled: bool) {
+    if let Some(warning) = stdio_auth_unsupported_warning(auth_enabled) {
+        let mut stderr = std::io::stderr().lock();
+        let _ = writeln!(stderr, "{warning}");
+    }
+}
+
+/// The (non-secret) stdio-auth-unsupported advisory, or `None` when auth is disabled. Pure, so the
+/// no-op-when-disabled invariant and the wording are directly testable.
+fn stdio_auth_unsupported_warning(auth_enabled: bool) -> Option<String> {
+    if !auth_enabled {
+        return None;
+    }
+    Some(
+        "aionforge serve: WARNING auth is enabled but the stdio transport has no token-validator \
+         producer; every identity-bearing tool will be rejected with ERR_PRINCIPAL_REQUIRED. Use \
+         the HTTP transport (serve http) for an auth-enabled deployment."
+            .to_string(),
+    )
+}
+
+/// Report the OAuth resource-server posture at startup (posture only, never a secret).
+///
+/// Default-off prints a single "auth disabled" line; an enabled server prints the issuer count and
+/// each soft config advisory (`AuthConfig::startup_warnings`, which names issuers by index, never
+/// by value). No token, key, or JWKS is ever logged.
+fn report_auth_startup(auth: &AuthConfig, validators: &Option<AuthValidators>) {
+    let mut stderr = std::io::stderr().lock();
+    match validators {
+        None => {
+            let _ = writeln!(stderr, "aionforge serve: auth disabled (default)");
+        }
+        Some(validators) => {
+            let _ = writeln!(
+                stderr,
+                "aionforge serve: auth enabled issuers={}",
+                validators.issuer_origins().len()
+            );
+            for warning in auth.startup_warnings() {
+                let _ = writeln!(stderr, "aionforge serve: auth warning: {warning}");
+            }
+        }
+    }
+}
+
+/// The hand-rolled MCP router (the PR5 Tower validator producer).
+///
+/// Routes `/mcp` to the inner Streamable HTTP service and, when auth is enabled, gates it: it
+/// serves the RFC 9728 well-known metadata, extracts and validates the Bearer token, maps the
+/// claims to a principal, and inserts the [`ValidatedPrincipal`] into the request's
+/// `http::request::Parts.extensions` — the two-level nesting PR4 reads back downstream. When
+/// `validators` is `None` (the DEFAULT-OFF path) it is byte-for-byte the pre-PR5 router: `/mcp`
+/// delegates straight to the inner service and every other path 404s, with no validation, no
+/// extension insert, and no well-known route.
 #[derive(Clone)]
 struct HttpMcpRouter {
-    inner: HttpMcpService,
-    oauth_metadata: Option<OAuthMetadataRoute>,
-}
-
-#[derive(Clone, Debug)]
-struct OAuthMetadataRoute {
-    path: String,
-    resource: String,
-    body: Arc<str>,
-    scopes: Vec<String>,
+    inner: AionforgeStreamableHttpService<RuntimeEmbedder>,
+    /// The OAuth resource-server producer, present only when `auth.enabled`. `None` is the
+    /// default-off path: no validator runs, no extension is inserted, no well-known route exists.
+    validators: Option<Arc<AuthValidators>>,
 }
 
 impl HttpMcpRouter {
-    async fn call(&mut self, request: Request<Incoming>) -> Result<HttpResponse, Infallible> {
-        if let Some(metadata) = &self.oauth_metadata
-            && request.uri().path() == metadata.path
-        {
-            if request.method() == Method::GET {
-                return Ok(json_response(Arc::clone(&metadata.body)));
+    async fn call(&mut self, mut request: Request<Incoming>) -> Result<HttpResponse, Infallible> {
+        // DEFAULT-OFF fast path: with no producer the router is byte-for-byte the pre-PR5 router —
+        // `/mcp` delegates to the inner service, every other path 404s, nothing else runs.
+        let Some(validators) = self.validators.clone() else {
+            if request.uri().path() != STREAMABLE_HTTP_ENDPOINT {
+                return Ok(not_found_response());
             }
-            return Ok(method_not_allowed_response());
+            return self.inner.call(request).await;
+        };
+
+        // Auth-enabled. The RFC 9728 well-known route is served first (a GET that lets a client
+        // discover the authorization servers BEFORE it has a token).
+        if request.method() == Method::GET && request.uri().path() == validators.well_known_path() {
+            return Ok(validators.oauth_metadata_response());
         }
+
+        // Every other path that is not `/mcp` 404s, exactly as the default-off router.
         if request.uri().path() != STREAMABLE_HTTP_ENDPOINT {
             return Ok(not_found_response());
         }
-        match &mut self.inner {
-            HttpMcpService::Open(service) => service.call(request).await,
-            HttpMcpService::Authenticated(service) => service.call(request).await,
-        }
-    }
-}
 
-fn streamable_http_service_with_auth(
-    memory: Arc<aionforge::Memory<RuntimeEmbedder>>,
-    options: StreamableHttpOptions,
-    token: BearerToken,
-    oauth_challenge: Option<BearerAuthChallenge>,
-) -> Result<AionforgeAuthenticatedStreamableHttpService<RuntimeEmbedder>, CliError> {
-    Ok(streamable_http_service_with_auth_challenge(
-        memory,
-        options,
-        token,
-        oauth_challenge.unwrap_or_default(),
-    )?)
-}
-
-fn oauth_metadata(args: &ServeArgs) -> Result<Option<OAuthMetadataRoute>, CliError> {
-    let oauth_issuers = oauth_issuers(&args.oauth_issuers)?;
-    let oauth_scopes = oauth_scopes(&args.oauth_scopes)?;
-    if oauth_issuers.is_empty() {
-        if !oauth_scopes.is_empty() {
-            return Err(CliError::Serve(
-                "--oauth-scope requires at least one --oauth-issuer".to_string(),
-            ));
-        }
-        return Ok(None);
-    }
-    if args.bearer_token_env.is_none() {
-        return Err(CliError::Serve(
-            "--oauth-issuer requires --bearer-token-env".to_string(),
-        ));
-    }
-    let endpoint_url = endpoint_url(args)?;
-    let metadata_path = oauth_protected_resource_well_known_path(STREAMABLE_HTTP_ENDPOINT);
-    let metadata_url = resource_metadata_url(&endpoint_url, &metadata_path)?;
-    let metadata = OAuthProtectedResourceMetadata::new(endpoint_url.as_str(), &oauth_issuers)
-        .with_scopes(&oauth_scopes);
-    Ok(Some(OAuthMetadataRoute {
-        path: metadata_path,
-        resource: metadata_url,
-        body: Arc::from(metadata.to_json()),
-        scopes: oauth_scopes,
-    }))
-}
-
-fn oauth_challenge(metadata: &OAuthMetadataRoute) -> BearerAuthChallenge {
-    let mut challenge =
-        BearerAuthChallenge::default().with_resource_metadata_url(metadata.resource.clone());
-    if !metadata.scopes.is_empty() {
-        challenge = challenge.with_scope(metadata.scopes.join(" "));
-    }
-    challenge
-}
-
-fn oauth_issuers(raw: &[String]) -> Result<Vec<String>, CliError> {
-    let issuers = normalized_non_blank("--oauth-issuer", raw)?;
-    for (index, issuer) in issuers.iter().enumerate() {
-        let url = Url::parse(issuer).map_err(|error| {
-            CliError::Serve(format!(
-                "--oauth-issuer[{index}] is not a valid URL: {error}"
-            ))
-        })?;
-        if url.query().is_some() || url.fragment().is_some() {
-            return Err(CliError::Serve(format!(
-                "--oauth-issuer[{index}] must not include a query string or fragment"
-            )));
-        }
-        if url.scheme() == "https" {
-            continue;
-        }
-        if url.scheme() == "http" && is_loopback_url(&url) {
-            continue;
-        }
-        return Err(CliError::Serve(format!(
-            "--oauth-issuer[{index}] must use https unless it is an http loopback URL"
-        )));
-    }
-    Ok(issuers)
-}
-
-fn oauth_scopes(raw: &[String]) -> Result<Vec<String>, CliError> {
-    let scopes = normalized_non_blank("--oauth-scope", raw)?;
-    for (index, scope) in scopes.iter().enumerate() {
-        if scope
-            .chars()
-            .any(|ch| ch.is_ascii_whitespace() || ch.is_ascii_control() || ch == '"' || ch == '\\')
+        // Authenticate the `/mcp` request. On any failure the producer returns the secret-free
+        // 401/403 response (with the WWW-Authenticate challenge) to send verbatim.
+        let validated = match validators
+            .authenticate(request.headers().get(AUTHORIZATION))
+            .await
         {
-            return Err(CliError::Serve(format!(
-                "--oauth-scope[{index}] must be one scope token without whitespace, quotes, or backslashes"
-            )));
-        }
+            Ok(validated) => validated,
+            Err(response) => return Ok(*response),
+        };
+
+        // THE CRUX: insert the ValidatedPrincipal into the http::request::Parts.extensions (one
+        // level below the rmcp model::Extensions bag). The rmcp streamable-http transport carries
+        // the WHOLE Parts into its bag as a single entry, so PR4's two-level read
+        // (`extensions.get::<http::request::Parts>()` then `parts.extensions.get::<ValidatedPrincipal>()`)
+        // finds it here and nowhere else — inserting into any other bag would yield None at the
+        // handler and a total auth-on outage.
+        request.extensions_mut().insert(validated);
+        self.inner.call(request).await
     }
-    Ok(scopes)
-}
-
-fn normalized_non_blank(flag: &str, raw: &[String]) -> Result<Vec<String>, CliError> {
-    raw.iter()
-        .enumerate()
-        .map(|(index, value)| {
-            let trimmed = value.trim();
-            if trimmed.is_empty() {
-                return Err(CliError::Serve(format!("{flag}[{index}] cannot be blank")));
-            }
-            Ok(trimmed.to_string())
-        })
-        .collect()
-}
-
-fn is_loopback_url(url: &Url) -> bool {
-    let Some(host) = url.host_str() else {
-        return false;
-    };
-    if host.eq_ignore_ascii_case("localhost") {
-        return true;
-    }
-    let ip_host = host
-        .strip_prefix('[')
-        .and_then(|stripped| stripped.strip_suffix(']'))
-        .unwrap_or(host);
-    ip_host
-        .parse::<IpAddr>()
-        .map(|address| address.is_loopback())
-        .unwrap_or(false)
-}
-
-fn endpoint_url(args: &ServeArgs) -> Result<Url, CliError> {
-    let raw = args
-        .public_url
-        .clone()
-        .unwrap_or_else(|| default_endpoint_url(args.listen));
-    let url = Url::parse(&raw)
-        .map_err(|error| CliError::Serve(format!("invalid public MCP URL {raw:?}: {error}")))?;
-    if url.path() != STREAMABLE_HTTP_ENDPOINT {
-        return Err(CliError::Serve(format!(
-            "public MCP URL path must be {STREAMABLE_HTTP_ENDPOINT}"
-        )));
-    }
-    if url.query().is_some() || url.fragment().is_some() {
-        return Err(CliError::Serve(
-            "public MCP URL must not include a query string or fragment".to_string(),
-        ));
-    }
-    Ok(url)
-}
-
-fn default_endpoint_url(listen: SocketAddr) -> String {
-    let host = match listen.ip() {
-        IpAddr::V4(ip) if ip.is_unspecified() => "127.0.0.1".to_string(),
-        IpAddr::V6(ip) if ip.is_unspecified() => "[::1]".to_string(),
-        IpAddr::V4(ip) => ip.to_string(),
-        IpAddr::V6(ip) => format!("[{ip}]"),
-    };
-    format!("http://{host}:{}{STREAMABLE_HTTP_ENDPOINT}", listen.port())
-}
-
-fn resource_metadata_url(endpoint_url: &Url, metadata_path: &str) -> Result<String, CliError> {
-    let mut url = endpoint_url.clone();
-    url.set_path(metadata_path);
-    url.set_query(None);
-    url.set_fragment(None);
-    Ok(url.to_string())
-}
-
-fn json_response(body: Arc<str>) -> HttpResponse {
-    Response::builder()
-        .status(StatusCode::OK)
-        .header(hyper::header::CONTENT_TYPE, "application/json")
-        .body(Full::new(Bytes::from(body.as_ref().to_owned())).boxed())
-        .expect("valid metadata response")
-}
-
-fn method_not_allowed_response() -> HttpResponse {
-    Response::builder()
-        .status(StatusCode::METHOD_NOT_ALLOWED)
-        .body(Full::new(Bytes::from_static(b"Method Not Allowed")).boxed())
-        .expect("valid method not allowed response")
 }
 
 fn not_found_response() -> HttpResponse {
@@ -329,211 +331,189 @@ fn not_found_response() -> HttpResponse {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::cli::ServeTransport;
+    use aionforge_mcp::streamable_http_config;
 
-    fn http_args() -> ServeArgs {
+    use super::*;
+    use crate::cli::SessionPostureArgs;
+
+    /// A `serve http` invocation with every promoted knob absent: `listen`/`stateless`
+    /// `None` and empty allow-lists, the "inherit the config" signal.
+    fn empty_http_args() -> ServeArgs {
         ServeArgs {
             transport: ServeTransport::Http,
-            listen: "0.0.0.0:3918".parse().expect("addr"),
-            bearer_token_env: Some("AIONFORGE_MCP_TOKEN".to_string()),
-            public_url: None,
-            oauth_issuers: Vec::new(),
-            oauth_scopes: Vec::new(),
+            listen: None,
             allowed_hosts: Vec::new(),
             allowed_origins: Vec::new(),
-            stateless: false,
+            session: SessionPostureArgs::from_stateless(None),
             json_response: false,
             max_request_body_bytes: None,
         }
     }
 
     #[test]
-    fn default_public_url_uses_loopback_for_unspecified_bind() {
-        let args = http_args();
-        let url = endpoint_url(&args).expect("url");
-
-        assert_eq!(url.as_str(), "http://127.0.0.1:3918/mcp");
+    fn stdio_auth_warning_fires_only_when_auth_is_enabled() {
+        // DEFAULT-OFF: auth disabled (the default) draws no stdio advisory, so today's stdio path
+        // is byte-for-byte unchanged.
+        assert!(
+            stdio_auth_unsupported_warning(false).is_none(),
+            "auth-off stdio is silent"
+        );
+        // Auth-on stdio warns loudly with the actionable root cause and the actionable remedy.
+        let warning = stdio_auth_unsupported_warning(true).expect("auth-on stdio warns");
+        assert!(warning.contains("ERR_PRINCIPAL_REQUIRED"), "{warning}");
+        assert!(warning.contains("serve http"), "{warning}");
+        // Never leaks a secret — it is a fixed advisory.
+        assert!(!warning.to_lowercase().contains("token="), "{warning}");
     }
 
     #[test]
-    fn oauth_metadata_uses_public_url_and_well_known_path() {
-        let mut args = http_args();
-        args.public_url = Some("https://memory.example.com/mcp".to_string());
-        args.oauth_issuers = vec!["https://auth.example.com".to_string()];
-        args.oauth_scopes = vec!["memory.read".to_string(), "memory.write".to_string()];
+    fn all_flags_absent_inherit_the_config_block() {
+        // A non-default config so an inherited value is distinguishable from a flag
+        // default: every resolved field must come straight off the config.
+        let config = ServerHttpConfig {
+            listen: "0.0.0.0:9000".parse().expect("addr"),
+            allowed_hosts: vec!["console.example".into()],
+            allowed_origins: vec!["https://console.example".into()],
+            stateful: false,
+        };
 
-        let route = oauth_metadata(&args)
-            .expect("metadata builds")
-            .expect("metadata enabled");
+        let resolved = resolve_http_settings(&empty_http_args(), &config);
 
-        assert_eq!(route.path, "/.well-known/oauth-protected-resource/mcp");
+        assert_eq!(resolved.listen, config.listen, "listen inherits config");
         assert_eq!(
-            route.resource,
-            "https://memory.example.com/.well-known/oauth-protected-resource/mcp"
+            resolved.stateful, config.stateful,
+            "stateful inherits config"
         );
-        assert!(
-            route
-                .body
-                .contains("\"resource\":\"https://memory.example.com/mcp\"")
+        assert_eq!(
+            resolved.allowed_hosts, config.allowed_hosts,
+            "hosts inherit config"
         );
-        assert!(
-            route
-                .body
-                .contains("\"authorization_servers\":[\"https://auth.example.com\"]")
-        );
-        assert!(
-            route
-                .body
-                .contains("\"scopes_supported\":[\"memory.read\",\"memory.write\"]")
+        assert_eq!(
+            resolved.allowed_origins, config.allowed_origins,
+            "origins inherit config"
         );
     }
 
     #[test]
-    fn oauth_metadata_normalizes_inputs_for_metadata_and_challenge() {
-        let mut args = http_args();
-        args.public_url = Some("https://memory.example.com/mcp".to_string());
-        args.oauth_issuers = vec![" https://auth.example.com/issuer ".to_string()];
-        args.oauth_scopes = vec![" memory.read ".to_string()];
+    fn every_flag_present_overrides_the_config_block() {
+        // The config is the default posture; every flag is set to something different,
+        // and `--stateless` (Some(true)) must flip the default `stateful: true` off.
+        let config = ServerHttpConfig::default();
+        let args = ServeArgs {
+            listen: Some("127.0.0.1:4927".parse().expect("addr")),
+            allowed_hosts: vec!["flag-host".into()],
+            allowed_origins: vec!["https://flag-origin".into()],
+            session: SessionPostureArgs::from_stateless(Some(true)),
+            ..empty_http_args()
+        };
 
-        let route = oauth_metadata(&args)
-            .expect("metadata builds")
-            .expect("metadata enabled");
+        let resolved = resolve_http_settings(&args, &config);
 
-        assert!(
-            route
-                .body
-                .contains("\"authorization_servers\":[\"https://auth.example.com/issuer\"]")
+        assert_eq!(
+            resolved.listen,
+            "127.0.0.1:4927".parse::<SocketAddr>().expect("addr"),
+            "the --listen flag wins"
         );
         assert!(
-            route
-                .body
-                .contains("\"scopes_supported\":[\"memory.read\"]")
+            !resolved.stateful,
+            "--stateless flips stateful off, overriding the config default"
         );
-        assert_eq!(route.scopes, vec!["memory.read"]);
-        assert!(
-            oauth_challenge(&route)
-                .header_value()
-                .contains(r#"scope="memory.read""#)
-        );
-    }
-
-    #[test]
-    fn oauth_issuer_allows_loopback_http_for_local_development() {
-        let mut args = http_args();
-        args.oauth_issuers = vec![
-            "http://localhost:3000/issuer".to_string(),
-            "http://127.0.0.1:3000/issuer".to_string(),
-            "http://[::1]:3000/issuer".to_string(),
-        ];
-
-        let route = oauth_metadata(&args)
-            .expect("metadata builds")
-            .expect("metadata enabled");
-
-        assert!(route.body.contains("\"http://localhost:3000/issuer\""));
-        assert!(route.body.contains("\"http://127.0.0.1:3000/issuer\""));
-        assert!(route.body.contains("\"http://[::1]:3000/issuer\""));
-    }
-
-    #[test]
-    fn oauth_issuer_rejects_blank_or_insecure_remote_values() {
-        for (issuer, message) in [
-            (" ", "--oauth-issuer[0] cannot be blank"),
-            ("not a url", "--oauth-issuer[0] is not a valid URL"),
-            (
-                "http://auth.example.com",
-                "--oauth-issuer[0] must use https unless it is an http loopback URL",
-            ),
-            (
-                "https://auth.example.com?tenant=bad",
-                "--oauth-issuer[0] must not include a query string or fragment",
-            ),
-        ] {
-            let mut args = http_args();
-            args.oauth_issuers = vec![issuer.to_string()];
-
-            let error = oauth_metadata(&args).expect_err("issuer rejected");
-
-            assert!(error.to_string().contains(message), "{error}");
-        }
-    }
-
-    #[test]
-    fn oauth_scope_rejects_blank_or_multi_token_values() {
-        for (scope, message) in [
-            (" ", "--oauth-scope[0] cannot be blank"),
-            (
-                "memory.read memory.write",
-                "--oauth-scope[0] must be one scope token",
-            ),
-            ("memory\"read", "--oauth-scope[0] must be one scope token"),
-            ("memory\\read", "--oauth-scope[0] must be one scope token"),
-        ] {
-            let mut args = http_args();
-            args.oauth_issuers = vec!["https://auth.example.com".to_string()];
-            args.oauth_scopes = vec![scope.to_string()];
-
-            let error = oauth_metadata(&args).expect_err("scope rejected");
-
-            assert!(error.to_string().contains(message), "{error}");
-        }
-    }
-
-    #[test]
-    fn public_url_must_point_at_mcp_endpoint() {
-        let mut args = http_args();
-        args.public_url = Some("https://memory.example.com/other".to_string());
-
-        let error = endpoint_url(&args).expect_err("invalid path");
-
-        assert!(
-            error
-                .to_string()
-                .contains("public MCP URL path must be /mcp")
+        assert_eq!(resolved.allowed_hosts, vec!["flag-host".to_string()]);
+        assert_eq!(
+            resolved.allowed_origins,
+            vec!["https://flag-origin".to_string()]
         );
     }
 
     #[test]
-    fn public_url_must_not_include_query_or_fragment() {
-        let mut args = http_args();
-        args.public_url = Some("https://memory.example.com/mcp?token=bad".to_string());
+    fn a_mixed_case_overrides_only_the_listen_flag() {
+        // Only `--listen` is set; everything else inherits. `--stateless=false` is *not*
+        // tested here — that is the every-flag case — so the absent stateless flag must
+        // inherit the config's `stateful: false`.
+        let config = ServerHttpConfig {
+            listen: "0.0.0.0:9000".parse().expect("addr"),
+            allowed_hosts: vec!["console.example".into()],
+            allowed_origins: vec!["https://console.example".into()],
+            stateful: false,
+        };
+        let args = ServeArgs {
+            listen: Some("127.0.0.1:4927".parse().expect("addr")),
+            ..empty_http_args()
+        };
 
-        let error = endpoint_url(&args).expect_err("query rejected");
+        let resolved = resolve_http_settings(&args, &config);
 
-        assert!(
-            error
-                .to_string()
-                .contains("public MCP URL must not include a query string or fragment")
+        assert_eq!(
+            resolved.listen,
+            "127.0.0.1:4927".parse::<SocketAddr>().expect("addr"),
+            "the --listen flag overrides config"
+        );
+        assert_eq!(
+            resolved.stateful, config.stateful,
+            "the absent --stateless inherits config"
+        );
+        assert_eq!(
+            resolved.allowed_hosts, config.allowed_hosts,
+            "the empty host allow-list inherits config"
+        );
+        assert_eq!(
+            resolved.allowed_origins, config.allowed_origins,
+            "the empty origin allow-list inherits config"
         );
     }
 
+    /// Security regression (fork#6, PR1.5): when BOTH the CLI flags and the config leave the
+    /// allow-lists empty, the options handed to the transport must keep the secure loopback
+    /// defaults, NOT an empty list. An empty `allowed_origins` would disable Origin
+    /// validation in rmcp (fail-open), and `streamable_http_config` does not reject it — so
+    /// `build_http_options` is the guard that must never hand it an empty list.
     #[test]
-    fn oauth_metadata_requires_bearer_auth() {
-        let mut args = http_args();
-        args.bearer_token_env = None;
-        args.oauth_issuers = vec!["https://auth.example.com".to_string()];
-
-        let error = oauth_metadata(&args).expect_err("auth required");
-
+    fn empty_resolved_allow_lists_keep_the_secure_loopback_defaults() {
+        // The all-default config + flag-free invocation: every resolved allow-list is empty.
+        let resolved = resolve_http_settings(&empty_http_args(), &ServerHttpConfig::default());
         assert!(
-            error
-                .to_string()
-                .contains("--oauth-issuer requires --bearer-token-env")
+            resolved.allowed_hosts.is_empty(),
+            "precondition: empty hosts"
         );
+        assert!(
+            resolved.allowed_origins.is_empty(),
+            "precondition: empty origins"
+        );
+
+        let options = build_http_options(&resolved, false, None);
+        let defaults = StreamableHttpOptions::default();
+        assert_eq!(
+            options.allowed_hosts, defaults.allowed_hosts,
+            "empty resolved hosts keep the loopback default host allow-list"
+        );
+        assert_eq!(
+            options.allowed_origins, defaults.allowed_origins,
+            "empty resolved origins keep the loopback default origin allow-list, not an empty \
+             (Origin-validation-disabled) list"
+        );
+        assert!(
+            !options.allowed_origins.is_empty(),
+            "the origin allow-list reaching rmcp is never empty (no fail-open)"
+        );
+        // And the built options must convert into a valid rmcp config (Origin validation on).
+        streamable_http_config(options).expect("default loopback options build a valid config");
     }
 
+    /// A non-empty resolved allow-list replaces the loopback default wholesale.
     #[test]
-    fn oauth_scopes_require_an_issuer() {
-        let mut args = http_args();
-        args.oauth_scopes = vec!["memory.read".to_string()];
+    fn non_empty_resolved_allow_lists_replace_the_defaults() {
+        let config = ServerHttpConfig {
+            allowed_hosts: vec!["console.example".into()],
+            allowed_origins: vec!["https://console.example".into()],
+            ..ServerHttpConfig::default()
+        };
+        let resolved = resolve_http_settings(&empty_http_args(), &config);
 
-        let error = oauth_metadata(&args).expect_err("issuer required");
-
-        assert!(
-            error
-                .to_string()
-                .contains("--oauth-scope requires at least one --oauth-issuer")
+        let options = build_http_options(&resolved, false, None);
+        assert_eq!(options.allowed_hosts, vec!["console.example".to_string()]);
+        assert_eq!(
+            options.allowed_origins,
+            vec!["https://console.example".to_string()]
         );
     }
 }

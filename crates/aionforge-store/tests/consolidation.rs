@@ -331,9 +331,9 @@ fn lag_reports_the_oldest_pending_and_drains_as_work_completes() {
     assert_eq!(lag.episodes_pending, 2);
     assert_eq!(lag.episodes_failed, 0);
     assert_eq!(
-        lag.oldest_pending_captured_at,
-        Some(ts("2026-06-06T08:00:00-05:00[America/Chicago]")),
-        "the oldest pending captured_at drives lag",
+        lag.oldest_pending_ingested_at,
+        Some(ts("2026-06-06T09:00:00-05:00[America/Chicago]")),
+        "the oldest pending ingested_at drives backlog age",
     );
 
     store
@@ -349,9 +349,9 @@ fn lag_reports_the_oldest_pending_and_drains_as_work_completes() {
     let lag = store.consolidation_lag().expect("lag");
     assert_eq!(lag.episodes_pending, 1, "the backlog drained by one");
     assert_eq!(
-        lag.oldest_pending_captured_at,
-        Some(ts("2026-06-06T08:30:00-05:00[America/Chicago]")),
-        "the next-oldest is now the lag driver",
+        lag.oldest_pending_ingested_at,
+        Some(ts("2026-06-06T09:05:00-05:00[America/Chicago]")),
+        "the next-oldest ingestion is now the age driver",
     );
 }
 

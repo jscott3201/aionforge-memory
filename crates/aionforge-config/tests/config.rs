@@ -16,6 +16,32 @@ use figment::providers::{Format, Serialized, Toml};
 use figment::{Figment, Jail};
 use secrecy::ExposeSecret;
 
+/// Enter a config-loading jail with no inherited `AIONFORGE_*` variables.
+///
+/// The layered loader reads `Env::prefixed("AIONFORGE_")` (`load.rs`) from the live process
+/// environment, and figment's [`Jail`] restores env *writes* on drop but does not clear
+/// inherited variables at entry — so a developer machine that exports `AIONFORGE_EMBEDDER__*`
+/// (or any `AIONFORGE_*`) leaks into these layering assertions, which `Config::from_figment`
+/// extracts and validates as one whole config.
+///
+/// `set_env` cannot neutralise a variable a test does not name (e.g. an ambient
+/// `AIONFORGE_EMBEDDER__MODEL` that would beat the file layer), so the inherited ones must be
+/// *removed*. figment exposes only the whole-environment `clear_env` — there is no namespaced
+/// removal, and `unsafe { remove_var }` is forbidden workspace-wide — so we clear everything
+/// and immediately restore `HOME`, the one inherited variable the many non-jail tests in this
+/// binary read concurrently (via `Config::default` → `default_data_dir`). [`Jail`] serializes
+/// jail-vs-jail tests under a global lock and restores the full environment on drop, so this
+/// is race-free against other jails and self-undoing; the brief window before `HOME` is
+/// restored is logically harmless (a cleared `HOME` only yields a non-empty `./.aionforge`,
+/// which `validate` accepts and no assertion inspects).
+fn clear_inherited_env(jail: &mut Jail) {
+    let home = std::env::var_os("HOME");
+    jail.clear_env();
+    if let Some(home) = home {
+        jail.set_env("HOME", home.to_string_lossy());
+    }
+}
+
 #[test]
 fn defaults_are_usable_and_valid() {
     let config = Config::default();
@@ -31,6 +57,7 @@ fn defaults_are_usable_and_valid() {
 #[test]
 fn layers_apply_in_precedence_order() {
     Jail::expect_with(|jail| {
+        clear_inherited_env(jail);
         // File layer overrides defaults; it sets dimension and model.
         jail.create_file(
             "config.toml",
@@ -56,6 +83,7 @@ fn layers_apply_in_precedence_order() {
 #[test]
 fn environment_sets_the_data_directory() {
     Jail::expect_with(|jail| {
+        clear_inherited_env(jail);
         jail.set_env("AIONFORGE_PERSISTENCE__DATA_DIR", "/srv/aionforge-test");
         let config =
             Config::from_figment(Config::figment(Path::new("config.toml"))).expect("load from env");
@@ -67,8 +95,8 @@ fn environment_sets_the_data_directory() {
 #[test]
 fn a_missing_file_is_skipped() {
     Jail::expect_with(|jail| {
+        clear_inherited_env(jail);
         // No config.toml created; loading falls back to defaults + env.
-        let _ = jail;
         let config = Config::from_figment(Config::figment(Path::new("config.toml")))
             .expect("load with no file");
         assert_eq!(config.embedder.dimension, 1536);
@@ -79,6 +107,7 @@ fn a_missing_file_is_skipped() {
 #[test]
 fn load_reads_the_default_config_path() {
     Jail::expect_with(|jail| {
+        clear_inherited_env(jail);
         // Point HOME at the jail so the default path resolves inside it, then drop a
         // config file where `Config::load` will look for it.
         let home = jail.directory().to_path_buf();
@@ -228,6 +257,51 @@ fn the_core_block_posture_parses_from_toml_and_validates_through_config() {
     config.core_block.default_rule.k = 0;
     assert!(
         matches!(config.validate(), Err(ConfigError::Invalid { key, .. }) if key == "core_block.default_rule.k"),
+        "the offending key is named"
+    );
+}
+
+#[test]
+fn the_server_block_posture_parses_from_toml_and_validates_through_config() {
+    // TOML — not JSON — is the real figment wire format, and `server.listen` is a typed
+    // `SocketAddr` that deserializes from a bare string. Pin that the [server] block round
+    // trips through a full Config load (the path PR1's JSON-only unit test does not cover)
+    // and validates.
+    let figment = Figment::from(Serialized::defaults(Config::default())).merge(Toml::string(
+        r#"
+            [server]
+            listen = "0.0.0.0:8080"
+            allowed_hosts = ["console.example"]
+            allowed_origins = ["https://console.example"]
+            stateful = false
+        "#,
+    ));
+    let config: Config = figment.extract().expect("extract");
+    config.validate().expect("a sound server posture validates");
+    assert_eq!(
+        config.server.listen.to_string(),
+        "0.0.0.0:8080",
+        "the listen SocketAddr parses from its TOML string form"
+    );
+    assert!(
+        !config.server.stateful,
+        "stateful = false parses through TOML"
+    );
+    assert_eq!(
+        config.server.allowed_hosts,
+        vec!["console.example".to_string()]
+    );
+    assert_eq!(
+        config.server.allowed_origins,
+        vec!["https://console.example".to_string()]
+    );
+
+    // The whole-config validate runs the server block: a blank origin fails closed,
+    // naming the key (never the value).
+    let mut config = config;
+    config.server.allowed_origins = vec![String::new()];
+    assert!(
+        matches!(config.validate(), Err(ConfigError::Invalid { key, .. }) if key == "server.allowed_origins"),
         "the offending key is named"
     );
 }
@@ -564,6 +638,7 @@ fn no_api_key_variable_resolves_to_none() {
 #[test]
 fn a_non_integer_dimension_in_the_environment_fails_clearly() {
     Jail::expect_with(|jail| {
+        clear_inherited_env(jail);
         jail.set_env("AIONFORGE_EMBEDDER__DIMENSION", "not-a-number");
         let error = Config::from_figment(Config::figment(Path::new("config.toml")))
             .expect_err("a non-integer dimension is rejected");
@@ -582,6 +657,7 @@ fn a_non_integer_dimension_in_the_environment_fails_clearly() {
 #[test]
 fn malformed_toml_fails_clearly() {
     Jail::expect_with(|jail| {
+        clear_inherited_env(jail);
         jail.create_file("config.toml", "[embedder]\ndimension = = =\n")?;
         let error = Config::from_figment(Config::figment(Path::new("config.toml")))
             .expect_err("malformed TOML is rejected");
@@ -651,6 +727,7 @@ fn audit_signing_is_off_by_default() {
 #[test]
 fn the_environment_enables_audit_signing() {
     Jail::expect_with(|jail| {
+        clear_inherited_env(jail);
         jail.set_env("AIONFORGE_SECURITY__SIGN_AUDIT_EVENTS", "true");
         let config =
             Config::from_figment(Config::figment(Path::new("config.toml"))).expect("load from env");

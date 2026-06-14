@@ -10,8 +10,11 @@ homepage.workspace = true
 description = "Optional Model Context Protocol server surface (Tools, Resources, Prompts) for Aionforge Memory."
 
 [dependencies]
-aionforge-engine = { path = "../aionforge-engine", version = "0.1.0" }
-aionforge-domain = { path = "../aionforge-domain", version = "0.1.0" }
+aionforge-engine = { path = "../aionforge-engine", version = "0.2.0" }
+aionforge-domain = { path = "../aionforge-domain", version = "0.2.0" }
+aionforge-config = { path = "../aionforge-config", version = "0.2.0" }
+aionforge-auth = { path = "../aionforge-auth", version = "0.2.0" }
+base64 = { workspace = true }
 bytes = "1"
 http = "1"
 http-body = "1"
@@ -20,15 +23,24 @@ rmcp = { version = "1.6", features = ["server", "macros", "transport-io", "trans
 schemars = "1"
 serde = { workspace = true }
 serde_json = { workspace = true }
+metrics = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
 jiff = { workspace = true }
 tokio = { workspace = true }
 tower-service = "0.3"
 
 [dev-dependencies]
-aionforge-domain = { path = "../aionforge-domain", version = "0.1.0" }
-aionforge-engine = { path = "../aionforge-engine", version = "0.1.0" }
+aionforge-domain = { path = "../aionforge-domain", version = "0.2.0" }
+aionforge-engine = { path = "../aionforge-engine", version = "0.2.0" }
+aionforge-store = { path = "../aionforge-store", version = "0.2.0" }
+aionforge-config = { path = "../aionforge-config", version = "0.2.0" }
+aionforge-auth = { path = "../aionforge-auth", version = "0.2.0" }
 rmcp = { version = "1.6", features = ["client"] }
 tokio = { workspace = true }
+# Mint test RS256 tokens and serve a mock JWKS for the auth-validator through-line tests.
+jsonwebtoken = { workspace = true }
+wiremock = { workspace = true }
 
 [lints]
 workspace = true

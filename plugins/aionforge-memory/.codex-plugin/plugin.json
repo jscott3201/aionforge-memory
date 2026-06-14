@@ -1,0 +1,38 @@
+{
+  "name": "aionforge-memory",
+  "version": "0.2.0+codex.20260614000000",
+  "description": "Agent skills for using an externally configured Aionforge Memory MCP server as durable project memory.",
+  "author": {
+    "name": "Aionforge Labs",
+    "url": "https://github.com/jscott3201"
+  },
+  "homepage": "https://github.com/jscott3201/aionforge-memory/tree/development/plugins/aionforge-memory",
+  "repository": "https://github.com/jscott3201/aionforge-memory",
+  "license": "MIT OR Apache-2.0",
+  "keywords": [
+    "memory",
+    "mcp",
+    "agent-skills",
+    "retrieval"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Aionforge Memory",
+    "shortDescription": "Durable memory workflows for agent sessions",
+    "longDescription": "Use Aionforge Memory through an existing MCP server with small skills for recall, capture, and session handoff.",
+    "developerName": "Aionforge Labs",
+    "category": "Productivity",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/jscott3201/aionforge-memory",
+    "privacyPolicyURL": "https://github.com/jscott3201/aionforge-memory/blob/development/docs/security-model.md",
+    "termsOfServiceURL": "https://github.com/jscott3201/aionforge-memory/blob/development/LICENSE-MIT",
+    "defaultPrompt": [
+      "Use Aionforge Memory as the working substrate for this task.",
+      "Search memory before planning, then capture durable facts (decisions, fixes, validation, handoffs) the moment they land, not batched to the end.",
+      "Track tasks, blockers, and TODOs as work items with work_create then work_advance as status changes. Tasks are work items, not memory episodes; there is no note to store directly."
+    ]
+  }
+}

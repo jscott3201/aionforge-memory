@@ -30,6 +30,21 @@ fn redacts_an_email_and_records_the_original_span() {
 }
 
 #[test]
+fn does_not_redact_ssh_git_remotes_as_email() {
+    for remote in [
+        "git@github.com:jscott3201/aionforge-memory.git",
+        "ssh://git@github.com/jscott3201/aionforge-memory.git",
+    ] {
+        let out = filter().filter(remote).expect("filter");
+        assert!(
+            out.redactions.is_empty(),
+            "git remote prefix should not be treated as email: {remote} -> {out:?}"
+        );
+        assert_eq!(out.cleaned, remote);
+    }
+}
+
+#[test]
 fn redacts_phone_and_secret_key() {
     // Build the fake key at runtime so the test fixture itself does not trip the
     // no-secret scan; the filter still receives a full sk- key to redact.

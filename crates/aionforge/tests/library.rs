@@ -177,6 +177,7 @@ async fn a_host_can_capture_and_search_through_the_library() {
             teams: Vec::new(),
             session_id: None,
             captured_at: now(),
+            ingested_at: now(),
             writer: WriterContext {
                 model_family: "host".to_string(),
                 model_version: None,

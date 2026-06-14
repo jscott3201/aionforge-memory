@@ -120,6 +120,12 @@ pub struct RecallOptions {
     /// exclusion gates in lockstep — the role gate and the system-namespace visibility gate
     /// — since system content is excluded twice.
     pub include_system: bool,
+    /// Whether live episodes that have a newer live `supersedes` claimant may appear in
+    /// recall. The default `true` preserves audit/provenance behavior: old evidence can
+    /// still surface with `superseded_by` metadata. Set this to `false` for a current-only
+    /// episode view that hides replaced raw captures while keeping derived fact history
+    /// governed by [`TemporalMode`].
+    pub include_superseded: bool,
 }
 
 impl Default for RecallOptions {
@@ -134,6 +140,7 @@ impl Default for RecallOptions {
             sensitive: false,
             now: None,
             include_system: false,
+            include_superseded: true,
         }
     }
 }
