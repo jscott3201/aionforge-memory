@@ -13,6 +13,7 @@ use aionforge_domain::nodes::core::BlockKind;
 use aionforge_domain::nodes::episodic::{ConsolidationState, Role};
 use aionforge_domain::nodes::forensic::{AuditKind, PromotionStatus};
 use aionforge_domain::nodes::semantic::FactStatus;
+use aionforge_domain::nodes::work::WorkStatus;
 use aionforge_domain::value::{ObjectKind, ObjectValue};
 use serde::Serialize;
 
@@ -46,6 +47,30 @@ fn fact_status_vocabulary() {
     assert_eq!(tag(FactStatus::Active), "active");
     assert_eq!(tag(FactStatus::Quarantined), "quarantined");
     assert_eq!(tag(FactStatus::Superseded), "superseded");
+}
+
+#[test]
+fn work_status_vocabulary() {
+    // Pins the value-side of the work_status != status invariant: the catalog DDL `DEFAULT
+    // 'todo'` and the forgetting layer's disjoint value space both depend on these exact
+    // strings, and every variant must fit the STRING(32) bound.
+    assert_eq!(tag(WorkStatus::Todo), "todo");
+    assert_eq!(tag(WorkStatus::InProgress), "in_progress");
+    assert_eq!(tag(WorkStatus::Blocked), "blocked");
+    assert_eq!(tag(WorkStatus::Done), "done");
+    assert_eq!(tag(WorkStatus::Dropped), "dropped");
+    // The in-Rust Default must serialize to the DB DEFAULT literal, or a DB-defaulted row and
+    // a Default-constructed one disagree.
+    assert_eq!(tag(WorkStatus::default()), "todo");
+    for status in [
+        WorkStatus::Todo,
+        WorkStatus::InProgress,
+        WorkStatus::Blocked,
+        WorkStatus::Done,
+        WorkStatus::Dropped,
+    ] {
+        assert!(tag(status).len() <= 32, "work_status fits STRING(32)");
+    }
 }
 
 #[test]
@@ -135,7 +160,7 @@ fn audit_kind_vocabulary() {
 
 #[test]
 fn edge_label_vocabulary() {
-    // §5: the 18 relationship names, SCREAMING_SNAKE_CASE.
+    // §5: the 19 relationship names, SCREAMING_SNAKE_CASE.
     let expected = [
         (EdgeLabel::Mentions, "MENTIONS"),
         (EdgeLabel::About, "ABOUT"),
@@ -155,8 +180,9 @@ fn edge_label_vocabulary() {
         (EdgeLabel::RelatesTo, "RELATES_TO"),
         (EdgeLabel::HasProvenance, "HAS_PROVENANCE"),
         (EdgeLabel::Audit, "AUDIT"),
+        (EdgeLabel::HasTag, "HAS_TAG"),
     ];
-    assert_eq!(expected.len(), 18);
+    assert_eq!(expected.len(), 19);
     for (variant, want) in expected {
         assert_eq!(tag(variant), want);
         // Each variant's serialized form matches its struct LABEL via as_str().

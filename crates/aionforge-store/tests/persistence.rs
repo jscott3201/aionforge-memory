@@ -303,8 +303,8 @@ fn persistence_round_trips_schema_data_indexes_and_providers() {
         );
         assert_eq!(store.vector_indexes().len(), 7);
         assert_eq!(store.text_indexes().len(), 5);
-        assert_eq!(store.property_indexes().len(), 51);
-        assert_eq!(store.composite_indexes().len(), 5);
+        assert_eq!(store.property_indexes().len(), 59);
+        assert_eq!(store.composite_indexes().len(), 6);
         assert_eq!(fact_count(&store), 2);
         assert_eq!(provider_count(&store, "current_support_facts"), 1);
         // Drop releases the WAL file lock so recovery can reopen it in this process.
@@ -326,12 +326,12 @@ fn persistence_round_trips_schema_data_indexes_and_providers() {
     assert_eq!(recovered.text_indexes().len(), 5, "text indexes rebuilt");
     assert_eq!(
         recovered.property_indexes().len(),
-        51,
+        59,
         "property indexes rebuilt"
     );
     assert_eq!(
         recovered.composite_indexes().len(),
-        5,
+        6,
         "composite indexes rebuilt"
     );
     // The first ZONED DATETIME property index in the schema rebuilds into the catalog from the WAL.

@@ -53,7 +53,9 @@ mod search;
 mod skill;
 mod skill_induction;
 mod store;
+mod tag;
 mod trust_fold;
+mod work;
 
 pub use attestation::{AttestWriteIds, AttesterRecord};
 pub use audit_read::{AuditCursor, AuditHistory, MAX_AUDIT_PAGE};

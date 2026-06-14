@@ -363,5 +363,6 @@ pub fn arb_edge_label() -> impl Strategy<Value = EdgeLabel> {
         EdgeLabel::RelatesTo,
         EdgeLabel::HasProvenance,
         EdgeLabel::Audit,
+        EdgeLabel::HasTag,
     ])
 }

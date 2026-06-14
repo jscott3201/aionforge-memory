@@ -60,6 +60,8 @@ pub enum EdgeLabel {
     HasProvenance,
     /// `AuditEvent` → any (polymorphic): connect audit events to subjects.
     Audit,
+    /// any memory / `WorkItem` → `Tag`: the cross-cutting classification facet.
+    HasTag,
 }
 
 impl EdgeLabel {
@@ -85,6 +87,7 @@ impl EdgeLabel {
             EdgeLabel::RelatesTo => RelatesTo::LABEL,
             EdgeLabel::HasProvenance => HasProvenance::LABEL,
             EdgeLabel::Audit => Audit::LABEL,
+            EdgeLabel::HasTag => HasTag::LABEL,
         }
     }
 }
@@ -342,4 +345,18 @@ pub struct Audit;
 impl Audit {
     /// The selene-db relationship label for this kind.
     pub const LABEL: &str = "AUDIT";
+}
+
+/// any memory / `WorkItem` → `Tag`: a cross-cutting classification label (work-structure
+/// design §3, not bi-temporal; marker).
+///
+/// The horizontal classification axis: a memory or work item points at a `Tag` it carries.
+/// Many-to-many and endpoint-wide (every retrievable kind plus `WorkItem` may tag). No extra
+/// properties — the edge's presence is the whole signal.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct HasTag;
+
+impl HasTag {
+    /// The selene-db relationship label for this kind.
+    pub const LABEL: &str = "HAS_TAG";
 }

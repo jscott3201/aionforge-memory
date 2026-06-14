@@ -78,17 +78,19 @@ fn migration_registers_all_native_indexes() {
     // collision pre-check (M4.T03), Fact.id for the quorum-promotion global-copy
     // idempotency probe (M4.T04), AuditEvent.actor_id + AuditEvent.occurred_at (the
     // first datetime property index) for the M4.T06 audit-history readers, and
-    // BadPattern.id + CoreBlock.id for the forgetting point-op resolver (M5.T02)) = 51.
+    // BadPattern.id + CoreBlock.id for the forgetting point-op resolver (M5.T02)) = 51,
+    // plus the work-tracking facet: +6 scalar (WorkItem id/parent_id/work_status/level,
+    // Tag id/slug) and +2 namespace (one per new node kind) = 59.
     assert_eq!(
         store.property_indexes().len(),
-        51,
+        59,
         "scalar property index count"
     );
 
-    // §8: the three pure-scalar composites plus the two AuditEvent temporal composites
-    // (now that selene indexes ZONED DATETIME).
+    // §8: the three pure-scalar composites, the two AuditEvent temporal composites (now
+    // that selene indexes ZONED DATETIME), and the work-item sibling-ordering composite.
     let composites = store.composite_indexes();
-    assert_eq!(composites.len(), 5, "composite index count: {composites:?}");
+    assert_eq!(composites.len(), 6, "composite index count: {composites:?}");
     assert!(
         composites
             .iter()

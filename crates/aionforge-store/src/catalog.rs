@@ -39,9 +39,11 @@
 /// The schema version this catalog defines.
 ///
 /// The migration runner bumps the `SchemaVersion` singleton to this value once every
-/// type is declared. A future embedder change or added kind is a new version with its
-/// own forward-only step; this catalog is version 1, the full v1.0.0 surface.
-pub const SCHEMA_VERSION: i64 = 2;
+/// type is declared. A future embedder change or added kind is a new version with its own
+/// forward-only step. Version 3 adds the work-tracking facet (the `WorkItem` and `Tag`
+/// node kinds and the `HAS_TAG` edge) onto the v1.0.0 surface; node/edge types are
+/// `CREATE ... IF NOT EXISTS`, so the bump is a forward-only additive migration.
+pub const SCHEMA_VERSION: i64 = 3;
 
 /// One catalog entry: a type's identifying label and the statement that declares it.
 pub(crate) struct TypeDdl {
@@ -51,7 +53,8 @@ pub(crate) struct TypeDdl {
     pub ddl: &'static str,
 }
 
-/// The 17 node types (data-model §4), in declaration order.
+/// The 19 node types (data-model §4; work-tracking facet appends `WorkItem` + `Tag`), in
+/// declaration order.
 pub(crate) const NODE_TYPES: &[TypeDdl] = &[
     TypeDdl {
         name: "Episode",
@@ -366,9 +369,48 @@ pub(crate) const NODE_TYPES: &[TypeDdl] = &[
             label :: STRING
         ) STRICT"#,
     },
+    // The work-tracking facet (work-structure design, 2026-06-14). `WorkItem` and `Tag`
+    // are Identity-only (no Stats block): they are not retrievable memories and earn their
+    // decay/forgetting exemption by absence from the maintenance scan sets (forget_read.rs
+    // `FORGET_SCAN_LABELS`, forgetter.rs `ALL_MEMORY_LABELS`/`POINT_LABELS`, consolidation.rs
+    // `MEMORY_LABELS`, decay.rs `tier_for_label`) — like the control/anchor kinds, taken one
+    // step further (a work item also stays out of point-forget/pin/erase). `level` is an
+    // OPEN caller-defined label (unbounded STRING, the `predicate`/entity-`type` precedent),
+    // never a closed enum, so any harness brings its own hierarchy vocabulary. `work_status`
+    // is the bounded enum column (STRING(32) DEFAULT 'todo', the `Fact.status` form) and is
+    // deliberately NOT named `status` (forget_write.rs reads a `status` property as a
+    // FactStatus). `parent_id` is the indexed self-referential containment scalar (the
+    // INDEXED marker lives in indexes.rs).
+    TypeDdl {
+        name: "WorkItem",
+        ddl: r#"CREATE NODE TYPE IF NOT EXISTS :WorkItem (
+            id :: UUID NOT NULL UNIQUE IMMUTABLE,
+            ingested_at :: ZONED DATETIME NOT NULL IMMUTABLE,
+            namespace :: STRING NOT NULL,
+            expired_at :: ZONED DATETIME,
+            title :: STRING NOT NULL,
+            body :: STRING,
+            level :: STRING NOT NULL,
+            work_status :: STRING(32) NOT NULL DEFAULT 'todo',
+            parent_id :: UUID,
+            ordinal :: UINT NOT NULL DEFAULT 0
+        ) STRICT"#,
+    },
+    TypeDdl {
+        name: "Tag",
+        ddl: r#"CREATE NODE TYPE IF NOT EXISTS :Tag (
+            id :: UUID NOT NULL UNIQUE IMMUTABLE,
+            ingested_at :: ZONED DATETIME NOT NULL IMMUTABLE,
+            namespace :: STRING NOT NULL,
+            expired_at :: ZONED DATETIME,
+            slug :: STRING NOT NULL,
+            display :: STRING
+        ) STRICT"#,
+    },
 ];
 
-/// The 19 edge types (data-model §5), in declaration order.
+/// The 19 edge types (data-model §5; the work-tracking facet appends `HAS_TAG` onto the
+/// prior 18), in declaration order.
 ///
 /// The four-timestamp bi-temporal block is `valid_from` (NOT NULL), `valid_to`
 /// (nullable), `ingested_at` (NOT NULL IMMUTABLE), `expired_at` (nullable). The engine
@@ -522,5 +564,16 @@ pub(crate) const EDGE_TYPES: &[TypeDdl] = &[
         // carries no extra properties, so the body is empty (Any → Any).
         name: "AUDIT",
         ddl: r#"CREATE EDGE TYPE IF NOT EXISTS :AUDIT () STRICT"#,
+    },
+    TypeDdl {
+        // The classification facet (work-structure design §3): every retrievable kind plus
+        // `WorkItem` may point at a `Tag`. The full FROM-union is declared up front — edge
+        // endpoints are baked into the type and cannot be widened without a store recreate —
+        // so tags retrofit onto all existing kinds, not just work items. A property-less
+        // marker: the edge's presence is the whole signal.
+        name: "HAS_TAG",
+        ddl: r#"CREATE EDGE TYPE IF NOT EXISTS :HAS_TAG (
+            FROM :Episode, :Fact, :Entity, :Skill, :BadPattern, :Note, :CoreBlock, :WorkItem TO :Tag
+        ) STRICT"#,
     },
 ];

@@ -125,6 +125,20 @@ pub(crate) const SCALAR_INDEXES: &[(&str, &str, TypedIndexKind)] = &[
     ("AuditEvent", "occurred_at", TypedIndexKind::ZonedDateTime),
     ("Promotion", "candidate_fact_id", TypedIndexKind::Uuid),
     ("Promotion", "status", TypedIndexKind::String),
+    // Work-tracking facet (work-structure design §2–§3). PR1 readers probe `parent_id` (the
+    // indexed self-referential containment spine — children-of-parent is a single probe),
+    // `work_status` (the status facet), and `id` (the by-id resolver). `level` (the level facet)
+    // and Tag `slug` ("items tagged X") are provisioned here for the PR3 query readers and are
+    // registered now so the schema migration is decided once; until those readers land they index
+    // a column nothing probes yet. Without the index `nodes_with_property_eq` returns `None` (read
+    // as "absent"), so any probe a future reader adds is silently wrong unless its index exists —
+    // hence provisioning them with the schema rather than in a later migration.
+    ("WorkItem", "id", TypedIndexKind::Uuid),
+    ("WorkItem", "parent_id", TypedIndexKind::Uuid),
+    ("WorkItem", "work_status", TypedIndexKind::String),
+    ("WorkItem", "level", TypedIndexKind::String),
+    ("Tag", "id", TypedIndexKind::Uuid),
+    ("Tag", "slug", TypedIndexKind::String),
 ];
 
 /// Composite indexes (§8). DDL-only — no Rust wrapper. The `AuditEvent` temporal
@@ -137,6 +151,10 @@ const COMPOSITE_INDEXES: &[&str] = &[
     "CREATE INDEX IF NOT EXISTS cidx_skill_name_version ON :Skill(name, version)",
     "CREATE INDEX IF NOT EXISTS cidx_audit_subject_occurred ON :AuditEvent(subject_id, occurred_at)",
     "CREATE INDEX IF NOT EXISTS cidx_audit_kind_occurred ON :AuditEvent(kind, occurred_at)",
+    // Orders a work item's children by `ordinal` at the index, so the by-parent reader returns
+    // siblings in declared order. The substrate probes the single `parent_id` scalar and the
+    // composite serves the ordering; it is not a two-key equality lookup.
+    "CREATE INDEX IF NOT EXISTS cidx_workitem_parent_ordinal ON :WorkItem(parent_id, ordinal)",
 ];
 
 /// A registered vector index, for inventory and tests.
