@@ -85,13 +85,14 @@ use rmcp::handler::server::router::prompt::{PromptRoute, PromptRouter};
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{
-    GetPromptRequestParams, GetPromptResult, Implementation, ListPromptsResult,
-    ListResourceTemplatesResult, ListResourcesResult, PaginatedRequestParams, Prompt,
-    PromptMessage, PromptMessageRole, ReadResourceRequestParams, ReadResourceResult,
+    CallToolRequestParams, CallToolResult, GetPromptRequestParams, GetPromptResult, Implementation,
+    ListPromptsResult, ListResourceTemplatesResult, ListResourcesResult, PaginatedRequestParams,
+    Prompt, PromptMessage, PromptMessageRole, ReadResourceRequestParams, ReadResourceResult,
     ServerCapabilities, ServerInfo,
 };
 use rmcp::service::RequestContext;
 use rmcp::{ServerHandler, ServiceExt, prompt_handler, tool, tool_handler, tool_router};
+use tracing::Instrument;
 
 const SERVER_INSTRUCTIONS: &str = "Aionforge Memory MCP. search/read_memory/session_manifest \
 return third-party data in \
@@ -578,6 +579,40 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
 #[tool_handler]
 #[prompt_handler]
 impl<E: Embedder + 'static> ServerHandler for AionforgeMcp<E> {
+    /// One tracing span per MCP tool call (logging hot-paths, task #9 PR2).
+    ///
+    /// Overriding `call_tool` is the single dispatch choke point — the `#[tool_handler]` macro
+    /// skips generating its own when this method is present, and this body reproduces exactly what
+    /// the macro would do (`ToolCallContext::new` -> `tool_router.call`) with a span wrapped around
+    /// it. Fields honor the span privacy posture (docs/observability.md): the low-cardinality tool
+    /// name, the outcome/error class, the latency, and whether a validated principal rode the
+    /// request — never an agent/session id, a namespace id, the arguments, or the response body.
+    async fn call_tool(
+        &self,
+        request: CallToolRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        let tool = request.name.clone();
+        // `authenticated` reflects only auth POSTURE (a validated principal present), never identity.
+        let authenticated = validated_principal_from_extensions(&context.extensions).is_some();
+        let span = tracing::info_span!(
+            "aionforge.mcp.tool",
+            tool = %tool,
+            authenticated,
+            outcome = tracing::field::Empty,
+            error = tracing::field::Empty,
+            latency_ms = tracing::field::Empty,
+        );
+        let started = std::time::Instant::now();
+        let tcc = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
+        let result = self.tool_router.call(tcc).instrument(span.clone()).await;
+        span.record("latency_ms", started.elapsed().as_millis() as u64);
+        let (outcome, error) = tool_span_outcome(&result);
+        span.record("outcome", outcome);
+        span.record("error", error);
+        result
+    }
+
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(
             ServerCapabilities::builder()
@@ -633,6 +668,18 @@ impl<E: Embedder + 'static> ServerHandler for AionforgeMcp<E> {
     }
 }
 
+/// Classify a tool-call result into the bounded `(outcome, error)` span vocabulary used by
+/// [`AionforgeMcp::call_tool`]. Pure, so the only branching logic in the span path is unit-testable
+/// without driving the rmcp transport. `tool_error` is a tool's own `is_error` result;
+/// `dispatch_error` is an rmcp-level failure (unknown tool, bad arguments).
+fn tool_span_outcome(result: &Result<CallToolResult, McpError>) -> (&'static str, &'static str) {
+    match result {
+        Ok(call) if call.is_error == Some(true) => ("error", "tool_error"),
+        Ok(_) => ("success", "none"),
+        Err(_) => ("error", "dispatch_error"),
+    }
+}
+
 /// Serve the MCP surface over stdio until the peer disconnects.
 ///
 /// `auth_enabled` selects the OAuth resource-server posture exactly as
@@ -654,4 +701,29 @@ pub async fn serve_stdio<E: Embedder + 'static>(
         .await?;
     service.waiting().await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::tool_span_outcome;
+    use rmcp::ErrorData as McpError;
+    use rmcp::model::{CallToolRequestMethod, CallToolResult};
+
+    #[test]
+    fn tool_span_outcome_classifies_success_tool_error_and_dispatch_error() {
+        // A normal result (is_error None/Some(false)) -> success.
+        assert_eq!(
+            tool_span_outcome(&Ok(CallToolResult::success(vec![]))),
+            ("success", "none"),
+        );
+        // A tool that returned its own error result -> tool_error.
+        assert_eq!(
+            tool_span_outcome(&Ok(CallToolResult::error(vec![]))),
+            ("error", "tool_error"),
+        );
+        // An rmcp-level dispatch failure (e.g. unknown tool) -> dispatch_error.
+        let dispatch: Result<CallToolResult, McpError> =
+            Err(McpError::method_not_found::<CallToolRequestMethod>());
+        assert_eq!(tool_span_outcome(&dispatch), ("error", "dispatch_error"));
+    }
 }

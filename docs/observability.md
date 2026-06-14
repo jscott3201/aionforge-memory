@@ -83,11 +83,12 @@ INFO aionforge::traffic: memory traffic phase=heartbeat
 
 ## Tracing
 
-Trace spans cover the capture, recall, and consolidation pipeline. They use stable
-operation names and bounded fields only:
+Trace spans cover the MCP tool-call boundary plus the capture, recall, and
+consolidation pipeline. They use stable operation names and bounded fields only:
 
 | Span | Fields | Meaning |
 |---|---|---|
+| `aionforge.mcp.tool` | `tool`, `authenticated`, `outcome`, `error`, `latency_ms` | One MCP tool call, wrapping every tool at the dispatch choke point (the per-area spans below nest under it). `tool` is the low-cardinality tool name; `authenticated` is a bool for whether a validated principal rode the request — never an agent/session id, the arguments, or the response body. `error` is `none`, `tool_error` (a tool's own error result), or `dispatch_error` (an rmcp-level failure such as an unknown tool). |
 | `aionforge.capture` | `role`, `namespace`, `trusted`, `signed`, `outcome`, `verdict`, `embedding`, `error` | One capture request. `namespace` is the namespace kind (`agent`, `team`, `global`, `system`), never the namespace id. |
 | `aionforge.capture.stage` | `stage` | Fixed capture stages: `filter`, `embed`, and `commit`. |
 | `aionforge.recall` | `class`, `temporal`, `sensitive`, `include_expired`, `include_system`, `mode_override`, `deadline`, `fanout`, `limit`, `outcome`, `embedder`, `error`, `returned`, `candidates_considered`, `signals_run` | One recall request. The query text and principal id are never fields. |
@@ -102,6 +103,14 @@ Error fields reuse the metric vocabulary where possible: capture errors use
 `provenance_unavailable`, or `system_role_not_writable`; recall errors use `store`
 or `deadline_exceeded`; consolidation tick errors use `store` or `timeout`; pass
 errors use `transient` or `fatal`.
+
+The store lifecycle also emits events on the `aionforge::store` target (complementing
+the `aionforge_store_open_*` metrics): `store opened` / `store open failed`
+(`mode` = `fresh`|`recover`, `outcome`, `elapsed_ms`) and, from `migrate` (previously
+silent), `schema migrated` at `info` (`from_version`, `to_version`, `applied` type
+count) when migrations run, plus a `debug` no-op event (`from_version`) when the
+schema is already current. All fields are low-cardinality integers/labels; no path
+or data.
 
 ## Capture
 

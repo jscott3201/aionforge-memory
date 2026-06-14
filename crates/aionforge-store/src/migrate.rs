@@ -91,6 +91,11 @@ impl Store {
             // some later commit's in-place signature upgrade. `Store::recover` runs the
             // same check for stores that never pass through `migrate`.
             self.audit_signature_latch_check()?;
+            tracing::debug!(
+                target: "aionforge::store",
+                from_version,
+                "schema already current; migration is a no-op",
+            );
             return Ok(MigrationReport {
                 from_version,
                 to_version: from_version,
@@ -102,7 +107,7 @@ impl Store {
         for type_ddl in catalog() {
             self.execute(&BoundQuery::new(type_ddl.ddl))?;
         }
-        let applied = catalog()
+        let applied: Vec<String> = catalog()
             .filter(|type_ddl| !existing_before.contains(type_ddl.name))
             .map(|type_ddl| type_ddl.name.to_owned())
             .collect();
@@ -120,6 +125,16 @@ impl Store {
         self.dimension_consistency_check(self.config().embedding_dimension)?;
 
         self.write_schema_version(SCHEMA_VERSION, now)?;
+        // `migrate` was otherwise silent (no metrics, no logs) despite running DDL, index
+        // registration, the dimension check, and the version write — make the version step
+        // visible (logging hot-paths, task #9 PR2). Low-cardinality integers only.
+        tracing::info!(
+            target: "aionforge::store",
+            from_version,
+            to_version = SCHEMA_VERSION,
+            applied = applied.len(),
+            "schema migrated",
+        );
         Ok(MigrationReport {
             from_version,
             to_version: SCHEMA_VERSION,

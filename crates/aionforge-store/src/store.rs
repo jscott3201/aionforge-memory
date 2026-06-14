@@ -940,6 +940,15 @@ fn emit_open_metrics(mode: &'static str, result: &Result<Store, StoreError>, ela
         "outcome" => outcome,
     )
     .record(elapsed.as_secs_f64());
+    // Complement the metrics with a tracing event so the store-open lifecycle is visible in the
+    // logs too (logging hot-paths, task #9 PR2). Low-cardinality only: mode (fresh|recover),
+    // outcome, and elapsed — no path, no data. Success at info, failure at warn.
+    let elapsed_ms = elapsed.as_millis() as u64;
+    if result.is_ok() {
+        tracing::info!(target: "aionforge::store", mode, outcome, elapsed_ms, "store opened");
+    } else {
+        tracing::warn!(target: "aionforge::store", mode, outcome, elapsed_ms, "store open failed");
+    }
 }
 
 /// Record the recovery-time vector-index kind reconciliation: a counter per converged
