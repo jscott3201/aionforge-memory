@@ -35,7 +35,14 @@ const DEFAULT_AUDIT_LIMIT: usize = 20;
 const MAX_AUDIT_LIMIT: usize = 50;
 const PAYLOAD_PREVIEW_CHARS: usize = 240;
 
-const MCP_MEMORY_LABELS: [&str; 6] = [
+/// The lifecycle kinds the MCP surface resolves by id for the **forgettable/pointable**
+/// path — `forget`/`unforget`/`pin`/`unpin` (here) and the base of `read_memory`'s read set
+/// (`inspect.rs`). Shared so read and write breadth stay in lockstep when a kind is added.
+///
+/// Deliberately excludes `CoreBlock`: core blocks are forgetting-exempt, so they are not a
+/// valid forget/pin target. `read_memory` resolves them too, by appending `CoreBlock::LABEL`
+/// to its own read set rather than widening this write-side set.
+pub(crate) const MCP_MEMORY_LABELS: [&str; 6] = [
     Episode::LABEL,
     Fact::LABEL,
     Entity::LABEL,

@@ -66,7 +66,7 @@ pub use aionforge_retrieval::{
     RecallOptions, RecallQuery, RetrieverConfig, Signal, SignalWeights, StructuredEntry,
     TemporalMode,
 };
-pub use aionforge_store::{CoolingCursor, ForgetCursor, Store, StoreConfig};
+pub use aionforge_store::{CoolingCursor, ForgetCursor, ResolvedMemory, Store, StoreConfig};
 pub use aionforge_trust::{
     AttestReceipt, AttestRequest, AuditStatus, CategoryRule, CoreAttesterVote, CoreEditError,
     CoreEditOutcome, CoreEditPolicy, CoreEditReceipt, CoreEditRejection, CoreEditRequest,
