@@ -233,6 +233,9 @@ pub async fn capture_tool<E: Embedder>(
     let model_family = params
         .model_family
         .unwrap_or_else(|| "mcp-client".to_string());
+    // Count the inbound memory content for the traffic heartbeat (the byte length only — the
+    // content itself is never logged).
+    crate::traffic::record_in(params.content.len() as u64);
     let request = build_capture_request(
         params.content,
         agent_id,
@@ -381,6 +384,8 @@ pub async fn batch_capture_tool<E: Embedder>(
     let mut lines: Vec<String> = Vec::with_capacity(params.items.len());
 
     for (index, item) in params.items.into_iter().enumerate() {
+        // Count each item's inbound memory content for the traffic heartbeat (length only).
+        crate::traffic::record_in(item.content.len() as u64);
         let request = build_capture_request(
             item.content,
             agent_id,

@@ -1,7 +1,6 @@
 //! MCP server command execution.
 
 use std::convert::Infallible;
-use std::io::Write;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -33,9 +32,18 @@ type HttpResponse = Response<BoxBody<Bytes, Infallible>>;
 pub(crate) async fn run(options: &HostOptions, args: ServeArgs) -> Result<(), CliError> {
     let config = load_config(options)?;
     let memory = open_memory(&config)?;
+    // Periodic in/out traffic heartbeat for the server's lifetime (logging-foundation, task #9):
+    // a `tracing` line every few minutes with cumulative + delta bytes/tokens in and out. Covers
+    // both transports. A zero cadence disables it. Spawned BEFORE the (blocking) transport dispatch
+    // so it ticks for the whole serve, and explicitly aborted on the way out (below) so shutdown is
+    // deterministic rather than dependent on runtime-drop timing.
+    let heartbeat =
+        resolve_heartbeat_interval(std::env::var(TRAFFIC_HEARTBEAT_ENV).ok().as_deref());
+    let heartbeat_task = (!heartbeat.is_zero())
+        .then(|| tokio::spawn(aionforge_mcp::run_traffic_heartbeat(heartbeat)));
     // The OAuth resource-server posture is DEFAULT-OFF: `config.auth.enabled` is `false` unless a
     // deployment opts in, so the stdio and HTTP transports below reproduce today's behavior exactly.
-    match args.transport {
+    let result = match args.transport {
         ServeTransport::Stdio => {
             let startup = check_startup_embedder(memory.as_ref()).await?;
             report_startup_embedder(&startup);
@@ -50,6 +58,28 @@ pub(crate) async fn run(options: &HostOptions, args: ServeArgs) -> Result<(), Cl
                 .map_err(|error| CliError::Serve(error.to_string()))
         }
         ServeTransport::Http => serve_http(memory, args, &config).await,
+    };
+    // Stop the heartbeat deterministically before exit, then log the final cumulative summary.
+    if let Some(task) = heartbeat_task {
+        task.abort();
+    }
+    aionforge_mcp::log_traffic_totals("shutdown");
+    result
+}
+
+/// Environment variable overriding the traffic-heartbeat cadence, in whole seconds. `0` disables
+/// the heartbeat; unset uses [`aionforge_mcp::DEFAULT_TRAFFIC_HEARTBEAT_INTERVAL`]. An env knob
+/// (not a config field) keeps it operationally tunable without a schema change, mirroring the
+/// `RUST_LOG` / `AIONFORGE_LOG_FORMAT` logging controls.
+const TRAFFIC_HEARTBEAT_ENV: &str = "AIONFORGE_TRAFFIC_HEARTBEAT_SECS";
+
+/// Resolve the heartbeat cadence from the env override, falling back to the compiled-in default.
+/// An unparseable value falls back too — observability setup must never fail the server. Pure, so
+/// the precedence is unit-testable.
+fn resolve_heartbeat_interval(env: Option<&str>) -> std::time::Duration {
+    match env.and_then(|value| value.trim().parse::<u64>().ok()) {
+        Some(seconds) => std::time::Duration::from_secs(seconds),
+        None => aionforge_mcp::DEFAULT_TRAFFIC_HEARTBEAT_INTERVAL,
     }
 }
 
@@ -199,28 +229,25 @@ async fn shutdown_signal() -> std::io::Result<()> {
 }
 
 fn report_startup_embedder(status: &StartupEmbedderStatus) {
-    let mut stderr = std::io::stderr().lock();
-    let _ = writeln!(
-        stderr,
-        "aionforge serve: {}",
-        render_startup_embedder_status(status),
+    tracing::info!(
+        target: "aionforge::serve",
+        status = %render_startup_embedder_status(status),
+        "startup embedder check",
     );
 }
 
 fn report_shutdown_signal() {
-    let mut stderr = std::io::stderr().lock();
-    let _ = writeln!(stderr, "aionforge serve: shutdown signal received");
+    tracing::info!(target: "aionforge::serve", "shutdown signal received");
 }
 
 /// Warn loudly when auth is enabled on the stdio transport, where there is no HTTP producer to
 /// insert a validated principal: every identity-bearing tool then fails closed with
 /// `ERR_PRINCIPAL_REQUIRED`. A no-op when auth is disabled (the default), so the warning never
-/// fires on today's path. Surfaced on stderr (the same channel as the other startup advisories),
-/// since the CLI installs no tracing subscriber.
+/// fires on today's path. Emitted at `warn` through the global tracing subscriber installed in
+/// `main`; the advisory text is fixed and secret-free.
 fn report_stdio_auth_unsupported(auth_enabled: bool) {
     if let Some(warning) = stdio_auth_unsupported_warning(auth_enabled) {
-        let mut stderr = std::io::stderr().lock();
-        let _ = writeln!(stderr, "{warning}");
+        tracing::warn!(target: "aionforge::serve", "{warning}");
     }
 }
 
@@ -244,19 +271,18 @@ fn stdio_auth_unsupported_warning(auth_enabled: bool) -> Option<String> {
 /// each soft config advisory (`AuthConfig::startup_warnings`, which names issuers by index, never
 /// by value). No token, key, or JWKS is ever logged.
 fn report_auth_startup(auth: &AuthConfig, validators: &Option<AuthValidators>) {
-    let mut stderr = std::io::stderr().lock();
     match validators {
         None => {
-            let _ = writeln!(stderr, "aionforge serve: auth disabled (default)");
+            tracing::info!(target: "aionforge::serve", "auth disabled (default)");
         }
         Some(validators) => {
-            let _ = writeln!(
-                stderr,
-                "aionforge serve: auth enabled issuers={}",
-                validators.issuer_origins().len()
+            tracing::info!(
+                target: "aionforge::serve",
+                issuers = validators.issuer_origins().len(),
+                "auth enabled",
             );
             for warning in auth.startup_warnings() {
-                let _ = writeln!(stderr, "aionforge serve: auth warning: {warning}");
+                tracing::warn!(target: "aionforge::serve", "auth warning: {warning}");
             }
         }
     }
@@ -497,6 +523,28 @@ mod tests {
         );
         // And the built options must convert into a valid rmcp config (Origin validation on).
         streamable_http_config(options).expect("default loopback options build a valid config");
+    }
+
+    #[test]
+    fn heartbeat_interval_resolves_env_override_default_and_disable() {
+        use std::time::Duration;
+        // Unset: the compiled-in default.
+        assert_eq!(
+            resolve_heartbeat_interval(None),
+            aionforge_mcp::DEFAULT_TRAFFIC_HEARTBEAT_INTERVAL
+        );
+        // A valid override (whitespace-tolerant) wins.
+        assert_eq!(
+            resolve_heartbeat_interval(Some(" 60 ")),
+            Duration::from_secs(60)
+        );
+        // Zero disables (the caller checks is_zero before spawning).
+        assert_eq!(resolve_heartbeat_interval(Some("0")), Duration::ZERO);
+        // Garbage falls back to the default rather than failing the server.
+        assert_eq!(
+            resolve_heartbeat_interval(Some("soon")),
+            aionforge_mcp::DEFAULT_TRAFFIC_HEARTBEAT_INTERVAL
+        );
     }
 
     /// A non-empty resolved allow-list replaces the loopback default wholesale.

@@ -1,10 +1,85 @@
 # Observability
 
-Aionforge emits metrics through the `metrics` facade and spans through the `tracing`
-facade. If a host installs no recorder or subscriber, these calls are no-ops. Metric
-labels and span fields are deliberately low-cardinality: no query text, memory
-content, namespace ids, agent ids, file paths, request ids, or model names are used.
-Use audit reads and `aionforge doctor --json` for high-detail inspection.
+Aionforge emits spans/events through the [`tracing`](https://docs.rs/tracing) facade and metrics
+through the `metrics` facade. The **`aionforge` binary installs a tracing subscriber** (see
+[Logging](#logging) below), so events reach stderr out of the box; the **metrics** facade stays a
+no-op until a host installs a recorder (a deliberate follow-up wired with the operator console).
+Metric labels and span fields are deliberately low-cardinality: no query text, memory content,
+namespace ids, agent ids, file paths, request ids, or model names are used. Use audit reads and
+`aionforge doctor --json` for high-detail inspection.
+
+## Logging
+
+The library crates only *emit* through `tracing`; the binary owns the **subscriber** (the sink).
+It is installed once in `main`, before any subcommand runs, so `serve`, `doctor`, and `recover`
+are all covered.
+
+```sh
+aionforge serve http                     # text on stderr, level `info` (defaults)
+aionforge serve http --log-format json   # structured JSON (or AIONFORGE_LOG_FORMAT=json)
+RUST_LOG=aionforge_store=debug,aionforge_mcp=info aionforge doctor
+```
+
+- **Format** — `--log-format text|json` is a global flag. Precedence: flag → `AIONFORGE_LOG_FORMAT`
+  env → default `text`. An unparseable value falls back to the default; logging setup never fails
+  the process.
+- **Level/filter** — standard `tracing` `EnvFilter` via `RUST_LOG` (default `info`).
+- **stderr only (invariant)** — the subscriber writes to **stderr**. The MCP **stdio** transport
+  owns **stdout** for the JSON-RPC protocol, so logging there would corrupt the stream. CLI report
+  output (`doctor`/`recover`) stays on stdout; diagnostics stay on stderr.
+
+### Levels
+
+| Level | Use for |
+|---|---|
+| `error` | A failure the operator must act on. |
+| `warn` | Degraded/misconfigured but still serving (auth health, unanchored writer, stdio-auth-unsupported, link-evolution skips). |
+| `info` | Lifecycle: startup embedder check, auth posture, shutdown, index-kind reconciliation, the traffic heartbeat. |
+| `debug` | Per-request detail: recall served, induction gates, discovery anomalies. |
+| `trace` | Deep diagnostics; off by default. |
+
+Events carry an explicit `target:` (`aionforge::serve`, `aionforge::traffic`, `aionforge_mcp::auth`,
+`aionforge_mcp::telemetry`, …) so `RUST_LOG` can filter by subsystem; library events without one
+inherit their module path (`aionforge_store::…`).
+
+### PII / secret hygiene — the load-bearing rule
+
+This is a **memory store**: the wrong log line is a data leak.
+
+> **Log identifiers, kinds, counts, latencies, and outcomes — never memory content, embeddings,
+> tokens, keys, or raw claim values.**
+
+Log a memory by its `id`, never its `content`/`statement`; log sizes/estimates, never the bytes
+themselves; auth advisories name only the non-secret issuer **origin**. A CI gate
+(`.github/scripts/check-no-log-leakage.sh`) is a tripwire against interpolating a sensitive field
+into a `tracing`/`log` macro; a genuinely-safe flagged line can carry a `// log-leak-ok`
+justification, but for `content`/`embedding` there should be none. The gate is line-based, so it
+cannot catch a field split across the lines of a multi-line macro, nor one pre-formatted into a
+string and logged later (`let m = format!("{}", x.secret); info!("{m}")`). **Don't pre-format
+sensitive fields into log strings** — pass structured `tracing` fields directly so the gate (and a
+reviewer) can see them. Real safety rests on this convention plus review; the gate is the tripwire.
+
+## Traffic heartbeat & token estimation
+
+The server logs a periodic in/out **traffic heartbeat** at `info` on the `aionforge::traffic`
+target (default every 5 minutes), plus a final summary (`phase=shutdown`) on graceful shutdown:
+
+```
+INFO aionforge::traffic: memory traffic phase=heartbeat
+     bytes_in_total=… bytes_out_total=… bytes_in_delta=… bytes_out_delta=…
+     est_tokens_in_total=… est_tokens_out_total=… est_tokens_in_delta=… est_tokens_out_delta=…
+```
+
+- **IN** = `content` bytes clients push via `capture`/`batch_capture` (memory text being stored).
+  **OUT** = rendered recall responses of `search`/`read_memory`/`session_manifest`/the `work_*`
+  readers (the dominant outbound payload). Small control traffic (query params, receipts) is not
+  counted — this is a memory-throughput signal, not a wire-level byte meter. Counts are
+  process-cumulative and reset on restart; only HTTP/stdio tool traffic is counted.
+- **Bytes are authoritative; tokens are an estimate.** The server cannot run the calling client's
+  tokenizer, so `est_tokens` is a deliberately coarse proxy — **bytes ÷ 4** (≈4 characters/token).
+  Use it for order-of-magnitude capacity/cost intuition, never as an exact count or billing source.
+  The same divisor backs the per-recall `est_tokens` debug line in `aionforge_mcp::telemetry`.
+- **Cadence** — `AIONFORGE_TRAFFIC_HEARTBEAT_SECS` (whole seconds; `0` disables; unset → 300).
 
 ## Tracing
 

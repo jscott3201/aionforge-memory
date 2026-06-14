@@ -205,6 +205,45 @@ Then point your MCP client at `http://127.0.0.1:3918/mcp`. Keep the built-in
 HTTP server on loopback; put a real OAuth resource-server verifier in front of
 `/mcp` before exposing it to a shared network.
 
+## Logging and traffic
+
+The binary logs through `tracing` to **stderr** (stdout is reserved for the MCP
+stdio JSON-RPC protocol and for `doctor`/`recover` reports). Logs are
+human-readable text by default, or structured JSON for log shippers:
+
+```bash
+aionforge serve http --log-format json     # or: AIONFORGE_LOG_FORMAT=json
+RUST_LOG=aionforge_mcp=debug aionforge serve http   # standard tracing EnvFilter
+```
+
+`--log-format` is global (works on `serve`, `doctor`, `recover`); precedence is
+flag → `AIONFORGE_LOG_FORMAT` → default `text`. Level filtering is `RUST_LOG`
+(default `info`).
+
+A periodic **traffic heartbeat** logs cumulative and per-interval bytes/tokens
+**in** (memory content captured) and **out** (recall responses served), every
+five minutes by default, with a final summary on shutdown:
+
+```
+INFO aionforge::traffic: memory traffic phase=heartbeat
+     bytes_in_total=… bytes_out_total=… bytes_in_delta=… bytes_out_delta=…
+     est_tokens_in_total=… est_tokens_out_total=… est_tokens_in_delta=… est_tokens_out_delta=…
+```
+
+Tune or disable the cadence with `AIONFORGE_TRAFFIC_HEARTBEAT_SECS` (seconds;
+`0` disables).
+
+> **Token counts are estimates, not exact.** The server cannot run the calling
+> client's tokenizer, so `est_tokens` is a deliberately coarse proxy — roughly
+> **bytes ÷ 4** (≈4 characters per token). Bytes are the authoritative measure;
+> treat tokens as an order-of-magnitude figure for capacity and cost intuition,
+> never as an exact count or a billing source.
+
+Logs never contain memory content, embeddings, tokens, or keys — only ids, kinds,
+counts, sizes, and outcomes (a CI gate enforces this). See
+[Observability](docs/observability.md) for levels, targets, span fields, and the
+full metrics catalog.
+
 ## Run in Docker
 
 Published images are available from GitHub Container Registry for
@@ -269,6 +308,7 @@ Start with:
 - [Getting started](docs/getting-started.md)
 - [Embedding and provider guide](docs/embedding-guide.md)
 - [Security model](docs/security-model.md)
+- [Observability (logging, traffic, metrics)](docs/observability.md)
 - [MCP client support](docs/mcp-clients.md)
 - [Agent plugin](docs/plugins.md)
 - [Honest scope and deferred work](docs/honest-scope.md)

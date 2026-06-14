@@ -39,9 +39,25 @@ pub(crate) struct Cli {
     )]
     deployment: Option<String>,
 
+    /// Log output format for every subcommand. A global flag (not serve-only) because the
+    /// subscriber is installed once in `main` before dispatch, so `doctor`/`recover` are
+    /// covered too. Absent here, the `AIONFORGE_LOG_FORMAT` env var is consulted, then the
+    /// compiled-in default ([`LogFormat::Text`]). Level filtering is separate, via `RUST_LOG`.
+    #[arg(
+        long,
+        global = true,
+        value_enum,
+        value_name = "FORMAT",
+        help = "Log output format: text (default) or json"
+    )]
+    log_format: Option<LogFormat>,
+
     #[command(subcommand)]
     pub(crate) command: Command,
 }
+
+/// The environment variable consulted for the log format when `--log-format` is absent.
+pub(crate) const LOG_FORMAT_ENV: &str = "AIONFORGE_LOG_FORMAT";
 
 impl Cli {
     pub(crate) fn host_options(&self) -> HostOptions {
@@ -50,6 +66,16 @@ impl Cli {
             data_dir: self.data_dir.clone(),
             deployment: self.deployment.clone(),
         }
+    }
+
+    /// The effective log format: the `--log-format` flag if given, else the
+    /// `AIONFORGE_LOG_FORMAT` env var, else the default. Read once in `main` to install the
+    /// subscriber before any subcommand dispatches.
+    pub(crate) fn log_format(&self) -> LogFormat {
+        resolve_log_format(
+            self.log_format,
+            std::env::var(LOG_FORMAT_ENV).ok().as_deref(),
+        )
     }
 }
 
@@ -156,6 +182,38 @@ pub(crate) enum ServeTransport {
     Stdio,
     /// MCP Streamable HTTP over TCP.
     Http,
+}
+
+/// The log output format the binary's tracing subscriber renders.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ValueEnum)]
+pub(crate) enum LogFormat {
+    /// Human-readable single-line events (the default; best for local/dev).
+    #[default]
+    Text,
+    /// One JSON object per event (for production ingestion and the operator console).
+    Json,
+}
+
+impl LogFormat {
+    /// Parse a format from a (case-insensitive) string, e.g. an env-var value. Unknown
+    /// values yield `None` so the caller can fall through to the next precedence layer.
+    fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "text" => Some(Self::Text),
+            "json" => Some(Self::Json),
+            _ => None,
+        }
+    }
+}
+
+/// Resolve the effective log format from the CLI flag and the environment, with the
+/// compiled-in default as the floor. Precedence: `--log-format` flag wins; else a valid
+/// `AIONFORGE_LOG_FORMAT` env value; else [`LogFormat::Text`]. An unparseable env value is
+/// ignored (falls through to the default) rather than failing the process — logging setup
+/// must never be the reason a server won't boot. Pure, so the precedence is unit-testable.
+pub(crate) fn resolve_log_format(flag: Option<LogFormat>, env: Option<&str>) -> LogFormat {
+    flag.or_else(|| env.and_then(LogFormat::parse))
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -310,5 +368,37 @@ mod tests {
             result.is_err(),
             "--stateless and --stateful are mutually exclusive"
         );
+    }
+
+    #[test]
+    fn log_format_flag_wins_over_env_and_default() {
+        // Flag present: it wins regardless of the env value.
+        assert_eq!(
+            resolve_log_format(Some(LogFormat::Json), Some("text")),
+            LogFormat::Json
+        );
+        // Flag absent: a valid env value is honored (case-insensitive).
+        assert_eq!(resolve_log_format(None, Some("JSON")), LogFormat::Json);
+        assert_eq!(resolve_log_format(None, Some("text")), LogFormat::Text);
+        // Flag and env absent: the compiled-in default.
+        assert_eq!(resolve_log_format(None, None), LogFormat::Text);
+        // An unparseable env value falls through to the default, never an error.
+        assert_eq!(resolve_log_format(None, Some("yaml")), LogFormat::Text);
+        assert_eq!(resolve_log_format(None, Some("")), LogFormat::Text);
+    }
+
+    #[test]
+    fn log_format_is_a_global_flag_parsed_on_any_subcommand() {
+        // Global => it parses positioned before the subcommand...
+        let cli =
+            Cli::try_parse_from(["aionforge", "--log-format", "json", "doctor"]).expect("parse");
+        assert_eq!(cli.log_format, Some(LogFormat::Json));
+        // ...and after it, on a different subcommand.
+        let cli = Cli::try_parse_from(["aionforge", "serve", "http", "--log-format", "text"])
+            .expect("parse");
+        assert_eq!(cli.log_format, Some(LogFormat::Text));
+        // Absent => None, so the env/default layers apply.
+        let cli = Cli::try_parse_from(["aionforge", "recover"]).expect("parse");
+        assert_eq!(cli.log_format, None);
     }
 }

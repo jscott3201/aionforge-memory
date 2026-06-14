@@ -5,9 +5,9 @@
 # ubuntu+macOS matrix, and a version tag drives the gated publish (release.yml).
 #
 # Near-instant gates always run: rustfmt, file-size cap (700 LOC), no-secret scan,
-# the GQL parameter-binding gate, the store-only-selene gate, and the audit-keygen
-# confinement gate. When dependency manifests change, cargo-deny + THIRDPARTY.md
-# currency run too.
+# the GQL parameter-binding gate, the no-log-leakage gate, the store-only-selene gate,
+# and the audit-keygen confinement gate. A cached rustdoc (-D warnings) job also runs.
+# When dependency manifests change, cargo-deny + THIRDPARTY.md currency run too.
 #
 # The heavyweight ubuntu build/clippy/test suite deliberately does NOT run on dev
 # PRs. It runs once per release batch at the `development` -> `main` release gate
@@ -102,6 +102,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: bash .github/scripts/check-no-gql-interpolation.sh
+
+  log-leakage-gate:
+    name: no-log-leakage gate
+    if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash .github/scripts/check-no-log-leakage.sh
 
   store-only-selene-gate:
     name: store-only-selene gate

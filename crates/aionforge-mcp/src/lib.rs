@@ -26,6 +26,7 @@ mod status;
 mod surface;
 mod telemetry;
 mod tools;
+mod traffic;
 mod validated;
 mod work;
 
@@ -62,6 +63,10 @@ pub use status::{AuthPosture, ServerStatusToolParams, server_status_tool};
 pub use tools::{
     BatchCaptureItem, BatchCaptureToolParams, CaptureToolParams, MAX_BATCH_ITEMS, SearchToolParams,
     batch_capture_tool, capture_tool, search_tool,
+};
+pub use traffic::{
+    DEFAULT_HEARTBEAT_INTERVAL as DEFAULT_TRAFFIC_HEARTBEAT_INTERVAL,
+    log_totals as log_traffic_totals, run_heartbeat as run_traffic_heartbeat,
 };
 pub use validated::{ValidatedPrincipal, validated_principal_from_extensions};
 pub use work::{

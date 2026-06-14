@@ -28,7 +28,6 @@
 //! standard `Bearer` scheme, an `error` token, and the well-known `resource_metadata` URL.
 
 use std::collections::BTreeMap;
-use std::io::Write;
 use std::sync::Arc;
 
 use aionforge_auth::{AuthError, JwtValidator, VerifiedClaims};
@@ -341,14 +340,13 @@ fn base64_url_decode(input: &str) -> Option<Vec<u8>> {
 /// silent "no one is ever an operator" failure. The warnings name only the non-secret issuer
 /// origin; no token or claim value is logged. They never affect the authentication verdict.
 ///
-/// The warnings are written to **stderr** (the same channel the startup advisories use), not
-/// `tracing::warn!`: the CLI installs no `tracing_subscriber`, so a `tracing` warning would be
-/// dropped to a no-op dispatcher and never reach the operator (the very silent-failure mode item 5
-/// of the spec forbids).
+/// The warnings are emitted at `warn` through the `tracing` facade. The binary installs a global
+/// subscriber in `main` (writing to stderr), so these reach the operator without any direct I/O
+/// here; under a host that installs no subscriber they degrade to a no-op rather than corrupting a
+/// transport. The warning text names only the non-secret issuer origin — no token or claim value.
 fn log_auth_health(verified: &VerifiedClaims, config: &IssuerConfig) {
     for warning in auth_health_warnings(verified, config) {
-        let mut stderr = std::io::stderr().lock();
-        let _ = writeln!(stderr, "aionforge serve: auth health: {warning}");
+        tracing::warn!(target: "aionforge_mcp::auth", "auth health: {warning}");
     }
 }
 
@@ -386,8 +384,9 @@ fn auth_health_warnings(verified: &VerifiedClaims, config: &IssuerConfig) -> Vec
     {
         // A writer-capable issuer with no agent-id anchor: the mapper refuses this token with a
         // 403 (UnanchoredWriter), but the operator otherwise sees only per-tool 403s. Surface the
-        // root cause loudly on the same stderr channel (the mapper's own tracing::warn would be
-        // dropped — the CLI installs no subscriber). Mirrors the config layer's startup advisory.
+        // root cause loudly through this health advisory (emitted at `warn` by `log_auth_health`),
+        // so the operator sees the cause once, not a stream of opaque 403s. Mirrors the config
+        // layer's startup advisory.
         warnings.push(format!(
             "issuer {} permits durable writes but has no agent-id anchor \
              (agent_id_overrides/agent_id_claim); every write token from it is refused with a 403 \

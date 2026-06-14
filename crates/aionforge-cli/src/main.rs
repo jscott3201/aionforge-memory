@@ -9,6 +9,7 @@ mod cli;
 mod doctor;
 mod error;
 mod host;
+mod observability;
 mod recover;
 mod serve;
 
@@ -17,6 +18,11 @@ use crate::error::CliError;
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
+    // Install the global tracing subscriber BEFORE dispatch: every subcommand (including the
+    // synchronous doctor/recover, which emit store traces) is then covered, and it is in
+    // place before the serve command builds its tokio runtime. Writes to stderr only — the
+    // stdio transport owns stdout for the MCP protocol.
+    observability::init(cli.log_format());
     let mut stdout = io::stdout().lock();
     let mut stderr = io::stderr().lock();
 

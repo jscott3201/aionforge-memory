@@ -112,6 +112,12 @@ zeroize = "1.8"
 # CLI argument parsing for the single `aionforge` binary. Introduced at M8.T03 with
 # the doctor command; derive keeps the subcommand surface declarative and testable.
 clap = { version = "4.6.1", features = ["derive"] }
+# Tracing subscriber for the `aionforge` binary (logging-foundation, task #9 PR1). Only
+# the CLI installs it — every library crate stays on the `tracing` facade and leaves the
+# sink to the binary. `env-filter` reads RUST_LOG; `json` is the structured opt-in
+# (`--log-format json`); `fmt` is the default human formatter. Pairs cleanly with
+# `tracing` 0.1 and carries no TLS/crypto backend, so it adds no cargo-deny carve-out.
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
 
 # --- Test / dev dependencies (versions match selene-db). ---
 proptest = { version = "1.11", default-features = false, features = ["std"] }
