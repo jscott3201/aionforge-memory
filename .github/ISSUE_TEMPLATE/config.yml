@@ -16,7 +16,7 @@ contact_links:
   # link below to be live. Until then it 404s for non-maintainers; point
   # contributors at the /security/policy tab (SECURITY.md) for the contact.
   - name: Report a security vulnerability (private)
-    url: https://github.com/Aionforge-Labs/aionforge-memory/security/advisories/new
+    url: https://github.com/jscott3201/aionforge-memory/security/advisories/new
     about: Disclose security issues privately. Do NOT open a public issue. See SECURITY.md (the Security tab) for the reporting policy.
 
   # TODO(maintainer): GitHub Discussions is NOT currently enabled on this repo
@@ -24,5 +24,5 @@ contact_links:
   # Settings > General > Features, or swap/remove this link. Leaving it as-is
   # 404s for contributors.
   - name: Questions & general discussion
-    url: https://github.com/Aionforge-Labs/aionforge-memory/discussions
+    url: https://github.com/jscott3201/aionforge-memory/discussions
     about: Ask usage questions or discuss ideas here instead of opening an issue.

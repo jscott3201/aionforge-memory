@@ -6,7 +6,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for the idea. Please search [existing issues](https://github.com/Aionforge-Labs/aionforge-memory/issues?q=is%3Aissue) first to avoid duplicates.
+        Thanks for the idea. Please search [existing issues](https://github.com/jscott3201/aionforge-memory/issues?q=is%3Aissue) first to avoid duplicates.
 
         Keep this focused on user-facing behavior and outcomes. For substantial design changes, see the "Design proposal (RFC)" form instead.
   - type: textarea

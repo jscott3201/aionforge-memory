@@ -15,7 +15,7 @@
 
 Aionforge Memory is a Rust memory layer for agent systems. It stores episodes,
 facts, notes, skills, bad patterns, core memory, and audit events in
-[`selene-db`](https://github.com/Aionforge-Labs/selene-db), then retrieves
+[`selene-db`](https://github.com/jscott3201/selene-db), then retrieves
 relevant context with lexical anchors, vector search, graph traversal, recency,
 importance, and trust signals.
 
@@ -111,7 +111,7 @@ You need the Rust toolchain pinned in [rust-toolchain.toml](rust-toolchain.toml)
 (Rust 1.95.0, edition 2024).
 
 Aionforge Memory depends on the public
-[`selene-db`](https://github.com/Aionforge-Labs/selene-db) substrate, consumed
+[`selene-db`](https://github.com/jscott3201/selene-db) substrate, consumed
 from crates.io and pinned to `1.2.0`. The published crates (`selene-db-core`,
 `-graph`, `-persist`, `-gql`, `-algorithms`) are aliased to stable local keys
 (`selene-core`, ...) via Cargo's `package =` rename, so only `aionforge-store`
@@ -173,7 +173,7 @@ Published images are available from GitHub Container Registry for
 `linux/amd64` and `linux/arm64`:
 
 ```bash
-docker pull ghcr.io/aionforge-labs/aionforge-memory:0.1.0
+docker pull ghcr.io/jscott3201/aionforge-memory:0.1.0
 ```
 
 Build a local image when working from source:

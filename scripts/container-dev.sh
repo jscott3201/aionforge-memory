@@ -3,7 +3,7 @@
 
 set -euo pipefail
 
-IMAGE="${AIONFORGE_CONTAINER_IMAGE:-ghcr.io/aionforge-labs/aionforge-memory:0.1.0}"
+IMAGE="${AIONFORGE_CONTAINER_IMAGE:-ghcr.io/jscott3201/aionforge-memory:0.1.0}"
 NAME="${AIONFORGE_CONTAINER_NAME:-aionforge-memory}"
 ARCH="${AIONFORGE_CONTAINER_ARCH:-arm64}"
 PLATFORM="${AIONFORGE_CONTAINER_PLATFORM:-linux/$ARCH}"
@@ -24,7 +24,7 @@ Commands:
   delete   Delete the named container and its internal /data state
 
 Environment:
-  AIONFORGE_CONTAINER_IMAGE   Image to run (default: ghcr.io/aionforge-labs/aionforge-memory:0.1.0)
+  AIONFORGE_CONTAINER_IMAGE   Image to run (default: ghcr.io/jscott3201/aionforge-memory:0.1.0)
   AIONFORGE_CONTAINER_NAME    Container name (default: aionforge-memory)
   AIONFORGE_CONTAINER_ARCH    Image architecture shorthand (default: arm64)
   AIONFORGE_CONTAINER_PLATFORM OCI platform (default: linux/$AIONFORGE_CONTAINER_ARCH)

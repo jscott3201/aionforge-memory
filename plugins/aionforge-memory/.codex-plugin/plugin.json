@@ -4,10 +4,10 @@
   "description": "Agent skills for using an externally configured Aionforge Memory MCP server as durable project memory.",
   "author": {
     "name": "Aionforge Labs",
-    "url": "https://github.com/Aionforge-Labs"
+    "url": "https://github.com/jscott3201"
   },
-  "homepage": "https://github.com/Aionforge-Labs/aionforge-memory/tree/development/plugins/aionforge-memory",
-  "repository": "https://github.com/Aionforge-Labs/aionforge-memory",
+  "homepage": "https://github.com/jscott3201/aionforge-memory/tree/development/plugins/aionforge-memory",
+  "repository": "https://github.com/jscott3201/aionforge-memory",
   "license": "MIT OR Apache-2.0",
   "keywords": [
     "memory",
@@ -26,9 +26,9 @@
       "Read",
       "Write"
     ],
-    "websiteURL": "https://github.com/Aionforge-Labs/aionforge-memory",
-    "privacyPolicyURL": "https://github.com/Aionforge-Labs/aionforge-memory/blob/development/docs/security-model.md",
-    "termsOfServiceURL": "https://github.com/Aionforge-Labs/aionforge-memory/blob/development/LICENSE-MIT",
+    "websiteURL": "https://github.com/jscott3201/aionforge-memory",
+    "privacyPolicyURL": "https://github.com/jscott3201/aionforge-memory/blob/development/docs/security-model.md",
+    "termsOfServiceURL": "https://github.com/jscott3201/aionforge-memory/blob/development/LICENSE-MIT",
     "defaultPrompt": [
       "Use Aionforge Memory as the working substrate for this task.",
       "Search memory before planning, then capture durable decisions and validation results."
