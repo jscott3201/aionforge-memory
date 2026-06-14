@@ -70,15 +70,14 @@ The plugin never registers an MCP server of its own — configure the standalone
 
 Aionforge Memory is retrieval memory, not model training. It does not fine-tune a
 model, make the model smarter, or route work across multiple model providers.
-Embeddings and any optional chat/completion work are handled by thin clients
-(`aionforge-embed`, `aionforge-chat`) that talk to the OpenAI-compatible
-provider you configure.
+Embeddings are handled by a thin client (`aionforge-embed`) that talks to the
+OpenAI-compatible provider you configure. Consolidation is deterministic and
+rule-based; the substrate calls no chat/completion model.
 
 Several subsystems are off by default and must be enabled per deployment:
-forgetting, read-time importance decay, cross-namespace promotion, and
-LLM-backed distillation. The optional LLM layers write derived, non-canonical
-state and cannot change deterministic capture or recall for the same graph
-state.
+forgetting, read-time importance decay, cross-namespace promotion, and off-cursor
+note link evolution. Link evolution writes derived, non-canonical `RELATES_TO`
+edges and cannot change deterministic capture or recall for the same graph state.
 
 The honest scope boundary is documented in
 [docs/honest-scope.md](docs/honest-scope.md).
@@ -129,8 +128,8 @@ and OpenCode. Plugin setup guidance is available at
 - **Write path:** capture redacts secrets, removes known prompt-injection
   markers, refuses residue-only captures, deduplicates cleaned content, and
   records provenance before derived work runs.
-- **Consolidation:** background passes extract facts, resolve entities,
-  supersede stale facts, quarantine contradictions, distill notes, and optionally
+- **Consolidation:** deterministic background passes extract facts, resolve entities,
+  supersede stale facts, quarantine contradictions, summarize notes, and optionally
   induce reusable skills.
 - **Retrieval:** query routing chooses the relevant mix of lexical,
   lexical-anchor, dense, graph, recency, importance, and trust signals, then
@@ -139,8 +138,8 @@ and OpenCode. Plugin setup guidance is available at
   memory exclusion, untrusted recall envelopes, cross-family guards, and red-team
   probes are part of the main build and CI gates.
 - **Determinism:** canonical capture, consolidation, and retrieval are
-  deterministic for the same inputs and graph state. Optional LLM output stays
-  outside that canonical path.
+  deterministic for the same inputs and graph state. Off-cursor note link
+  evolution stays outside that canonical path.
 
 For the full subsystem map, see [docs/README.md](docs/README.md).
 

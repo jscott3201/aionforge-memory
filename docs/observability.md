@@ -71,21 +71,16 @@ Recall error labels are `audit`, `store`, `deadline_exceeded`, and `other`.
 | `consolidation_quarantines_total` | counter | none | Quarantines materialized by fact extraction. |
 | `consolidation_summaries_total` | counter | none | Summary notes written by fact extraction. |
 
-## Optional LLM Layers And Guard
+## Link Evolution And Guard
 
 | Metric | Type | Labels | Meaning |
 |---|---|---|---|
-| `aionforge_distillation_runs_total` | counter | `outcome` | Distillation runs by success/error. |
-| `aionforge_distillation_duration_seconds` | histogram | `outcome` | Distillation run duration. |
-| `aionforge_distillation_notes_written_total` | counter | none | Distilled notes written. |
-| `aionforge_distillation_declined_total` | counter | none | Model calls declined or unavailable. |
-| `aionforge_distillation_rejected_lossy_total` | counter | none | Summaries rejected by the detail-retention guard. |
 | `aionforge_link_evolution_runs_total` | counter | `outcome` | Link-evolution runs by success/error. |
 | `aionforge_link_evolution_duration_seconds` | histogram | `outcome` | Link-evolution run duration. |
 | `aionforge_link_evolution_links_created_total` | counter | none | New `RELATES_TO` links opened. |
 | `aionforge_link_evolution_links_revised_total` | counter | none | Existing links revised. |
-| `aionforge_link_evolution_declined_total` | counter | none | Model calls declined or unavailable. |
-| `aionforge_consolidation_guard_refusals_total` | counter | `surface` | Cross-family guard refusals for `distill` or `link_evolve`. |
+| `aionforge_link_evolution_declined_total` | counter | none | Evolver calls declined or unavailable. |
+| `aionforge_consolidation_guard_refusals_total` | counter | `surface` | Cross-family guard refusals, surfaced for `link_evolve`. |
 | `aionforge_startup_warnings_total` | counter | `kind` | Engine construction warnings, currently `single_family_deployment`. |
 
 Warn-mode cross-family findings are recorded in the audit trail. The public reports only

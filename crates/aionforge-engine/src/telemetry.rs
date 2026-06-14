@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use aionforge_capture::{CaptureError, CaptureReceipt, CaptureVerdict, EmbeddingOutcome};
-use aionforge_consolidate::{DistillError, DistillationReport, LinkEvolveError, LinkEvolveReport};
+use aionforge_consolidate::{LinkEvolveError, LinkEvolveReport};
 use aionforge_forget::{CoolingSweepReport, DriftSweepReport, ForgetSweepPage};
 use aionforge_retrieval::{QueryClass, RecallBundle};
 use aionforge_store::StoreDoctorReport;
@@ -132,34 +132,6 @@ pub(crate) fn startup_warnings(warnings: &[StartupWarning]) {
         };
         ::metrics::counter!("aionforge_startup_warnings_total", "kind" => kind).increment(1);
     }
-}
-
-pub(crate) fn distillation_result(
-    result: &Result<DistillationReport, DistillError>,
-    elapsed: Duration,
-) {
-    match result {
-        Ok(report) => distillation_report(report, elapsed),
-        Err(_) => distillation_error(elapsed),
-    }
-}
-
-fn distillation_report(report: &DistillationReport, elapsed: Duration) {
-    ::metrics::counter!("aionforge_distillation_runs_total", "outcome" => "success").increment(1);
-    ::metrics::histogram!("aionforge_distillation_duration_seconds", "outcome" => "success")
-        .record(elapsed.as_secs_f64());
-    ::metrics::counter!("aionforge_distillation_notes_written_total")
-        .increment(report.notes_written as u64);
-    ::metrics::counter!("aionforge_distillation_declined_total").increment(report.declined as u64);
-    ::metrics::counter!("aionforge_distillation_rejected_lossy_total")
-        .increment(report.rejected_lossy as u64);
-    emit_guard_refusals("distill", report.guard_refused);
-}
-
-fn distillation_error(elapsed: Duration) {
-    ::metrics::counter!("aionforge_distillation_runs_total", "outcome" => "error").increment(1);
-    ::metrics::histogram!("aionforge_distillation_duration_seconds", "outcome" => "error")
-        .record(elapsed.as_secs_f64());
 }
 
 pub(crate) fn link_evolution_result(

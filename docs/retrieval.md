@@ -223,7 +223,7 @@ pub struct RecallBundle {
   status), or a `CoreBlock` (an identity-tier block the always-include pre-pass prepended —
   unranked, scoreless, gated only by the visible set; see [Core memory](core-memory.md)).
   They coexist in one bundle so a recall returns the standing identity, raw turns, and the
-  assertions distilled from them together.
+  assertions derived from them together.
 - The **rendered** view is the same set re-sorted by a content-derived `SerializationId` and
   rendered for prompt injection. The ordering is deliberately not the score order: the
   rendered text is a pure function of serialization ids, roles, and content — no clock, no

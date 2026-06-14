@@ -10,8 +10,7 @@ use aionforge_domain::nodes::associative::Note;
 use aionforge_domain::nodes::forensic::{AuditEvent, AuditKind};
 use aionforge_domain::time::Timestamp;
 use aionforge_store::{
-    BoundQuery, DistilledNoteWrite, EdgeId, LinkEdgeWrite, MaterializedNote, QueryResult, Store,
-    StoreConfig, Value,
+    BoundQuery, EdgeId, LinkEdgeWrite, MaterializedNote, QueryResult, Store, StoreConfig, Value,
 };
 
 fn ts(text: &str) -> Timestamp {
@@ -98,18 +97,15 @@ fn seed_note_with_expiry(
         occurred_at: now(),
     };
     store
-        .materialize_distilled_notes(
-            &[DistilledNoteWrite {
-                note: MaterializedNote {
-                    note,
-                    source_facts: Vec::new(),
-                },
-                audit,
+        .seed_notes_for_test(
+            &[MaterializedNote {
+                note,
+                source_facts: Vec::new(),
             }],
-            &[],
             &now(),
         )
         .expect("seed note");
+    store.commit_audit(&audit).expect("seed note audit");
     id
 }
 

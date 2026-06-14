@@ -29,17 +29,17 @@ pub use aionforge_security::GuardMode;
 ///
 /// There is deliberately **no off-switch**: the guard is substrate policy over
 /// every inference-calling consolidation rule, and it is inert until a host
-/// injects an LLM-backed summarizer or link evolver (both off by default), so the
-/// all-defaults posture pays nothing.
+/// injects an inference-backed link evolver (off by default; the shipped path is
+/// deterministic), so the all-defaults posture pays nothing.
 #[derive(Debug, Clone, Default)]
 pub struct ConsolidationGuardPolicy {
     /// What a fired guard does: [`GuardMode::Refuse`] (default) skips the item and
     /// audits; [`GuardMode::Warn`] proceeds and audits the same finding.
     pub mode: GuardMode,
     /// The model family the deployment consolidates with, populated by the host
-    /// from its completer configuration when distillation or LLM link evolution is
-    /// in use. Feeds the startup single-family warning; the per-call guard reads
-    /// the injected identity and works whether or not this is set.
+    /// when an inference-backed link evolver is in use (its declared family). Feeds
+    /// the startup single-family warning; the per-call guard reads the injected
+    /// evolver's identity and works whether or not this is set.
     pub declared_consolidator_family: Option<String>,
 }
 
@@ -72,7 +72,7 @@ pub enum StartupWarning {
     /// Every enrolled agent declares the consolidating model's family (07 §3): the
     /// deployment writes and condenses with one base model, the exact posture the
     /// subliminal-trait guard exists to flag. The per-call guard will refuse (or
-    /// warn through, per mode) every cluster this deployment distills.
+    /// warn through, per mode) every note an inference evolver of that family would relate.
     SingleFamilyDeployment {
         /// The declared consolidating family the agents all match.
         family: String,

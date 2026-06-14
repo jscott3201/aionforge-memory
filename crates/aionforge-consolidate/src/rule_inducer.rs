@@ -1,8 +1,8 @@
 //! A deterministic, rule-based skill inducer (05 §1, M3.T06).
 //!
-//! M3 ships this in place of a model-backed inducer (deferred to the optional M3.S3
-//! distillation layer) so induction is testable with no network and the induced skill id stays
-//! reproducible. It is deliberately transparent: the induced skill's body is the recurring
+//! This is the shipped inducer — induction is rule-based, testable with no network, and the
+//! induced skill id stays reproducible. It is deliberately transparent: the induced skill's body
+//! is the recurring
 //! episode's content **verbatim** — there is no summarization or extraction step, so nothing
 //! about the body is non-deterministic, and an operator auditing an induced skill sees exactly
 //! the procedure the agent re-emitted. The conservative gates (reuse threshold, procedural role,

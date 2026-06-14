@@ -66,23 +66,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "aionforge-chat"
-version = "0.2.0"
-dependencies = [
- "aionforge-config",
- "aionforge-domain",
- "miette",
- "reqwest",
- "rustls",
- "secrecy",
- "serde",
- "serde_json",
- "thiserror",
- "tokio",
- "wiremock",
-]
-
-[[package]]
 name = "aionforge-cli"
 version = "0.2.0"
 dependencies = [
@@ -286,6 +269,7 @@ name = "aionforge-store"
 version = "0.2.0"
 dependencies = [
  "aionforge-domain",
+ "aionforge-store",
  "jiff",
  "metrics",
  "miette",

@@ -4,9 +4,9 @@
 //! mode and the deployment's declared consolidating family. There is deliberately
 //! **no master off-switch** — the guard is substrate policy over every
 //! inference-calling consolidation rule (07 §3: "enforced at the substrate, not
-//! left to user code"), and it is inert until a host enables an inference-backed
-//! rule (distillation or LLM link evolution, both off by default), so an
-//! all-defaults deployment pays nothing.
+//! left to user code"), and it is inert until a host injects an inference-backed
+//! (model-family-bearing) summarizer or link evolver, so an all-defaults
+//! deployment pays nothing.
 //!
 //! The host maps these knobs into the engine's `ConsolidationGuardPolicy` (which
 //! re-validates its own copy), the same host-side indirection as
@@ -40,10 +40,9 @@ pub struct ConsolidationGuardConfig {
     /// What a fired guard does: `refuse` (default) skips the item and audits;
     /// `warn` proceeds and audits the same finding.
     pub mode: GuardMode,
-    /// The model family the deployment consolidates with — populate it from
-    /// `completer.model` when distillation or LLM link evolution is configured.
-    /// Feeds the startup single-family warning (07 §3); the per-call guard reads
-    /// the summarizer/evolver's own declared identity and works whether or not
+    /// The model family the deployment consolidates with. Feeds the startup
+    /// single-family warning (07 §3); the per-call guard reads the
+    /// summarizer/evolver's own declared identity and works whether or not
     /// this is set. `None` skips the startup check.
     pub declared_consolidator_family: Option<String>,
 }

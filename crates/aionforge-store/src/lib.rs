@@ -23,7 +23,6 @@ mod cooling;
 mod core_block;
 mod core_block_write;
 mod dedup;
-mod distill;
 mod doctor;
 mod drift_read;
 mod entity;
@@ -71,7 +70,6 @@ pub use consolidation::{
 };
 pub use cooling::{CoolWrite, CoolingCandidate, CoolingCursor};
 pub use core_block_write::{CoreAttestation, CoreBlockReplacement, CoreEditWrite};
-pub use distill::DistilledNoteWrite;
 pub use doctor::{
     CompositeIndexKey, IndexDoctorReport, IndexKey, InventoryCheck, ProviderDoctorReport,
     SchemaDoctorReport, StoreCapacityReport, StoreDoctorReport, VectorDimensionMismatch,

@@ -15,7 +15,6 @@
 
 use std::future::Future;
 
-use crate::completion::{CompleterModel, Completion, CompletionRequest};
 use crate::embedding::{EmbedderModel, Embedding};
 use crate::ids::Id;
 use crate::nodes::associative::Note;
@@ -170,46 +169,6 @@ impl<E: Embedder + ?Sized> Embedder for std::sync::Arc<E> {
     }
 
     fn model(&self) -> &EmbedderModel {
-        (**self).model()
-    }
-}
-
-/// The optional OpenAI-compatible / multi-provider chat-completion client (08 §1, M3.T07).
-///
-/// The chat half of the inference seam, mirroring [`Embedder`]: it consumes a
-/// [`CompletionRequest`] and produces a [`Completion`], recording the [`CompleterModel`]
-/// identity for the cross-family guard (M6). It is the producer the optional LLM distiller
-/// (M3.T08) builds on, so it is off unless configured and a single provider/model is declared
-/// — cost-first multi-provider auto-routing is rejected, keeping the consolidating model family
-/// verifiable. The substrate runs no inference itself; this is the boundary to a provider.
-pub trait Completer: Send + Sync {
-    /// The typed error this seam surfaces.
-    type Error: std::error::Error + Send + Sync + 'static;
-
-    /// Complete one conversation. A typed `Unavailable` error means the endpoint is down or
-    /// overloaded, so a caller degrades to the deterministic canonical tier rather than failing.
-    fn complete(
-        &self,
-        request: &CompletionRequest,
-    ) -> impl Future<Output = Result<Completion, Self::Error>> + Send;
-
-    /// The declared identity of the model this completer is configured against.
-    fn model(&self) -> &CompleterModel;
-}
-
-/// A shared completer is itself a completer, so one client can back several subsystems without
-/// being cloned — like [`Embedder`], it holds secret material that must not be copied around.
-impl<C: Completer + ?Sized> Completer for std::sync::Arc<C> {
-    type Error = C::Error;
-
-    fn complete(
-        &self,
-        request: &CompletionRequest,
-    ) -> impl Future<Output = Result<Completion, Self::Error>> + Send {
-        (**self).complete(request)
-    }
-
-    fn model(&self) -> &CompleterModel {
         (**self).model()
     }
 }

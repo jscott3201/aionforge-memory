@@ -9,6 +9,11 @@ repository.workspace = true
 homepage.workspace = true
 description = "L0 storage over the selene-db SharedGraph: typed read/write, parameter-bound GQL, schema/migration, and persistence."
 
+[features]
+# Test-support seam: exposes `Store::seed_notes_for_test` for integration tests in sibling
+# crates. Off by default, so the symbol is absent from the shipped library and the mcp binary.
+test-support = []
+
 [dependencies]
 aionforge-domain = { path = "../aionforge-domain", version = "0.2.0" }
 # `metrics` lights up selene-db's internal instrumentation (queries, commits, WAL,
@@ -35,6 +40,9 @@ metrics = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
+# Self-path dev-dep so this crate's OWN integration tests build the linked lib with the
+# `test-support` feature on (it must be enabled for the lib the integration test links).
+aionforge-store = { path = ".", version = "0.2.0", features = ["test-support"] }
 proptest = { workspace = true }
 jiff = { workspace = true }
 

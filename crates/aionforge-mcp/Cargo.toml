@@ -33,7 +33,7 @@ tower-service = "0.3"
 [dev-dependencies]
 aionforge-domain = { path = "../aionforge-domain", version = "0.2.0" }
 aionforge-engine = { path = "../aionforge-engine", version = "0.2.0" }
-aionforge-store = { path = "../aionforge-store", version = "0.2.0" }
+aionforge-store = { path = "../aionforge-store", version = "0.2.0", features = ["test-support"] }
 aionforge-config = { path = "../aionforge-config", version = "0.2.0" }
 aionforge-auth = { path = "../aionforge-auth", version = "0.2.0" }
 rmcp = { version = "1.6", features = ["client"] }

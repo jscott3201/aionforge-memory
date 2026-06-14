@@ -88,9 +88,8 @@ skill only when **every** conservative gate holds:
 - **Reuse evidence.** The episode's exact content must have recurred at least a configured
   number of times (default three) within a bounded recent window in that namespace.
   Repetition is the deterministic stand-in for "this procedure is worth keeping": there is
-  no executor and no recorded-outcome signal at this layer (those arrive with the optional
-  model-backed distillation work), so what the substrate can see is that the agent came
-  back to the same procedure again and again.
+  no executor and no recorded-outcome signal at this layer, so what the substrate can see is
+  that the agent came back to the same procedure again and again.
 - **Enough substance.** The content must clear a small lexical floor — a minimum length
   and a minimum number of distinct words — so a repeated one-liner or an error log never
   becomes a skill.
@@ -184,6 +183,5 @@ engine; this layer speaks domain types.
 
 Induction lives in the consolidation subsystem, not here: it is a separate, off-by-default
 consolidation pass over the same layer-0 skill surface, built on a `SkillInducer` seam
-(the deterministic `RuleInducer` in M3, a model-backed inducer in the optional distillation
-layer) and tuned by an `InductionConfig`. It writes induced skills atomically with the
-episode flip, so a crash commits both or neither.
+(the deterministic `RuleInducer`) and tuned by an `InductionConfig`. It writes induced
+skills atomically with the episode flip, so a crash commits both or neither.

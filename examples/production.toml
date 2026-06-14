@@ -14,15 +14,6 @@ dimension = 1536
 api_key_env = "AIONFORGE_EMBEDDER_API_KEY"
 timeout_ms = 30000
 
-[completer]
-enabled = false
-provider = "openai_chat"
-endpoint = "https://api.example.com/v1"
-model = ""
-api_key_env = "AIONFORGE_COMPLETER_API_KEY"
-timeout_ms = 60000
-max_tokens = 4096
-
 [retrieval]
 default_k = 12
 fusion_constant = 60

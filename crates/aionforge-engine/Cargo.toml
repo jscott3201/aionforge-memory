@@ -32,7 +32,7 @@ serde_json = { workspace = true }
 
 [dev-dependencies]
 aionforge-domain = { path = "../aionforge-domain", version = "0.2.0" }
-aionforge-store = { path = "../aionforge-store", version = "0.2.0" }
+aionforge-store = { path = "../aionforge-store", version = "0.2.0", features = ["test-support"] }
 tokio = { workspace = true }
 # Test-only: sign provenance payloads with a fixed-seed keypair to exercise the signed-write
 # gate end to end (M4.T03). Already pinned at the workspace; no new versions enter the tree.

@@ -1,13 +1,13 @@
-//! A deterministic, rule-based link evolver (M3.T09): the [`LinkEvolver`] seam's hermetic default.
+//! A deterministic, rule-based link evolver (M3.T09): the [`LinkEvolver`] seam's hermetic default
+//! and the shipped implementation.
 //!
-//! Where the model-backed [`LLMLinkEvolver`](crate::LLMLinkEvolver) judges *which kind* of
-//! relationship holds, the rule evolver draws the one relationship a pure-vector method can infer:
-//! `related_to`, to every candidate it is offered, with the source-to-candidate embedding cosine as
-//! the confidence. It is [`Infallible`] and fully deterministic, so the
-//! off-cursor [`LinkEvolvePass`](crate::LinkEvolvePass) is testable with no network and the rule
-//! tier is always present beneath the optional LLM tier (the layered-determinism doctrine, 04
-//! §*Canonical vs. distilled*). The candidate set, the confidence floor, and the cascade guard are
-//! the driver's policy; this seam only scores proximity.
+//! The rule evolver draws the one relationship a pure-vector method can infer: `related_to`, to
+//! every candidate it is offered, with the source-to-candidate embedding cosine as the confidence —
+//! it never judges *which kind* of relationship holds (that would require inference, which the
+//! substrate does not run). It is [`Infallible`] and fully deterministic, so the off-cursor
+//! [`LinkEvolvePass`](crate::LinkEvolvePass) is testable with no network and stays byte-reproducible.
+//! The candidate set, the confidence floor, and the cascade guard are the driver's policy; this seam
+//! only scores proximity.
 
 use std::convert::Infallible;
 use std::future::Future;

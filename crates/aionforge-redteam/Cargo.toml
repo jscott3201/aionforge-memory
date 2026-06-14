@@ -17,7 +17,7 @@ serde_json = { workspace = true }
 aionforge-domain = { path = "../aionforge-domain", version = "0.2.0" }
 aionforge-engine = { path = "../aionforge-engine", version = "0.2.0" }
 aionforge-procedural = { path = "../aionforge-procedural", version = "0.2.0" }
-aionforge-store = { path = "../aionforge-store", version = "0.2.0" }
+aionforge-store = { path = "../aionforge-store", version = "0.2.0", features = ["test-support"] }
 base64 = { workspace = true }
 ed25519-dalek = { workspace = true }
 tokio = { workspace = true }
