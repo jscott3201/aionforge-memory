@@ -6,7 +6,7 @@
   Long-term memory for AI agents, built on selene-db.
 </p>
 
-> **Status: 0.2.1 public release.** The Rust library, CLI, MCP server,
+> **Status: 0.2.2 public release.** The Rust library, CLI, MCP server,
 > read-only operator TUI, Docker image, and red-team gates are in place. A
 > small sanitized retrieval regression corpus is in place; broader
 > retrieval-quality benchmarks remain deferred. Expect schema and API changes
@@ -211,7 +211,7 @@ Published images are available from GitHub Container Registry for
 `linux/amd64` and `linux/arm64`:
 
 ```bash
-docker pull ghcr.io/jscott3201/aionforge-memory:0.2.1
+docker pull ghcr.io/jscott3201/aionforge-memory:0.2.2
 ```
 
 Build a local image when working from source:

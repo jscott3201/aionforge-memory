@@ -3,7 +3,7 @@ name: memory-maintenance
 description: Inspect, consolidate, audit, forget, or restore Aionforge Memory. Use when the user asks about memory health, backlog, provenance, stale records, corrections, deletion, restoration, or why a memory was recalled.
 license: MIT OR Apache-2.0
 metadata:
-  aionforge-version: "0.2.1"
+  aionforge-version: "0.2.2"
 ---
 
 # Memory Maintenance
