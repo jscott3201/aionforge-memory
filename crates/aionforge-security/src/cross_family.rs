@@ -1,17 +1,20 @@
 //! The cross-family consolidation guard: pure family comparison and the
 //! refuse-or-warn decision (07 §3, M6.T01).
 //!
-//! Subliminal traits transmit through distillation when the consolidating model
-//! shares a base-model family with the writers whose content it condenses (07 T3).
-//! The guard is the substrate's verification that the families differ — stateless,
-//! no store, no I/O: the engine facade constructs it from policy and the declared
-//! consolidator identity, the L2 drivers call [`CrossFamilyGuard::evaluate`] with
-//! the writer families the store resolved, and this module only ever compares
-//! strings. That keeps it unit-testable in isolation and reusable by the M6.T05
-//! trait-transfer probe's same-family control.
+//! Subliminal traits transmit through inference-backed consolidation when the
+//! consolidating model shares a base-model family with the writers whose content it
+//! relates or condenses (07 T3). The shipped consolidation path is deterministic and
+//! runs no inference model, so the guard is inert by default; it stays as standing
+//! substrate policy over any injected inference-backed link evolver. The guard is the
+//! substrate's verification that the families differ — stateless, no store, no I/O:
+//! the engine facade constructs it from policy and the declared consolidator identity,
+//! the L2 driver calls [`CrossFamilyGuard::evaluate`] with the writer families the
+//! store resolved, and this module only ever compares strings. That keeps it
+//! unit-testable in isolation and reusable by the M6.T05 trait-transfer probe's
+//! same-family control.
 //!
 //! "Family" arrives as free text on both sides — the writer's is host-asserted at
-//! capture, the consolidator's is the completer's configured model id — so the
+//! capture, the consolidator's is the injected evolver's configured model id — so the
 //! comparison normalizes at comparison time (trim, ASCII-lowercase, hyphen-token
 //! boundaries, a closed vendor-root table) and **fails closed on ambiguity**: a
 //! boundary-prefix or shared-root relation always resolves to [`FamilyVerdict::Same`]
@@ -192,7 +195,7 @@ impl CrossFamilyGuard {
 /// is no boundary match); the closed vendor-root table (`gpt-5` and `o3` share
 /// the openai root ⇒ `Same`); finally leading-token equality for unmapped
 /// vendors. Raw-id equality alone would be the status-quo bypass — the writer
-/// asserting `claude` while the distiller declares `claude-sonnet-4-6` must
+/// asserting `claude` while the consolidator declares `claude-sonnet-4-6` must
 /// compare `Same`.
 #[must_use]
 pub fn family_verdict(writer: &str, consolidator: &str) -> FamilyVerdict {

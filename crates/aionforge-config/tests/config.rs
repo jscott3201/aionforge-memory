@@ -670,41 +670,6 @@ fn malformed_toml_fails_clearly() {
 }
 
 #[test]
-fn the_completer_is_off_by_default_and_validates_clean() {
-    let config = Config::default();
-    assert!(!config.completer.enabled, "chat/completion is opt-in");
-    assert_eq!(config.completer.provider, "openai_chat");
-    // An off completer is not validated, so the empty default model is fine.
-    config
-        .validate()
-        .expect("a default (disabled) completer validates");
-}
-
-#[test]
-fn an_enabled_completer_requires_a_model() {
-    let mut config = Config::default();
-    config.completer.enabled = true;
-    config.completer.endpoint = "https://api.openai.com/v1".to_owned();
-    config.completer.model = String::new();
-    assert!(
-        matches!(config.validate(), Err(ConfigError::Missing(key)) if key == "completer.model"),
-        "an enabled completer with no model is rejected"
-    );
-}
-
-#[test]
-fn an_enabled_completer_rejects_a_remote_plaintext_endpoint() {
-    let mut config = Config::default();
-    config.completer.enabled = true;
-    config.completer.model = "gpt-4o".to_owned();
-    config.completer.endpoint = "http://api.example.com/v1".to_owned();
-    assert!(
-        matches!(config.validate(), Err(ConfigError::Invalid { key, .. }) if key == "completer.endpoint"),
-        "a remote http completer endpoint is rejected"
-    );
-}
-
-#[test]
 fn audit_signing_is_off_by_default() {
     let config = Config::default();
     assert!(
@@ -786,24 +751,6 @@ fn no_audit_seed_variable_resolves_to_none() {
         config
             .resolve_audit_seed(|_| panic!("lookup must not run when no variable is named"))
             .expect("resolve")
-            .is_none()
-    );
-}
-
-#[test]
-fn the_completer_api_key_resolves_from_its_own_variable() {
-    let mut config = Config::default();
-    config.completer.api_key_env = Some("AIONFORGE_CHAT_KEY".to_owned());
-    let secret = config
-        .resolve_completer_api_key(|name| (name == "AIONFORGE_CHAT_KEY").then(|| "k".to_owned()))
-        .expect("resolve")
-        .expect("a key is present");
-    assert_eq!(secret.expose_secret(), "k");
-    // The embedder and completer keys are independent.
-    assert!(
-        config
-            .resolve_api_key(|_| None)
-            .expect("embedder resolve")
             .is_none()
     );
 }

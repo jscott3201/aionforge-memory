@@ -20,8 +20,9 @@ claim should exceed what the current code and gates prove.
   promotion, audit signing, drift detection, and red-team probes as documented in
   the subsystem guides.
 - Optional embeddings from one configured OpenAI-compatible endpoint.
-- Optional chat/completion use for non-canonical LLM distillation and link
-  evolution, off by default.
+- Deterministic, rule-based consolidation only: fact extraction, summarization,
+  skill induction, and off-cursor note link evolution. No chat/completion model is
+  called anywhere in the substrate.
 - Alpine Docker runtime image, tag-driven release artifact publishing, and
   GHCR images for `linux/amd64` and `linux/arm64`.
 
@@ -31,9 +32,9 @@ The table below lists deferred work and the current safe posture.
 
 | Area | v1 posture | Deferred work |
 |------|------------|---------------|
-| Benchmarks | M7 is deferred, so docs make no benchmark-backed latency, quality, or cost claims. | M7 benchmark suite and distillation graduation benchmark. |
-| LLM distillation | Experimental, off by default, non-canonical, and unable to perturb deterministic capture or recall. | Benchmark-backed quality bar before any default-on posture. |
-| Cost-first routing | Not supported. A deployment declares one embedding provider and one optional chat provider. | Any multi-provider routing needs a separate verifiability design. |
+| Benchmarks | M7 is deferred, so docs make no benchmark-backed latency, quality, or cost claims. | M7 benchmark suite. |
+| LLM-backed consolidation | Not shipped. Consolidation is deterministic and rule-based only (rule summarization/extraction/induction plus deterministic off-cursor link evolution); the substrate calls no chat/completion model. The cross-family consolidation guard remains as standing substrate policy over the `LinkEvolver` inference seam. | A benchmark-backed quality bar before any inference-backed consolidation rule could be reintroduced. |
+| Cost-first routing | Not supported. A deployment declares one embedding provider and no chat provider. | Any multi-provider routing needs a separate verifiability design. |
 | Experiential hand-off | Not shipped. Aionforge stores exemplars and derived memory, not a transferable live experience/state interface. | A future hand-off protocol and evaluation plan. |
 | Snapshot lifecycle | Recovery replays the WAL and rebuilds derived indexes/providers; the store does not yet drive scheduled snapshot publication or WAL truncation. | Snapshot publication, WAL truncation, and backup automation. |
 | Erasure residency | Hard purge removes live graph reachability, but purged values can remain in the WAL until snapshot publication exists. | Compaction-backed residency guarantees. |
@@ -48,9 +49,10 @@ graph state. Retrieval ordering is deterministic for the same query and state.
 The substrate does not read ambient time in canonical ranking decisions; callers
 provide clocks where time-dependent behavior is needed.
 
-Optional LLM output is outside that canonical boundary. It is derived, linked
-back to source memory, and off by default. It can enrich non-canonical notes or
-links, but it must not change byte-identical recall of the canonical state.
+Off-cursor link evolution runs outside that canonical boundary. Its `RELATES_TO`
+edges are derived, linked back to source notes, off by default, and deterministic
+for the same notes and rule version. They are non-canonical: they can enrich the
+note graph, but they never change byte-identical recall of the canonical state.
 
 ## Security boundary
 

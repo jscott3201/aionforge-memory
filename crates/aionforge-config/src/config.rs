@@ -21,11 +21,6 @@ use crate::server::ServerHttpConfig;
 /// hanging a capture or recall on a wedged endpoint.
 const MAX_EMBEDDER_TIMEOUT_MS: u64 = 600_000;
 
-/// The largest sane per-request completer timeout (ten minutes), for the same reason as the
-/// embedder ceiling. Chat completions can be slower than embeddings, but ten minutes is the
-/// outer bound before a stuck endpoint should be treated as unavailable.
-const MAX_COMPLETER_TIMEOUT_MS: u64 = 600_000;
-
 /// The widest sane clock-skew tolerance for signed writes (five minutes, 06 §3). The window
 /// bounds replay/storm exposure, so a misconfigured production deployment cannot effectively
 /// disable replay protection by setting it arbitrarily high; five minutes covers normal NTP
@@ -51,9 +46,6 @@ pub struct Config {
     pub persistence: PersistenceConfig,
     /// The embedding/inference endpoint and the model identity it serves.
     pub embedder: EmbedderConfig,
-    /// The optional chat/completion provider (off by default), for LLM distillation and other
-    /// opt-in chat use.
-    pub completer: CompleterConfig,
     /// Retrieval defaults applied when a query does not override them.
     pub retrieval: RetrievalConfig,
     /// Security posture toggles.
@@ -157,50 +149,6 @@ impl Default for EmbedderConfig {
             dimension: DEFAULT_EMBEDDING_DIMENSION,
             api_key_env: None,
             timeout_ms: 30_000,
-        }
-    }
-}
-
-/// Optional chat/completion provider configuration (08 §1, M3.T07).
-///
-/// Off by default: chat use (LLM distillation and the like) is opt-in, so an unset completer
-/// leaves the deterministic canonical path untouched. A single provider and model are declared
-/// — there is no cost-first auto-routing — so the responding model family stays verifiable.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct CompleterConfig {
-    /// Whether the chat/completion client is on.
-    pub enabled: bool,
-    /// The provider wire format: `openai_chat` (OpenAI and any OpenAI-compatible local/open
-    /// server), `openai_responses` (OpenAI's Responses API, used statelessly), or `anthropic`
-    /// (Claude Messages). The chat client validates the exact value.
-    pub provider: String,
-    /// The base URL. `https://` is required unless the host is localhost. Include the version
-    /// segment the provider expects (e.g. `.../v1`); the resource path is appended.
-    pub endpoint: String,
-    /// The model id sent on each request and recorded as the declared identity.
-    pub model: String,
-    /// The **name** of the environment variable holding the API key, or none for a local
-    /// unauthenticated endpoint. The key itself never lives in the config; see
-    /// [`Config::resolve_completer_api_key`].
-    pub api_key_env: Option<String>,
-    /// Per-request timeout, in milliseconds.
-    pub timeout_ms: u64,
-    /// The output-token cap sent on each request — required by the Anthropic provider, an upper
-    /// bound for the OpenAI providers. A per-request value overrides it.
-    pub max_tokens: u32,
-}
-
-impl Default for CompleterConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            provider: "openai_chat".to_owned(),
-            endpoint: "http://127.0.0.1:1234/v1".to_owned(),
-            model: String::new(),
-            api_key_env: None,
-            timeout_ms: 60_000,
-            max_tokens: 4096,
         }
     }
 }
@@ -495,37 +443,6 @@ impl Config {
         self.resolve_api_key(|name| std::env::var(name).ok())
     }
 
-    /// Resolve the completer's API key by reading the environment variable named in
-    /// `completer.api_key_env`, through the supplied lookup. Mirrors [`Config::resolve_api_key`]
-    /// for the chat/completion provider.
-    ///
-    /// # Errors
-    /// Returns [`ConfigError::SecretEnvMissing`] (naming the variable, never a value) when a
-    /// variable is named but unset.
-    pub fn resolve_completer_api_key<F>(
-        &self,
-        lookup: F,
-    ) -> Result<Option<SecretString>, ConfigError>
-    where
-        F: Fn(&str) -> Option<String>,
-    {
-        match &self.completer.api_key_env {
-            None => Ok(None),
-            Some(name) => match lookup(name) {
-                Some(value) => Ok(Some(SecretString::from(value))),
-                None => Err(ConfigError::SecretEnvMissing(name.clone())),
-            },
-        }
-    }
-
-    /// Resolve the completer's API key from the process environment.
-    ///
-    /// # Errors
-    /// See [`Config::resolve_completer_api_key`].
-    pub fn resolve_completer_api_key_from_env(&self) -> Result<Option<SecretString>, ConfigError> {
-        self.resolve_completer_api_key(|name| std::env::var(name).ok())
-    }
-
     /// Resolve the substrate audit-signing seed by reading the environment variable named in
     /// `security.audit_key_env`, through the supplied lookup. Mirrors [`Config::resolve_api_key`]
     /// for the opt-in audit-key custody escalation.
@@ -599,41 +516,6 @@ impl Config {
                 return Err(ConfigError::invalid(
                     "embedder.timeout_ms",
                     "must be at most 600000 (ten minutes)",
-                ));
-            }
-        }
-        if self.completer.enabled {
-            if self.completer.provider.trim().is_empty() {
-                return Err(ConfigError::missing("completer.provider"));
-            }
-            if self.completer.endpoint.trim().is_empty() {
-                return Err(ConfigError::missing("completer.endpoint"));
-            }
-            if self.completer.model.trim().is_empty() {
-                return Err(ConfigError::missing("completer.model"));
-            }
-            if !endpoint_transport_is_allowed(&self.completer.endpoint) {
-                return Err(ConfigError::invalid(
-                    "completer.endpoint",
-                    "must use https:// unless the host is localhost",
-                ));
-            }
-            if self.completer.timeout_ms == 0 {
-                return Err(ConfigError::invalid(
-                    "completer.timeout_ms",
-                    "must be greater than zero",
-                ));
-            }
-            if self.completer.timeout_ms > MAX_COMPLETER_TIMEOUT_MS {
-                return Err(ConfigError::invalid(
-                    "completer.timeout_ms",
-                    "must be at most 600000 (ten minutes)",
-                ));
-            }
-            if self.completer.max_tokens == 0 {
-                return Err(ConfigError::invalid(
-                    "completer.max_tokens",
-                    "must be greater than zero",
                 ));
             }
         }

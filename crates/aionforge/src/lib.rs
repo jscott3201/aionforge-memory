@@ -54,10 +54,7 @@ pub use aionforge_procedural::{
 
 pub use aionforge_domain::DomainError;
 pub use aionforge_domain::blocks::{Identity, Stats};
-pub use aionforge_domain::completion::{
-    ChatMessage, ChatRole, CompleterModel, Completion, CompletionRequest,
-};
-pub use aionforge_domain::contracts::{Capture, Completer, Embedder, ProceduralMemory, Retriever};
+pub use aionforge_domain::contracts::{Capture, Embedder, ProceduralMemory, Retriever};
 pub use aionforge_domain::embedding::{EmbedderModel, Embedding};
 pub use aionforge_domain::ids::{ContentHash, Id, SerializationId};
 pub use aionforge_domain::namespace::Namespace;

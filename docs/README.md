@@ -7,7 +7,7 @@ This is reference and guides, not planning or changelogs.
 
 - [Getting started](getting-started.md) - build, configure, validate, and run the
   single binary or Rust library.
-- [Embedding and provider guide](embedding-guide.md) - embedder/completer config,
+- [Embedding and provider guide](embedding-guide.md) - embedder config,
   dimension binding, secret handling, and disabled/local modes.
 - [Security model](security-model.md) - namespace authorization, untrusted recall,
   signed writes, audit signing, MCP transport posture, and red-team gates.
@@ -72,10 +72,10 @@ This is reference and guides, not planning or changelogs.
 - [Cross-family consolidation guard](cross-family-guard.md) — why a consolidating
   model never condenses its own family's writing: the comparison-time family
   normalization (boundary prefix, closed vendor roots, fail-closed on anything
-  unverifiable), the per-item enforcement inside distillation and link evolution
-  with the mode fixed at construction, the two-hop launder closed by unioning a
-  note's own authoring model into its writer set, the single-family startup
-  warning, and the one-call lineage read.
+  unverifiable), the per-item enforcement on the link-evolution path with the mode
+  fixed at construction, the two-hop launder closed by unioning a note's own
+  authoring model into its writer set, the single-family startup warning, and the
+  one-call lineage read.
 
 ## Procedural and generative layers
 
@@ -84,16 +84,10 @@ This is reference and guides, not planning or changelogs.
   off-by-default skill induction.
 - [Agent plugin](plugins.md) — the repo-shipped plugin package with Agent Skills
   and MCP client manifests.
-- [Completion client](completion-client.md) — the optional, off-by-default chat client:
-  one provider-agnostic seam over OpenAI Chat Completions, OpenAI Responses, and Anthropic
-  Messages (and any OpenAI-compatible local server), with pinned sampling and graceful degrade.
-- [LLM distillation](distillation.md) — the optional, off-by-default layer that condenses facts
-  into notes with a chat model, run off the consolidation cursor so it can never perturb the
-  byte-deterministic canonical path; guarded against lossy output and degrading to the rule tier.
-- [Note link evolution](link-evolution.md) — the optional, off-by-default layer that draws and
-  revises bi-temporal `RELATES_TO` edges between notes with a chat model, off the cursor and behind
-  a closed relationship vocabulary, a confidence floor, and per-run cascade caps; degrades to a
-  deterministic rule tier.
+- [Note link evolution](link-evolution.md) — the deterministic off-cursor layer that draws and
+  revises bi-temporal `RELATES_TO` edges between notes, run *outside* the consolidation cursor so it
+  can never perturb the byte-deterministic canonical path, behind a closed relationship vocabulary,
+  a confidence floor, and per-run cascade caps.
 
 ## Boundaries
 

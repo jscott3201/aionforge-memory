@@ -29,7 +29,7 @@ use aionforge_domain::time::Timestamp;
 use aionforge_domain::value::ObjectValue;
 use aionforge_engine::{Memory, MemoryConfig};
 use aionforge_mcp::ReadMemoryToolParams;
-use aionforge_store::{DistilledNoteWrite, MaterializedNote, Store, StoreConfig};
+use aionforge_store::{MaterializedNote, Store, StoreConfig};
 
 // Re-exported so the test binaries only need `use read_memory_support::*;` to name the
 // literals + entry points they assert on.
@@ -292,18 +292,18 @@ pub fn seed_note(memory: &Memory<FakeEmbedder>, content: &str, namespace: Namesp
     };
     memory
         .store()
-        .materialize_distilled_notes(
-            &[DistilledNoteWrite {
-                note: MaterializedNote {
-                    note,
-                    source_facts: Vec::new(),
-                },
-                audit,
+        .seed_notes_for_test(
+            &[MaterializedNote {
+                note,
+                source_facts: Vec::new(),
             }],
-            &[],
             &now(),
         )
         .expect("seed note");
+    memory
+        .store()
+        .commit_audit(&audit)
+        .expect("seed note audit");
     id
 }
 

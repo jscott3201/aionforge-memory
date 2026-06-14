@@ -27,7 +27,7 @@ use aionforge_domain::nodes::semantic::{Fact, FactStatus};
 use aionforge_domain::time::Timestamp;
 use aionforge_domain::value::ObjectValue;
 use aionforge_engine::{ErasurePolicy, Memory, MemoryConfig, PointErase};
-use aionforge_store::{BoundQuery, DistilledNoteWrite, FactKey, MaterializedNote, Store, Value};
+use aionforge_store::{BoundQuery, FactKey, MaterializedNote, Store, Value};
 use common::{DIM, FakeEmbedder, migrated_store, ts};
 
 fn fake_embedding() -> Embedding {
@@ -273,7 +273,7 @@ fn key_of(f: &Fact) -> FactKey {
     }
 }
 
-fn distill_audit(seed: &[u8], namespace: Namespace) -> AuditEvent {
+fn distill_audit(seed: &[u8], namespace: Namespace, subject_id: Id) -> AuditEvent {
     AuditEvent {
         identity: Identity {
             id: Id::from_content_hash(seed),
@@ -282,7 +282,7 @@ fn distill_audit(seed: &[u8], namespace: Namespace) -> AuditEvent {
             expired_at: None,
         },
         kind: AuditKind::Distill,
-        subject_id: Id::from_content_hash(b"subject"),
+        subject_id,
         actor_id: Id::from_content_hash(b"distiller"),
         payload: serde_json::json!({"outcome": "written"}),
         signature: String::new(),
@@ -309,30 +309,40 @@ fn the_episode_fact_note_chain_erases_and_compact_reclaims_it() {
     store.insert_fact(&surviving_fact).expect("insert");
     derived_fact_edge(&store, &doomed_fact.identity.id, &e.identity.id);
 
-    // Two notes through the real distillation write path: one grounded only in the
+    // Two notes seeded via the note materializer (seed_notes_for_test): one grounded only in the
     // doomed fact (cascades with it), one grounded in both facts (spared by the
     // multi-parent survival rule — still standing on the independent claim).
     let cascading = note("summary of the derived claim", own_ns.clone());
     let spared = note("summary of both claims", own_ns.clone());
-    let written = vec![
-        DistilledNoteWrite {
-            note: MaterializedNote {
-                note: cascading.clone(),
-                source_facts: vec![key_of(&doomed_fact)],
-            },
-            audit: distill_audit(b"distill-cascading", own_ns.clone()),
+    let notes = vec![
+        MaterializedNote {
+            note: cascading.clone(),
+            source_facts: vec![key_of(&doomed_fact)],
         },
-        DistilledNoteWrite {
-            note: MaterializedNote {
-                note: spared.clone(),
-                source_facts: vec![key_of(&doomed_fact), key_of(&surviving_fact)],
-            },
-            audit: distill_audit(b"distill-spared", own_ns.clone()),
+        MaterializedNote {
+            note: spared.clone(),
+            source_facts: vec![key_of(&doomed_fact), key_of(&surviving_fact)],
         },
     ];
     store
-        .materialize_distilled_notes(&written, &[], &now())
+        .seed_notes_for_test(&notes, &now())
         .expect("materialize notes");
+    // The `Distill` tombstone audits are no longer wired by the note-write path: seed them
+    // separately, each subject-bound to the note it produced so the by-subject decode finds it.
+    store
+        .commit_audit(&distill_audit(
+            b"distill-cascading",
+            own_ns.clone(),
+            cascading.identity.id,
+        ))
+        .expect("seed cascading distill audit");
+    store
+        .commit_audit(&distill_audit(
+            b"distill-spared",
+            own_ns.clone(),
+            spared.identity.id,
+        ))
+        .expect("seed spared distill audit");
 
     let outcome = memory
         .erase(&principal, &e.identity.id, &now())
@@ -355,8 +365,8 @@ fn the_episode_fact_note_chain_erases_and_compact_reclaims_it() {
     assert!(is_live(&store, &spared.identity.id, "Note"));
 
     // Audit rows are never closure members: both distill audits survive the purge of
-    // the note they produced (their AUDIT edges severed by the deletion), and the
-    // purge row joins them.
+    // the note they produced (the `Distill` tombstone is subject-bound, not edge-wired,
+    // so the deletion never reaches it), and the purge row joins them.
     assert_eq!(
         store
             .audit_by_kind(AuditKind::Distill, None, 10)

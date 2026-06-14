@@ -439,16 +439,16 @@ mod tests {
     //! in-module where `convert::node_by_id` is reachable. Everything else about the
     //! probe is covered on the public surface in `tests/forget_read.rs`.
 
+    use std::collections::HashMap;
+
     use aionforge_domain::blocks::{Identity, Stats};
     use aionforge_domain::namespace::Namespace;
     use aionforge_domain::nodes::associative::Note;
-    use aionforge_domain::nodes::forensic::{AuditEvent, AuditKind};
     use aionforge_domain::time::Timestamp;
 
     use super::*;
     use crate::config::StoreConfig;
-    use crate::distill::DistilledNoteWrite;
-    use crate::note::MaterializedNote;
+    use crate::note::{MaterializedNote, materialize_notes};
     use crate::relates_to::LinkEdgeWrite;
 
     fn ts(text: &str) -> Timestamp {
@@ -461,14 +461,13 @@ mod tests {
 
     fn seed_note(store: &Store, seed: &[u8]) -> Id {
         let id = Id::from_content_hash(seed);
-        let identity = |id: Id| Identity {
-            id,
-            ingested_at: ts("2026-06-01T09:00:00-05:00[America/Chicago]"),
-            namespace: Namespace::Global,
-            expired_at: None,
-        };
         let note = Note {
-            identity: identity(id),
+            identity: Identity {
+                id,
+                ingested_at: ts("2026-06-01T09:00:00-05:00[America/Chicago]"),
+                namespace: Namespace::Global,
+                expired_at: None,
+            },
             stats: Stats {
                 importance: 0.5,
                 trust: 0.8,
@@ -485,28 +484,26 @@ mod tests {
             embedder_model: None,
             derived_from_episode: None,
         };
-        let audit = AuditEvent {
-            identity: identity(Id::from_content_hash(&[seed, b"-audit"].concat())),
-            kind: AuditKind::Distill,
-            subject_id: id,
-            actor_id: Id::from_content_hash(b"seed"),
-            payload: serde_json::json!({"outcome": "written"}),
-            signature: String::new(),
-            occurred_at: now(),
+        // Seed the note directly through the shared note materializer (no source facts), the
+        // surviving note-write path; the `RELATES_TO` liveness probe below only needs the note
+        // to exist.
+        let materialized = MaterializedNote {
+            note,
+            source_facts: Vec::new(),
         };
-        store
-            .materialize_distilled_notes(
-                &[DistilledNoteWrite {
-                    note: MaterializedNote {
-                        note,
-                        source_facts: Vec::new(),
-                    },
-                    audit,
-                }],
-                &[],
+        let mut txn = store.graph().begin_write();
+        {
+            let mut mutator = txn.mutator();
+            materialize_notes(
+                &mut mutator,
+                std::slice::from_ref(&materialized),
+                &HashMap::new(),
+                &HashMap::new(),
                 &now(),
             )
             .expect("seed note");
+        }
+        txn.commit().expect("commit seed note");
         id
     }
 

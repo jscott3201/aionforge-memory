@@ -83,11 +83,13 @@ pub enum AuditKind {
     /// An episode cluster was summarized into a note (or a summary was skipped to bound
     /// lost detail; the payload's outcome distinguishes the two).
     Summarize,
-    /// An episode cluster was distilled into a note by the optional, off-by-default LLM
-    /// distiller (M3.T08) — the LLM-backed counterpart to [`Summarize`](AuditKind::Summarize),
-    /// kept distinct so distillation lineage and the consolidating model family stay queryable
-    /// for the cross-family guard (07 §T3, M6.T01). The payload records the model identity,
-    /// endpoint, seed, and outcome (written, rejected-lossy, or declined).
+    /// **Retained-for-decode tombstone — no longer emitted.** This variant recorded the
+    /// optional, off-by-default LLM note-distiller (M3.T08), which has since been removed; no
+    /// path in the substrate emits a `Distill` event anymore. The variant is **kept** because it
+    /// is signed/serialized audit vocabulary that older stores may still hold and that the store's
+    /// `distill_models_for` lineage read (along with the erasure-cascade and signing codecs) still
+    /// decodes; deleting it would break reading those historical rows. Any new code should treat it
+    /// as read-only. A live store under deterministic consolidation simply finds zero of these rows.
     Distill,
     /// Note links were evolved.
     LinkEvolve,

@@ -4735,7 +4735,6 @@ Used by:
 - aionforge v0.2.0 — https://github.com/jscott3201/aionforge-memory
 - aionforge-auth v0.2.0 — https://github.com/jscott3201/aionforge-memory
 - aionforge-capture v0.2.0 — https://github.com/jscott3201/aionforge-memory
-- aionforge-chat v0.2.0 — https://github.com/jscott3201/aionforge-memory
 - aionforge-cli v0.2.0 — https://github.com/jscott3201/aionforge-memory
 - aionforge-config v0.2.0 — https://github.com/jscott3201/aionforge-memory
 - aionforge-consolidate v0.2.0 — https://github.com/jscott3201/aionforge-memory

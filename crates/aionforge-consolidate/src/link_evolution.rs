@@ -2,17 +2,17 @@
 //! namespace's live notes and writes non-canonical `RELATES_TO` edges — entirely off the
 //! consolidation cursor.
 //!
-//! This is the link half of the optional LLM layer, the sibling of the
-//! [`Distiller`](crate::Distiller). The deterministic consolidation passes keep producing the
-//! canonical fact and note tier inside the cursor's atomic flip; this driver runs separately — on
-//! demand, at session end, or on a timer — pooling the namespace's live notes, offering each
-//! source note its nearest embedding neighbors as candidates, asking the evolver which
-//! relationships hold, and materializing the survivors through
-//! [`Store::materialize_link_edges`]. Because it never touches an episode or the cursor, enabling
-//! it cannot perturb the byte-deterministic consolidation replay, and a slow or unavailable model
-//! degrades to the deterministic rule tier: the declined call is recorded and no edge lands.
+//! The deterministic consolidation passes keep producing the canonical fact and note tier inside
+//! the cursor's atomic flip; this driver runs separately — on demand, at session end, or on a
+//! timer — pooling the namespace's live notes, offering each source note its nearest embedding
+//! neighbors as candidates, asking the injected [`LinkEvolver`] which relationships hold, and
+//! materializing the survivors through [`Store::materialize_link_edges`]. The shipped evolver is
+//! the deterministic [`RuleLinkEvolver`](crate::RuleLinkEvolver); the seam is generic so a host may
+//! inject another implementation. Because it never touches an episode or the cursor, enabling it
+//! cannot perturb the byte-deterministic consolidation replay, and a slow or unavailable evolver
+//! degrades gracefully: the declined call is recorded and no edge lands.
 //!
-//! Three properties keep an LLM in the loop safe here:
+//! Three properties keep an injected inference evolver safe here (and bound the rule tier too):
 //!
 //! - **Closed vocabulary.** A proposed relationship label must be one of
 //!   [`RELATIONSHIP_VOCABULARY`] — never free text — an anti-injection and anti-drift constraint
@@ -60,11 +60,11 @@ pub const RELATED_TO: &str = "related_to";
 /// How the off-cursor link evolver is tuned. **Off by default** — `enabled` is the binding gate,
 /// so a deployment that never sets it pays nothing and writes no links (M3.T09).
 ///
-/// As with [`DistillationConfig`](crate::DistillationConfig), `endpoint` and `seed` are
-/// **provenance to record, not behavior to drive**: they describe the completer the injected
-/// evolver was built against (which the [`LinkEvolver`] seam does not expose), so the caller
-/// supplies them from the same `CompleterConfig` for the `link_evolve` audit. A mismatch only
-/// misrecords provenance; it cannot change what the model returns.
+/// `endpoint` and `seed` are **provenance to record, not behavior to drive**: they describe the
+/// inference backend an injected evolver was built against (which the [`LinkEvolver`] seam does not
+/// expose), so the caller supplies them for the `link_evolve` audit. They are `None` for the
+/// deterministic [`RuleLinkEvolver`](crate::RuleLinkEvolver), and a mismatch only misrecords
+/// provenance; it cannot change what an evolver returns.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LinkEvolveConfig {
     /// Whether link evolution runs at all. **Default `false`.**
@@ -218,9 +218,10 @@ impl<L: LinkEvolver> LinkEvolvePass<L> {
             }
 
             // The cross-family guard (07 §3, M6.T01), per source note BEFORE the
-            // model call: the source's writer set unions its underlying episode
-            // writers and, for a distilled note, the model that authored it — so a
-            // two-hop launder (distill with X, evolve with X) cannot pass.
+            // evolver call: the source's writer set unions its underlying episode
+            // writers with any model recorded as having authored the note (via the
+            // note's lineage), so an inference evolver cannot relate notes that share
+            // its own family.
             let writers = store.writer_families_for_note(&source.identity.id)?;
             match guard.evaluate(&writers) {
                 GuardDecision::NotInference | GuardDecision::Pass => {}

@@ -13,7 +13,6 @@ members = [
     "crates/aionforge-config",       # layered configuration (file + env + flags); produces StoreConfig
     "crates/aionforge-auth",         # L2 — OIDC/JWKS discovery + RS256-pinned JWT validator (PR2, fork#3)
     "crates/aionforge-embed",        # L2 — OpenAI-compatible embedding/rerank client
-    "crates/aionforge-chat",         # L2 — multi-provider chat-completion client (OpenAI/Anthropic/open)
     "crates/aionforge-capture",      # L2 — fast capture path
     "crates/aionforge-retrieval",    # L2 — hybrid retrieval + fusion + router + recall bundle
     "crates/aionforge-consolidate",  # L2 — asynchronous consolidation

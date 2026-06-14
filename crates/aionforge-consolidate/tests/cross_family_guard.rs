@@ -1,37 +1,27 @@
 //! Driver-level acceptance for the cross-family guard wiring (07 §3, M6.T01): the
-//! distiller and the link-evolution pass refuse (or warn through) a same-family or
-//! unverifiable item BEFORE the model call, write the `subliminal_guard_warning`
-//! audit row, and leave clean cross-family work untouched. The substrate-level
-//! probe through the engine facade is the M6.T01 acceptance test; these pin the
-//! enforcement point itself.
+//! link-evolution pass refuses (or warns through) a same-family or unverifiable item
+//! BEFORE the evolver call, writes the `subliminal_guard_warning` audit row, and
+//! leaves clean cross-family work untouched. The substrate-level probe through the
+//! engine facade is the M6.T01 acceptance test; these pin the enforcement point
+//! itself. The shipped consolidation path is deterministic; the guard is exercised
+//! through an in-test inference-evolver double that declares a model family.
 
 use std::future::Future;
 use std::sync::Arc;
 
-use aionforge_consolidate::{
-    ConsolidationConfig, Consolidator, DistillationConfig, Distiller, FactExtractionPass,
-    LinkEvolveConfig, LinkEvolvePass, PassConfig, RuleExtractor, RuleSummarizer,
-    SummarizationConfig,
-};
+use aionforge_consolidate::{LinkEvolveConfig, LinkEvolvePass};
 use aionforge_domain::blocks::{Identity, Stats};
-use aionforge_domain::contracts::{
-    EvolvedLink, LinkEvolver, LinkEvolverIdentity, SummarizationCluster, Summarizer,
-    SummarizerIdentity, SummaryOutput,
-};
-use aionforge_domain::embedding::{EmbedderModel, Embedding};
-use aionforge_domain::ids::{ContentHash, Id};
+use aionforge_domain::contracts::{EvolvedLink, LinkEvolver, LinkEvolverIdentity};
+use aionforge_domain::embedding::Embedding;
+use aionforge_domain::ids::Id;
 use aionforge_domain::namespace::Namespace;
 use aionforge_domain::nodes::associative::Note;
-use aionforge_domain::nodes::episodic::{ConsolidationState, Episode, Origin, Role};
 use aionforge_domain::nodes::forensic::{AuditEvent, AuditKind};
 use aionforge_domain::time::Timestamp;
 use aionforge_security::GuardMode;
-use aionforge_store::{
-    BoundQuery, DistilledNoteWrite, MaterializedNote, QueryResult, Store, StoreConfig, Value,
-};
+use aionforge_store::{BoundQuery, MaterializedNote, QueryResult, Store, StoreConfig, Value};
 
 const DIM: usize = 4;
-const EPISODE: &str = "Alice works on Aionforge. Alice is based in NYC. Alice prefers Rust.";
 
 fn ts(text: &str) -> Timestamp {
     text.parse().expect("valid zoned datetime literal")
@@ -52,95 +42,10 @@ fn store() -> Arc<Store> {
     Arc::new(store)
 }
 
-#[derive(Clone)]
-struct FlatEmbedder {
-    model: EmbedderModel,
-}
-
-impl FlatEmbedder {
-    fn new() -> Self {
-        Self {
-            model: EmbedderModel {
-                family: "flat-fake".to_string(),
-                version: "1".to_string(),
-                dimension: DIM as u32,
-            },
-        }
-    }
-}
-
-impl aionforge_domain::contracts::Embedder for FlatEmbedder {
-    type Error = std::convert::Infallible;
-
-    fn embed(
-        &self,
-        inputs: &[String],
-    ) -> impl Future<Output = Result<Vec<Embedding>, Self::Error>> + Send {
-        let out: Vec<Embedding> = inputs
-            .iter()
-            .map(|_| Embedding::new(vec![1.0, 0.0, 0.0, 0.0]).expect("valid"))
-            .collect();
-        async move { Ok(out) }
-    }
-
-    fn model(&self) -> &EmbedderModel {
-        &self.model
-    }
-}
-
-/// A summarizer that always condenses faithfully, declaring a chosen family.
-struct FakeSummarizer {
-    identity: SummarizerIdentity,
-}
-
-impl FakeSummarizer {
-    fn with_family(family: &str) -> Self {
-        Self {
-            identity: SummarizerIdentity {
-                model_family: Some(family.to_string()),
-                model_version: Some("1".to_string()),
-                rule_version: "fake-distill-v1".to_string(),
-            },
-        }
-    }
-}
-
-impl Summarizer for FakeSummarizer {
-    type Error = std::convert::Infallible;
-
-    fn summarize(
-        &self,
-        cluster: &SummarizationCluster,
-    ) -> impl Future<Output = Result<Option<SummaryOutput>, Self::Error>> + Send {
-        // A faithful echo naming every entity, so detail retention always passes
-        // and the only thing deciding the outcome is the guard.
-        let content = format!(
-            "{}: {}",
-            cluster.entity_names.join(", "),
-            cluster
-                .facts
-                .iter()
-                .map(|f| f.statement.clone())
-                .collect::<Vec<_>>()
-                .join(" ")
-        );
-        let keywords = cluster.entity_names.clone();
-        async move {
-            Ok(Some(SummaryOutput {
-                content,
-                keywords,
-                context: None,
-            }))
-        }
-    }
-
-    fn identity(&self) -> &SummarizerIdentity {
-        &self.identity
-    }
-}
-
 /// An evolver that always proposes a link to the first candidate, declaring a
-/// chosen family.
+/// chosen family — the in-test stand-in for an inference-backed evolver, so the
+/// guard (and only the guard) decides the outcome. Implements [`LinkEvolver`]
+/// directly; it never touches a chat/completion client.
 struct FakeEvolver {
     identity: LinkEvolverIdentity,
 }
@@ -180,80 +85,6 @@ impl LinkEvolver for FakeEvolver {
     }
 }
 
-/// Insert a raw episode whose origin declares `family` as the writer (or nothing).
-fn insert_episode(store: &Store, ns: &Namespace, family: Option<&str>) {
-    let at = ts("2026-06-10T09:00:00-05:00[America/Chicago]");
-    let episode = Episode {
-        identity: Identity {
-            id: Id::generate(),
-            ingested_at: at.clone(),
-            namespace: ns.clone(),
-            expired_at: None,
-        },
-        stats: Stats {
-            importance: 0.5,
-            trust: 0.9,
-            last_access: at.clone(),
-            access_count_recent: 0,
-            referenced_count: 0,
-            surprise: 0.0,
-            is_pinned: false,
-        },
-        content: EPISODE.to_string(),
-        role: Role::User,
-        captured_at: at,
-        agent_id: Id::generate(),
-        session_id: None,
-        content_hash: ContentHash::of(EPISODE.as_bytes()),
-        embedding: None,
-        embedder_model: None,
-        consolidation_state: ConsolidationState::Raw,
-        origin: family.map(|f| Origin {
-            model_family: Some(f.to_string()),
-            model_version: None,
-            transport: None,
-            request_id: None,
-            redactions: Vec::new(),
-            injection_flags: Vec::new(),
-            capture_latency_ms: None,
-            supersedes: None,
-        }),
-    };
-    store.insert_episode(&episode).expect("insert episode");
-}
-
-/// Consolidate the seeded episode into current facts (cursor summarization off).
-async fn populate_facts(store: &Arc<Store>, ns: &Namespace, family: Option<&str>) {
-    insert_episode(store, ns, family);
-    let pass_config = PassConfig {
-        summarization: SummarizationConfig {
-            enabled: false,
-            ..SummarizationConfig::default()
-        },
-        ..PassConfig::default()
-    };
-    let mut consolidator = Consolidator::new(Arc::clone(store), ConsolidationConfig::default());
-    consolidator.register(Box::new(FactExtractionPass::new(
-        Arc::new(RuleExtractor::with_default_rules()),
-        Arc::new(FlatEmbedder::new()),
-        Arc::new(RuleSummarizer::with_default_rules()),
-        pass_config,
-    )));
-    loop {
-        let report = consolidator.tick_once().await.expect("tick");
-        if report.pending_after == 0 {
-            break;
-        }
-    }
-}
-
-fn distill_config() -> DistillationConfig {
-    DistillationConfig {
-        enabled: true,
-        ..DistillationConfig::default()
-    }
-}
-
 fn count(store: &Store, pattern: &str) -> u64 {
     match store.execute(&BoundQuery::new(pattern)).expect("count") {
         QueryResult::Rows(rows) => match rows.value(0, 0) {
@@ -263,10 +94,6 @@ fn count(store: &Store, pattern: &str) -> u64 {
         },
         _ => 0,
     }
-}
-
-fn note_count(store: &Store) -> u64 {
-    count(store, "MATCH (n:Note) RETURN count(n) AS n")
 }
 
 fn guard_rows(store: &Store) -> u64 {
@@ -296,7 +123,10 @@ fn guard_payloads(store: &Store) -> Vec<String> {
 }
 
 /// Seed a live, embedded note whose `Distill` audit declares `distilled_by` as the
-/// authoring model (the two-hop launder surface).
+/// authoring model (the two-hop launder surface). The note is written through the
+/// surviving note materializer, and a `Distill`-kind audit anchored on the note id
+/// hand-seeds the retained-for-decode tombstone that the note-lineage / writer-family
+/// union reads — so the launder coverage stands without the removed distiller.
 fn seed_note(store: &Store, seed: &[u8], ns: &Namespace, distilled_by: &str) -> Id {
     let id = Id::from_content_hash(seed);
     let note = Note {
@@ -322,6 +152,20 @@ fn seed_note(store: &Store, seed: &[u8], ns: &Namespace, distilled_by: &str) -> 
         embedder_model: None,
         derived_from_episode: None,
     };
+    store
+        .seed_notes_for_test(
+            &[MaterializedNote {
+                note,
+                source_facts: Vec::new(),
+            }],
+            &now(),
+        )
+        .expect("seed note");
+
+    // Hand-seed the retained `Distill` tombstone, anchored on the note id so the
+    // by-subject lineage union decodes the authoring model — what the two-hop launder
+    // guard reads. (`AuditKind::Distill` is no longer emitted anywhere; this exercises
+    // the decode path that survives.)
     let audit = AuditEvent {
         identity: Identity {
             id: Id::from_content_hash(&[seed, b"-seed-audit"].concat()),
@@ -336,118 +180,8 @@ fn seed_note(store: &Store, seed: &[u8], ns: &Namespace, distilled_by: &str) -> 
         signature: String::new(),
         occurred_at: now(),
     };
-    store
-        .materialize_distilled_notes(
-            &[DistilledNoteWrite {
-                note: MaterializedNote {
-                    note,
-                    source_facts: Vec::new(),
-                },
-                audit,
-            }],
-            &[],
-            &now(),
-        )
-        .expect("seed note");
+    store.commit_audit(&audit).expect("seed distill tombstone");
     id
-}
-
-#[tokio::test]
-async fn a_same_family_cluster_is_refused_before_the_model_and_audited() {
-    let store = store();
-    let ns = Namespace::Agent("alice".to_string());
-    // The writers declare the bare family; the distiller declares the full id —
-    // the boundary-prefix rule must still catch it.
-    populate_facts(&store, &ns, Some("claude")).await;
-
-    let distiller = Distiller::new(
-        FakeSummarizer::with_family("claude-sonnet-4-6"),
-        Arc::new(FlatEmbedder::new()),
-        distill_config(),
-        GuardMode::Refuse,
-    );
-    let report = distiller.distill(&store, &ns, &now()).await.expect("run");
-
-    assert!(report.guard_refused >= 1, "the cluster is refused");
-    assert_eq!(report.notes_written, 0, "nothing was condensed");
-    assert_eq!(note_count(&store), 0, "no distilled note exists");
-    assert_eq!(report.declined, 0, "the model was never consulted");
-    let payloads = guard_payloads(&store);
-    assert!(!payloads.is_empty(), "the refusal is audited");
-    assert!(
-        payloads.iter().all(|p| p.contains("refused")
-            && p.contains("same_family")
-            && p.contains("distill")
-            && p.contains("claude")),
-        "the row names the action, reason, rule, and family: {payloads:?}"
-    );
-}
-
-#[tokio::test]
-async fn warn_mode_condenses_anyway_but_audits_the_finding() {
-    let store = store();
-    let ns = Namespace::Agent("alice".to_string());
-    populate_facts(&store, &ns, Some("claude")).await;
-
-    let distiller = Distiller::new(
-        FakeSummarizer::with_family("claude-sonnet-4-6"),
-        Arc::new(FlatEmbedder::new()),
-        distill_config(),
-        GuardMode::Warn,
-    );
-    let report = distiller.distill(&store, &ns, &now()).await.expect("run");
-
-    assert_eq!(report.guard_refused, 0, "warn mode refuses nothing");
-    assert!(report.notes_written >= 1, "the note is still written");
-    assert!(note_count(&store) >= 1);
-    let payloads = guard_payloads(&store);
-    assert!(
-        payloads.iter().any(|p| p.contains("warned")),
-        "the finding is audited as a warning: {payloads:?}"
-    );
-}
-
-#[tokio::test]
-async fn an_unverifiable_writer_is_refused_fail_closed() {
-    let store = store();
-    let ns = Namespace::Agent("alice".to_string());
-    // No origin, no provenance record, no enrolled agent: nobody can vouch.
-    populate_facts(&store, &ns, None).await;
-
-    let distiller = Distiller::new(
-        FakeSummarizer::with_family("claude-sonnet-4-6"),
-        Arc::new(FlatEmbedder::new()),
-        distill_config(),
-        GuardMode::Refuse,
-    );
-    let report = distiller.distill(&store, &ns, &now()).await.expect("run");
-
-    assert!(report.guard_refused >= 1);
-    assert_eq!(note_count(&store), 0);
-    let payloads = guard_payloads(&store);
-    assert!(
-        payloads.iter().all(|p| p.contains("unverifiable_writer")),
-        "unverifiable, never 'differs': {payloads:?}"
-    );
-}
-
-#[tokio::test]
-async fn cross_family_distillation_passes_with_no_guard_rows() {
-    let store = store();
-    let ns = Namespace::Agent("alice".to_string());
-    populate_facts(&store, &ns, Some("gpt-5")).await;
-
-    let distiller = Distiller::new(
-        FakeSummarizer::with_family("claude-sonnet-4-6"),
-        Arc::new(FlatEmbedder::new()),
-        distill_config(),
-        GuardMode::Refuse,
-    );
-    let report = distiller.distill(&store, &ns, &now()).await.expect("run");
-
-    assert_eq!(report.guard_refused, 0);
-    assert!(report.notes_written >= 1, "clean work is untouched");
-    assert_eq!(guard_rows(&store), 0, "no guard row for a clean pass");
 }
 
 #[tokio::test]
@@ -490,6 +224,60 @@ async fn the_two_hop_launder_is_refused_at_link_evolution() {
 }
 
 #[tokio::test]
+async fn an_unverifiable_note_is_refused_fail_closed() {
+    let store = store();
+    let ns = Namespace::Agent("alice".to_string());
+    // Notes with no authoring-model provenance and no underlying episode writers:
+    // nobody can vouch for the source family, so the guard refuses fail-closed.
+    seed_note(&store, b"unverifiable-a", &ns, "");
+    seed_note(&store, b"unverifiable-b", &ns, "");
+
+    let pass = LinkEvolvePass::new(
+        FakeEvolver::with_family("mock"),
+        LinkEvolveConfig {
+            enabled: true,
+            ..LinkEvolveConfig::default()
+        },
+        GuardMode::Refuse,
+    );
+    let report = pass.evolve_links(&store, &ns, &now()).await.expect("run");
+
+    assert!(report.guard_refused >= 1);
+    assert_eq!(report.links_created, 0);
+    let payloads = guard_payloads(&store);
+    assert!(
+        payloads.iter().all(|p| p.contains("unverifiable_writer")),
+        "unverifiable, never 'differs': {payloads:?}"
+    );
+}
+
+#[tokio::test]
+async fn warn_mode_proceeds_anyway_but_audits_the_finding() {
+    let store = store();
+    let ns = Namespace::Agent("alice".to_string());
+    seed_note(&store, b"warn-a", &ns, "mock-large");
+    seed_note(&store, b"warn-b", &ns, "mock-large");
+
+    let pass = LinkEvolvePass::new(
+        FakeEvolver::with_family("mock"),
+        LinkEvolveConfig {
+            enabled: true,
+            ..LinkEvolveConfig::default()
+        },
+        GuardMode::Warn,
+    );
+    let report = pass.evolve_links(&store, &ns, &now()).await.expect("run");
+
+    assert_eq!(report.guard_refused, 0, "warn mode refuses nothing");
+    assert!(report.links_created >= 1, "the link is still drawn");
+    let payloads = guard_payloads(&store);
+    assert!(
+        payloads.iter().any(|p| p.contains("warned")),
+        "the finding is audited as a warning: {payloads:?}"
+    );
+}
+
+#[tokio::test]
 async fn cross_family_link_evolution_passes() {
     let store = store();
     let ns = Namespace::Agent("alice".to_string());
@@ -512,27 +300,29 @@ async fn cross_family_link_evolution_passes() {
 }
 
 #[tokio::test]
-async fn a_refused_cluster_audits_idempotently_across_reruns() {
+async fn a_refused_source_audits_idempotently_across_reruns() {
     let store = store();
     let ns = Namespace::Agent("alice".to_string());
-    populate_facts(&store, &ns, Some("claude")).await;
+    seed_note(&store, b"idem-a", &ns, "mock-large");
+    seed_note(&store, b"idem-b", &ns, "mock-large");
 
-    let distiller = Distiller::new(
-        FakeSummarizer::with_family("claude-sonnet-4-6"),
-        Arc::new(FlatEmbedder::new()),
-        distill_config(),
+    let pass = LinkEvolvePass::new(
+        FakeEvolver::with_family("mock"),
+        LinkEvolveConfig {
+            enabled: true,
+            ..LinkEvolveConfig::default()
+        },
         GuardMode::Refuse,
     );
-    distiller.distill(&store, &ns, &now()).await.expect("run");
+    pass.evolve_links(&store, &ns, &now()).await.expect("run");
     let after_first = guard_rows(&store);
-    distiller
-        .distill(
-            &store,
-            &ns,
-            &ts("2026-06-10T13:00:00-05:00[America/Chicago]"),
-        )
-        .await
-        .expect("re-run");
+    pass.evolve_links(
+        &store,
+        &ns,
+        &ts("2026-06-10T13:00:00-05:00[America/Chicago]"),
+    )
+    .await
+    .expect("re-run");
     assert_eq!(
         guard_rows(&store),
         after_first,
