@@ -16,8 +16,11 @@
 use aionforge_domain::blocks::{Identity, Stats};
 use aionforge_domain::edges::RelatesTo;
 use aionforge_domain::ids::Id;
+use aionforge_domain::nodes::associative::Note;
+use aionforge_domain::nodes::core::CoreBlock;
 use aionforge_domain::nodes::episodic::Episode;
-use aionforge_domain::nodes::semantic::Fact;
+use aionforge_domain::nodes::procedural::{BadPattern, Skill};
+use aionforge_domain::nodes::semantic::{Entity, Fact};
 use selene_core::{PropertyMap, Value, db_string};
 use selene_graph::RowIndex;
 use serde::{Deserialize, Serialize};
@@ -88,6 +91,48 @@ pub struct ForgetCandidatePage {
     pub candidates: Vec<ForgetCandidate>,
     /// Where the next page resumes, or `None` when the scan is complete.
     pub next: Option<ForgetCursor>,
+}
+
+/// A memory resolved to its full typed body, tagged by lifecycle kind — the read-side
+/// counterpart to [`ForgetCandidate`].
+///
+/// Where [`ForgetCandidate`] carries only the [`Identity`]/[`Stats`] blocks the forgetting
+/// gates read, this carries the *whole* decoded node so a by-id read (`read_memory`) can
+/// render it per kind. Every variant composes [`Identity`], so [`ResolvedMemory::identity`]
+/// yields the namespace/expiry a visibility gate needs without re-matching the kind.
+#[derive(Debug, Clone)]
+pub enum ResolvedMemory {
+    /// An episodic turn.
+    Episode(Episode),
+    /// A canonical semantic fact.
+    Fact(Fact),
+    /// A canonical entity.
+    Entity(Entity),
+    /// An associative note.
+    Note(Note),
+    /// A versioned procedural skill.
+    Skill(Skill),
+    /// A negative procedural memory (recorded failure mode).
+    BadPattern(BadPattern),
+    /// An identity-tier core block (persona/commitment/redline).
+    Core(CoreBlock),
+}
+
+impl ResolvedMemory {
+    /// The shared [`Identity`] block, regardless of kind — the namespace and expiry a
+    /// visibility gate reads.
+    #[must_use]
+    pub fn identity(&self) -> &Identity {
+        match self {
+            Self::Episode(memory) => &memory.identity,
+            Self::Fact(memory) => &memory.identity,
+            Self::Entity(memory) => &memory.identity,
+            Self::Note(memory) => &memory.identity,
+            Self::Skill(memory) => &memory.identity,
+            Self::BadPattern(memory) => &memory.identity,
+            Self::Core(memory) => &memory.identity,
+        }
+    }
 }
 
 impl Store {
@@ -218,6 +263,65 @@ impl Store {
                 identity,
                 stats,
             }));
+        }
+        Ok(None)
+    }
+
+    /// The full typed memory carrying `id` under the first of `labels` that has it,
+    /// decoded under a **single** snapshot — the read-side point resolver behind
+    /// `read_memory`.
+    ///
+    /// Two properties make this the read counterpart to [`Store::memory_by_id`] rather than
+    /// a thin wrapper over it:
+    ///
+    /// 1. It returns the whole decoded body ([`ResolvedMemory`]), not just the gate blocks,
+    ///    so the caller can render per kind.
+    /// 2. It resolves the node **and** decodes its body within one `graph().read()`
+    ///    snapshot. A resolve-then-decode chain across two snapshots (e.g. `memory_by_id`
+    ///    followed by a `*_by_node_id` decode) opens a window in which a node forgotten
+    ///    between the two reads still decodes — the visibility gate would then read
+    ///    `expired_at` from a *different* snapshot than the one that produced the body. One
+    ///    snapshot makes the gate's expiry check provably consistent with the rendered body.
+    ///
+    /// Like `memory_by_id` it does **not** itself filter `expired_at`: the caller's
+    /// visibility gate owns that decision (a by-id read must drop an expired node without
+    /// leaking that it merely "exists but is forgotten"). Ids are unique per kind and the
+    /// label set is disjoint by construction, so first-hit is the only hit; an unrecognized
+    /// label is skipped.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if a lookup or block decode fails.
+    pub fn resolved_memory_by_id(
+        &self,
+        id: &Id,
+        labels: &[&str],
+    ) -> Result<Option<ResolvedMemory>, StoreError> {
+        let snapshot = self.graph().read();
+        for label in labels {
+            let Some(node) = convert::node_by_id(&snapshot, label, id)? else {
+                continue;
+            };
+            let Some(props) = snapshot.node_properties(node) else {
+                continue;
+            };
+            // Decode the kind's full body off the props already in hand, under this same
+            // snapshot. The match is exhaustive over MCP-surfaced labels; any other label
+            // (an edge kind, an internal node) is not a readable memory and is skipped.
+            let resolved = match *label {
+                Episode::LABEL => ResolvedMemory::Episode(crate::episode::from_properties(props)?),
+                Fact::LABEL => ResolvedMemory::Fact(crate::fact::from_properties(props)?),
+                Entity::LABEL => ResolvedMemory::Entity(crate::entity::from_properties(props)?),
+                Note::LABEL => ResolvedMemory::Note(crate::note::from_properties(props)?),
+                Skill::LABEL => ResolvedMemory::Skill(crate::skill::from_properties(props)?),
+                BadPattern::LABEL => {
+                    ResolvedMemory::BadPattern(crate::bad_pattern::from_properties(props)?)
+                }
+                CoreBlock::LABEL => {
+                    ResolvedMemory::Core(crate::core_block::from_properties(props)?)
+                }
+                _ => continue,
+            };
+            return Ok(Some(resolved));
         }
         Ok(None)
     }

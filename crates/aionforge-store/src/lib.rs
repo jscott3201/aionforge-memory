@@ -76,7 +76,9 @@ pub use doctor::{
 };
 pub use drift_read::BehaviorVector;
 pub use error::StoreError;
-pub use forget_read::{FORGET_SCAN_LABELS, ForgetCandidate, ForgetCandidatePage, ForgetCursor};
+pub use forget_read::{
+    FORGET_SCAN_LABELS, ForgetCandidate, ForgetCandidatePage, ForgetCursor, ResolvedMemory,
+};
 pub use forget_write::ForgetWrite;
 pub use gql::{BoundQuery, QueryResult, Rows};
 pub use indexes::{VectorIndexInfo, VectorIndexStats};
