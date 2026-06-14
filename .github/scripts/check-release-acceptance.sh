@@ -117,7 +117,7 @@ require_grep "Dockerfile" "USER 10001:10001" "non-root runtime user"
 require_grep "Dockerfile" "chmod 700 /data" "owner-only container data dir"
 require_grep "Dockerfile" 'CMD ["serve", "http", "--listen", "0.0.0.0:3918", "--data-dir", "/data"]' \
   "local HTTP default command"
-require_grep "Dockerfile.release" "FROM alpine:" "release Alpine runtime image"
+require_grep "Dockerfile.release" "FROM debian:bookworm-slim AS runtime" "release Debian runtime image"
 require_grep "Dockerfile.release" "USER 10001:10001" "release non-root runtime user"
 require_grep "Dockerfile.release" "chmod 700 /data" "release owner-only container data dir"
 require_grep "Dockerfile.release" 'CMD ["serve", "http", "--listen", "0.0.0.0:3918", "--data-dir", "/data"]' \
