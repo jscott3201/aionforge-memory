@@ -3,10 +3,11 @@
 //! which relationships hold, and writes bi-temporal `RELATES_TO` edges with `link_evolve`
 //! provenance — entirely off the consolidation cursor.
 //!
-//! Hermetic: notes are seeded through the public distilled-note write path with explicit
-//! embeddings, the deterministic [`RuleLinkEvolver`] drives the proximity path, and a small
-//! `MockEvolver` drives the create / revise / decline / empty / dedup / membership / cap /
-//! vocabulary paths with canned proposals.
+//! Hermetic: notes are seeded through the store's note materializer with explicit embeddings
+//! (plus a hand-seeded `Distill` tombstone recording each note's writer family for the
+//! cross-family guard), the deterministic [`RuleLinkEvolver`] drives the proximity path, and a
+//! small `MockEvolver` drives the create / revise / decline / empty / dedup / membership / cap /
+//! vocabulary paths with canned proposals. No chat/completion client is involved.
 
 use std::convert::Infallible;
 use std::future::Future;
@@ -21,9 +22,7 @@ use aionforge_domain::nodes::associative::Note;
 use aionforge_domain::nodes::forensic::{AuditEvent, AuditKind};
 use aionforge_domain::time::Timestamp;
 use aionforge_security::GuardMode;
-use aionforge_store::{
-    BoundQuery, DistilledNoteWrite, MaterializedNote, QueryResult, Store, StoreConfig, Value,
-};
+use aionforge_store::{BoundQuery, MaterializedNote, QueryResult, Store, StoreConfig, Value};
 
 const DIM: usize = 4;
 
@@ -93,6 +92,22 @@ fn seed_note_opt(store: &Store, seed: &[u8], ns: &Namespace, embedding: Option<[
         embedder_model: None,
         derived_from_episode: None,
     };
+    // Write the note through the surviving note materializer.
+    store
+        .seed_notes_for_test(
+            &[MaterializedNote {
+                note,
+                source_facts: Vec::new(),
+            }],
+            &now(),
+        )
+        .expect("seed note");
+
+    // Hand-seed a retained `Distill` tombstone anchored on the note id; the recorded model
+    // doubles as the note's writer family for the cross-family guard (07 §3). "writer-fake"
+    // differs from MockEvolver's "mock", so a clean cross-family pass is not refused. The
+    // `Distill` audit kind is no longer emitted by any path — this exercises the surviving
+    // by-subject lineage decode the guard reads.
     let audit = AuditEvent {
         identity: Identity {
             id: Id::from_content_hash(&[seed, b"-seed-audit"].concat()),
@@ -103,25 +118,11 @@ fn seed_note_opt(store: &Store, seed: &[u8], ns: &Namespace, embedding: Option<[
         kind: AuditKind::Distill,
         subject_id: id,
         actor_id: Id::from_content_hash(b"seed"),
-        // The recorded distilling model doubles as the note's writer family for the
-        // cross-family guard (07 §3); "writer-fake" differs from MockEvolver's "mock".
         payload: serde_json::json!({"outcome": "written", "model_family": "writer-fake"}),
         signature: String::new(),
         occurred_at: now(),
     };
-    store
-        .materialize_distilled_notes(
-            &[DistilledNoteWrite {
-                note: MaterializedNote {
-                    note,
-                    source_facts: Vec::new(),
-                },
-                audit,
-            }],
-            &[],
-            &now(),
-        )
-        .expect("seed note");
+    store.commit_audit(&audit).expect("seed distill tombstone");
     id
 }
 

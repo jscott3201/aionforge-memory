@@ -38,8 +38,6 @@ The workspace is intentionally layered and acyclic:
 - `crates/aionforge-auth`: OIDC/JWKS discovery and an RS256-pinned JWT validator
   (OAuth resource-server support; default-off).
 - `crates/aionforge-embed`: OpenAI-compatible embedding and rerank client.
-- `crates/aionforge-chat`: multi-provider chat-completion client for optional
-  LLM-backed layers, kept off the deterministic canonical path.
 - `crates/aionforge-capture`: fast capture path, redaction, injection filtering,
   deduplication, embedding, and provenance recording.
 - `crates/aionforge-retrieval`: hybrid recall, router, rank fusion, graph

@@ -10,8 +10,8 @@ homepage.workspace = true
 description = "Optional read-only ratatui operator TUI for Aionforge Memory."
 
 [dependencies]
-aionforge-engine = { path = "../aionforge-engine", version = "0.2.0" }
-aionforge-domain = { path = "../aionforge-domain", version = "0.2.0" }
+aionforge-engine = { path = "../aionforge-engine", version = "0.2.1" }
+aionforge-domain = { path = "../aionforge-domain", version = "0.2.1" }
 
 [lints]
 workspace = true

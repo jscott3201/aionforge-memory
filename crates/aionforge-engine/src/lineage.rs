@@ -2,11 +2,12 @@
 //!
 //! Split out of `lib.rs` (which sits against the file-size cap). One read: the
 //! "lineage and model identity queryable via `DERIVED_FROM` + provenance" acceptance
-//! surface for distilled notes — sources, producing model, writer families, and the
+//! surface for derived notes — sources, producing model, writer families, and the
 //! structural non-canonical marker — assembled by the store from records that all
-//! already exist. Always available: lineage answers "where did this note come from",
-//! which must stay readable whether or not the guard (or distillation itself) is
-//! enabled.
+//! already exist. The producing-model read decodes any retained `Distill` provenance
+//! audit (none under the deterministic, rule-based consolidation that ships, so it is
+//! `None` for a rule summary). Always available: lineage answers "where did this note
+//! come from", which must stay readable whether or not the guard is enabled.
 
 use aionforge_domain::contracts::Embedder;
 use aionforge_domain::ids::Id;

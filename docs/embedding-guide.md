@@ -76,28 +76,10 @@ The important operator rules are:
 See [Retrieval](retrieval.md), [Graph signals](graph-signals.md), and
 [Operations and recovery](operations-recovery.md) for the full mechanics.
 
-## Optional completion provider
+## No completion provider
 
-The chat/completion client is separate from embeddings and is off by default. It
-exists for opt-in LLM distillation and link evolution:
-
-```toml
-[completer]
-enabled = true
-provider = "openai_chat"
-endpoint = "https://api.example.com/v1"
-model = "chat-model-id"
-api_key_env = "AIONFORGE_COMPLETER_API_KEY"
-timeout_ms = 60000
-max_tokens = 4096
-```
-
-Supported provider wire formats are `openai_chat`, `openai_responses`, and
-`anthropic`. A deployment declares one provider and one model; there is no
-cost-first auto-routing. Optional LLM output is non-canonical, off the
-consolidation cursor, and cannot perturb byte-identical capture or recall.
-
-The distillation quality benchmark is deferred with M7. Until that lands, LLM
-distillation is experimental and off by default. See
-[Completion client](completion-client.md), [LLM distillation](distillation.md),
-and [Honest scope and deferred work](honest-scope.md).
+A deployment configures exactly one provider: the embedder above. Consolidation —
+fact extraction, summarization, skill induction, and note
+[link evolution](link-evolution.md) — is deterministic and rule-based, so it calls
+no chat/completion model and there is no completion provider to configure. See
+[Honest scope and deferred work](honest-scope.md) for the determinism boundary.

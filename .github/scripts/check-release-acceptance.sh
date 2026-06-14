@@ -147,8 +147,10 @@ require_grep "docs/security-model.md" "signed_writes = true" "security model pro
 require_grep "docs/operations-recovery.md" "WAL-backed" "WAL-backed recovery docs"
 require_grep "docs/operations-recovery.md" "snapshot publication" "snapshot/WAL boundary docs"
 require_grep "docs/honest-scope.md" "M7 is deferred" "M7 deferral docs"
-require_grep "docs/honest-scope.md" "LLM distillation | Experimental, off by default" \
-  "LLM distillation honest scope"
+require_grep "docs/honest-scope.md" "LLM-backed consolidation | Not shipped" \
+  "deterministic-only consolidation honest scope"
+require_grep "docs/honest-scope.md" "cross-family consolidation guard remains" \
+  "cross-family guard honest scope"
 require_grep "docs/honest-scope.md" "Cost-first routing | Not supported" \
   "no cost-first routing claim"
 require_grep "docs/honest-scope.md" "Experiential hand-off | Not shipped" \

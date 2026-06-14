@@ -3,7 +3,7 @@ name: work-tracking
 description: Track tasks, blockers, TODOs, plans, and follow-ups as durable Aionforge Memory work items. Use proactively when a multi-step task, backlog, plan, or handoff appears, and whenever the user mentions tasks, status, or what is left to do. Work items are persistent and status-tracked, distinct from decaying memory episodes.
 license: MIT OR Apache-2.0
 metadata:
-  aionforge-version: "0.2.0"
+  aionforge-version: "0.2.1"
 ---
 
 # Work Tracking

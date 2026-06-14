@@ -23,6 +23,8 @@ use crate::convert::{
 };
 use crate::error::StoreError;
 use crate::materialize::{FactKey, derived_from_props, ensure_edge, resolve_instruction_fact};
+#[cfg(feature = "test-support")]
+use crate::store::Store;
 
 // Identity block (§3).
 const ID: &str = "id";
@@ -173,8 +175,8 @@ pub(crate) fn from_properties(props: &PropertyMap) -> Result<Note, StoreError> {
 /// dropping just that lineage edge (logged) so one bad key cannot wedge the whole commit.
 ///
 /// Returns the node of each note in input order, so a caller that must wire something else to
-/// the note it just wrote (the off-cursor distiller's `AuditEvent -AUDIT-> Note` provenance
-/// edge, [`crate::distill`]) need not re-probe. The cursor path ignores the return.
+/// the note it just wrote (e.g. an `AuditEvent -AUDIT-> Note` provenance edge) need not re-probe.
+/// The cursor path ignores the return.
 pub(crate) fn materialize_notes(
     mutator: &mut Mutator<'_, '_>,
     notes: &[MaterializedNote],
@@ -212,6 +214,43 @@ pub(crate) fn materialize_notes(
         note_nodes.push(note_node);
     }
     Ok(note_nodes)
+}
+
+#[cfg(feature = "test-support")]
+impl Store {
+    /// Test-support: write a batch of `Note` nodes (and their `DERIVED_FROM` lineage to any
+    /// already-committed source facts) in one fresh write transaction, through the same
+    /// [`materialize_notes`] path the consolidation cursor uses.
+    ///
+    /// **Doc-hidden and for tests only.** It exists so integration tests in sibling crates can
+    /// seed standalone `Note` nodes (with explicit embeddings, off any episode/cursor) without
+    /// driving a full consolidation flip. It is content-addressed and deduped by id, so a re-run
+    /// writes no second copy. It never touches an episode, cursor, or `consolidation_state`.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if a translation, a mutation, or the commit fails.
+    #[doc(hidden)]
+    pub fn seed_notes_for_test(
+        &self,
+        notes: &[MaterializedNote],
+        now: &Timestamp,
+    ) -> Result<Vec<NodeId>, StoreError> {
+        let empty_fact_nodes: HashMap<String, NodeId> = HashMap::new();
+        let empty_canonical: HashMap<Id, Id> = HashMap::new();
+        let mut txn = self.graph().begin_write();
+        let nodes = {
+            let mut mutator = txn.mutator();
+            materialize_notes(
+                &mut mutator,
+                notes,
+                &empty_fact_nodes,
+                &empty_canonical,
+                now,
+            )?
+        };
+        txn.commit()?;
+        Ok(nodes)
+    }
 }
 
 /// Find a summary note already written with this content-addressed id, returning its node.

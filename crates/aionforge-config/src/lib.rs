@@ -61,9 +61,8 @@ mod server;
 
 pub use auth::{AuthConfig, IssuerConfig};
 pub use config::{
-    CategoryPromotionRule, CompleterConfig, Config, DecayConfig, EmbedderConfig, PersistenceConfig,
-    PromotionConfig, ReliabilityConfig, RetrievalConfig, SecurityConfig,
-    endpoint_transport_is_allowed,
+    CategoryPromotionRule, Config, DecayConfig, EmbedderConfig, PersistenceConfig, PromotionConfig,
+    ReliabilityConfig, RetrievalConfig, SecurityConfig, endpoint_transport_is_allowed,
 };
 pub use core_block::{CoreBlockConfig, CoreEditRuleConfig};
 pub use deployment::DeploymentConfig;

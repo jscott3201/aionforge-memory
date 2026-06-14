@@ -22,16 +22,12 @@ mod audit;
 mod clock;
 mod config;
 mod detect;
-mod distill;
 mod error;
 mod fact_extraction;
 mod lag;
 mod link_evolution;
-mod llm_link_evolver;
-mod llm_summarizer;
 mod merge;
 mod pass;
-mod prompt;
 mod resolve;
 mod rule_extractor;
 mod rule_inducer;
@@ -47,15 +43,12 @@ pub use config::{
     ConsolidationConfig, DetectionConfig, InductionConfig, PassConfig, PredicateRule,
     ResolutionConfig, SummarizationConfig,
 };
-pub use distill::{DistillError, DistillationConfig, DistillationReport, Distiller};
 pub use error::ConsolidationError;
 pub use fact_extraction::FactExtractionPass;
 pub use lag::ConsolidationLag;
 pub use link_evolution::{
     LinkEvolveConfig, LinkEvolveError, LinkEvolvePass, LinkEvolveReport, RELATIONSHIP_VOCABULARY,
 };
-pub use llm_link_evolver::{LINK_EVOLVE_RULE_VERSION, LLMLinkEvolver};
-pub use llm_summarizer::{DISTILL_RULE_VERSION, LLMSummarizer};
 pub use pass::{ConsolidationPass, NoopPass, PassContext, PassError, PassOutput};
 pub use rule_extractor::{ObjectRule, Rule, RuleExtractor};
 pub use rule_inducer::RuleInducer;

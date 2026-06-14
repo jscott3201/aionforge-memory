@@ -14,10 +14,10 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 
 [dev-dependencies]
-aionforge-domain = { path = "../aionforge-domain", version = "0.2.0" }
-aionforge-engine = { path = "../aionforge-engine", version = "0.2.0" }
-aionforge-procedural = { path = "../aionforge-procedural", version = "0.2.0" }
-aionforge-store = { path = "../aionforge-store", version = "0.2.0" }
+aionforge-domain = { path = "../aionforge-domain", version = "0.2.1" }
+aionforge-engine = { path = "../aionforge-engine", version = "0.2.1" }
+aionforge-procedural = { path = "../aionforge-procedural", version = "0.2.1" }
+aionforge-store = { path = "../aionforge-store", version = "0.2.1", features = ["test-support"] }
 base64 = { workspace = true }
 ed25519-dalek = { workspace = true }
 tokio = { workspace = true }

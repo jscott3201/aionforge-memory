@@ -9,10 +9,9 @@ schedule, where it can take its time and recover from a crash without ever holdi
 The whole of it is deterministic. Given the same episode and the same rule versions, a consolidation
 pass derives the same facts with the same ids, byte for byte, every time it runs — which is what
 makes a re-run after a crash a no-op rather than a second copy. This page describes the canonical,
-deterministic pipeline. The optional LLM [distillation](distillation.md) and
-[link-evolution](link-evolution.md) layers run *outside* this pipeline, against the
-already-committed facts and in their own transactions; they are documented separately and never touch
-the cursor described here.
+deterministic pipeline. The deterministic [link-evolution](link-evolution.md) layer runs *outside*
+this pipeline, against the already-committed notes and in its own transactions; it is documented
+separately and never touches the cursor described here.
 
 ## The cursor and the work queue
 
@@ -108,6 +107,15 @@ splitting. A new entity's id is a content hash over namespace, type, and the *no
 same normalization the exact-match gate uses), so two surfaces differing only in case or whitespace
 mint one id rather than splitting into duplicates, and the same surface always resolves the same way.
 
+### The cost of leaning toward splitting
+
+The split-over-merge default is a safety choice, but it has a real cost worth stating: the
+same real-world entity can **fragment into duplicate `Entity` nodes** when its surface forms
+vary beyond the exact-match and embedding-cluster thresholds. Fragmentation dilutes the
+high-precision entity-seed retrieval path and the PageRank seeds, and recall of a fragmented
+entity can miss facts attached to a sibling fragment. There is **no dedup/merge-repair tool**
+today. See [data-model.md](data-model.md) §7 for the honest-limitations framing.
+
 ## Supersession and contradiction detection
 
 `detect` is a pure function over the committed current facts (`current_support_facts`, scoped to the
@@ -165,9 +173,9 @@ fronts:
   keeping the old one.
 
 The shipped `RuleSummarizer` renders a deterministic templated body that names every predicate and
-entity in the cluster, so it passes the guard by construction. The guard exists for the summarizers
-that don't — a future model-backed one. The model-backed distiller is the optional, off-cursor layer
-documented in [distillation](distillation.md); it never replaces these canonical notes.
+entity in the cluster, so it passes the detail-retention guard by construction. That guard is a
+seam-level safeguard: it exists for any future summarizer that does not retain detail by
+construction, even though every shipped summarizer is a deterministic rule.
 
 ## What it does not do
 
@@ -176,8 +184,8 @@ documented in [distillation](distillation.md); it never replaces these canonical
   removed.
 - It does **not** re-enter the write path from inside a pass. Passes are read-only by contract.
 - It does **not** run a model on the critical path. The shipped extractor and summarizer are
-  deterministic rules; the optional LLM layers run off this cursor, and turning them on cannot move
-  any of the reproducible state described here.
+  deterministic rules; the deterministic link-evolution layer runs off this cursor, and it cannot
+  move any of the reproducible state described here.
 - It does **not** resolve entities across namespaces, and a supersession or contradiction edge can
   never bridge one. Resolution and detection are namespace-local by construction.
 

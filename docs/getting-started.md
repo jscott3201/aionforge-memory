@@ -97,7 +97,7 @@ Published runtime images are available from GitHub Container Registry for
 `linux/amd64` and `linux/arm64`:
 
 ```bash
-docker pull ghcr.io/jscott3201/aionforge-memory:0.2.0
+docker pull ghcr.io/jscott3201/aionforge-memory:0.2.1
 ```
 
 The repository Dockerfile builds the binary with an Alpine builder and runs it

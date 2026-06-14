@@ -4,7 +4,7 @@
 //! calls [`Memory::record_reliability_decay`] with the victim's id. This module closes that
 //! gap — the engine reads the committed contradiction-quarantine audit rows itself and emits
 //! the producer-decay events they imply, off the consolidation cursor, idempotently, on
-//! whatever cadence the host calls it (the [`Memory::distill`] / `evolve_links` shape).
+//! whatever cadence the host calls it (the `evolve_links` off-cursor shape).
 //!
 //! The audit log doubles as the outbox: every quarantine decision is already a durable,
 //! content-addressed row, so the sweep needs no queue, callback, or new persistent state — it
@@ -67,7 +67,7 @@ impl<E: Embedder> Memory<E> {
     /// lands a row behind an already-persisted watermark.
     ///
     /// **Host-driven cadence.** Call it on a timer, at session end, or page-to-empty in a
-    /// loop, like [`Memory::distill`]; `limit` is clamped to [`crate::MAX_AUDIT_PAGE`].
+    /// loop, like [`Memory::evolve_links`]; `limit` is clamped to [`crate::MAX_AUDIT_PAGE`].
     /// Persist [`D1SweepReport::next`] whenever it is `Some` and pass it back as `after`; a
     /// host that always passes `None` is still correct, just pays the rescan. The watermark
     /// resume is exact but not complete under clock regression: rows order by the

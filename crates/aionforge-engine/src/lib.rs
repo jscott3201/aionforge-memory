@@ -15,9 +15,7 @@
 use std::{sync::Arc, time::Instant};
 
 use aionforge_capture::{Capturer, ProvenanceGate};
-use aionforge_consolidate::{
-    Consolidator, Distiller, FactExtractionPass, LinkEvolvePass, SkillInductionPass,
-};
+use aionforge_consolidate::{Consolidator, FactExtractionPass, LinkEvolvePass, SkillInductionPass};
 use aionforge_domain::blocks::Identity;
 use aionforge_domain::contracts::{
     Capture, Embedder, FactExtractor, LinkEvolver, Retriever, SkillInducer, Summarizer,
@@ -45,12 +43,10 @@ pub use aionforge_capture::{
     SignedProvenance, WriterContext,
 };
 pub use aionforge_consolidate::{
-    ConsolidationConfig, ConsolidationHandle, ConsolidationLag, DISTILL_RULE_VERSION,
-    DetectionConfig, DistillError, DistillationConfig, DistillationReport, InductionConfig,
-    LINK_EVOLVE_RULE_VERSION, LLMLinkEvolver, LLMSummarizer, LinkEvolveConfig, LinkEvolveError,
-    LinkEvolveReport, ObjectRule, PassConfig, PredicateRule, RELATIONSHIP_VOCABULARY,
-    RULE_LINK_EVOLVE_VERSION, ResolutionConfig, Rule, RuleExtractor, RuleInducer, RuleLinkEvolver,
-    RuleSummarizer, SummarizationConfig, TickReport,
+    ConsolidationConfig, ConsolidationHandle, ConsolidationLag, DetectionConfig, InductionConfig,
+    LinkEvolveConfig, LinkEvolveError, LinkEvolveReport, ObjectRule, PassConfig, PredicateRule,
+    RELATIONSHIP_VOCABULARY, RULE_LINK_EVOLVE_VERSION, ResolutionConfig, Rule, RuleExtractor,
+    RuleInducer, RuleLinkEvolver, RuleSummarizer, SummarizationConfig, TickReport,
 };
 pub use aionforge_domain::authz::{
     AuthorizationError, Authorizer, DefaultAuthorizer, DenyReason, OperatorAwareAuthorizer,
@@ -149,9 +145,10 @@ pub struct MemoryConfig {
     /// Cross-family consolidation-guard posture (07 §3, M6.T01). **Always
     /// enforced** on every inference-calling consolidation rule — like
     /// `core_block`, only the strictness (refuse vs warn) is configurable; the
-    /// policy is inert until a host injects an LLM-backed summarizer or link
-    /// evolver. The host maps `aionforge-config`'s `ConsolidationGuardConfig`
-    /// into this [`ConsolidationGuardPolicy`] field-for-field.
+    /// policy is inert until a host injects an inference-backed link evolver
+    /// (the shipped consolidation path is deterministic). The host maps
+    /// `aionforge-config`'s `ConsolidationGuardConfig` into this
+    /// [`ConsolidationGuardPolicy`] field-for-field.
     pub consolidation_guard: ConsolidationGuardPolicy,
 }
 
@@ -260,7 +257,7 @@ pub struct Memory<E> {
     audit_verifier: Option<AuditVerifier>,
     /// The cross-family guard posture (07 §3, M6.T01). **Always held** — like the
     /// core editor it has no disabled state; the facade applies it to every
-    /// inference-calling consolidation rule (`distill`, `evolve_links`).
+    /// inference-calling consolidation rule (today `evolve_links`).
     consolidation_guard: ConsolidationGuardPolicy,
     /// Conditions surfaced at construction for the host to log (07 §3, M6.T01):
     /// today only the single-family deployment warning. Audited at construction;
@@ -688,8 +685,8 @@ impl<E: Embedder + 'static> Memory<E> {
     /// The pass shares this memory's embedder, so derived entities, facts,
     /// and notes are embedded with the same model as capture and retrieval. The injected
     /// [`FactExtractor`], [`Summarizer`], and [`SkillInducer`] are the deterministic
-    /// [`RuleExtractor`] / [`RuleSummarizer`] / [`RuleInducer`] in tests and the model-backed
-    /// clients in production (M4 / the optional M3.S3 distillation layer).
+    /// [`RuleExtractor`] / [`RuleSummarizer`] / [`RuleInducer`] — consolidation is rule-based
+    /// and runs no inference model.
     ///
     /// Skill induction is registered as a second pass but is **off unless
     /// `pass_config.induction.enabled`** is set; a disabled pass is skipped by the scheduler and
@@ -711,82 +708,31 @@ impl<E: Embedder + 'static> Memory<E> {
             .start()
     }
 
-    /// Run the optional, off-by-default LLM distiller over one namespace's current support facts,
-    /// **off the consolidation cursor** (M3.T08, 04 §*Canonical vs. distilled*).
-    ///
-    /// This is the on-demand entry point for distillation — call it at session end, on a timer, or
-    /// from a tool. It is independent of [`start_consolidation`](Self::start_consolidation): the
-    /// scheduler keeps writing the canonical, byte-deterministic rule summaries inside the cursor
-    /// flip, while this condenses the same subjects with the injected model-backed
-    /// [`Summarizer`] (an [`LLMSummarizer`] over the chat client) into non-canonical
-    /// `DERIVED_FROM`-linked notes that sit alongside canonical recall and never enter the
-    /// current-fact path. The summarizer is injected rather than constructed here, so the facade
-    /// stays off the chat-client crate and a caller chooses (and gates) the model.
-    ///
-    /// A no-op (empty report) unless `config.enabled` is set. A slow or unavailable model degrades
-    /// to the canonical tier — each such call is recorded and writes no note — so distillation can
-    /// never stall or corrupt the cursor. `now` is supplied by the caller; the facade keeps no
-    /// ambient clock, so distilled-note transaction time is deterministic.
-    ///
-    /// The caller is responsible for populating `config.endpoint` and `config.seed` from the same
-    /// completer configuration that built `summarizer` — they are recorded in each call's
-    /// provenance audit (the `Summarizer` seam does not expose them), never used to drive behavior.
-    ///
-    /// **Cross-family guarded** (07 §3, M6.T01): every cluster's writer families are resolved
-    /// before the model call and compared against the summarizer's declared family. A
-    /// same-family or unverifiable cluster is skipped under [`GuardMode::Refuse`] (counted in
-    /// `DistillationReport::guard_refused`) or condensed-with-a-warning under
-    /// [`GuardMode::Warn`]; either way a `subliminal_guard_warning` audit row records the
-    /// finding. The mode comes from [`MemoryConfig::consolidation_guard`], set at construction —
-    /// not from `config` — so user code cannot drop it.
-    ///
-    /// # Errors
-    /// Returns [`EngineError::Distillation`] if a store read, the note-body embedding, or the
-    /// final write fails. A model that is unavailable or returns nothing usable is not an error.
-    pub async fn distill<Sz>(
-        &self,
-        summarizer: Sz,
-        namespace: &Namespace,
-        config: DistillationConfig,
-        now: &Timestamp,
-    ) -> Result<DistillationReport, EngineError>
-    where
-        Sz: Summarizer,
-    {
-        let distiller = Distiller::new(
-            summarizer,
-            Arc::clone(&self.embedder),
-            config,
-            self.consolidation_guard.mode,
-        );
-        let started = Instant::now();
-        let result = distiller.distill(&self.store, namespace, now).await;
-        telemetry::distillation_result(&result, started.elapsed());
-        Ok(result?)
-    }
-
     /// Evolve the live notes of one namespace into non-canonical `RELATES_TO` links with the
     /// injected [`LinkEvolver`], off the consolidation cursor (M3.T09).
     ///
-    /// A no-op (empty report) unless `config.enabled` is set. A slow or unavailable model degrades
-    /// to the deterministic rule tier — each such call is recorded and writes no edge — so link
-    /// evolution can never stall or corrupt the cursor. Unlike [`Self::distill`] this needs no
-    /// embedder: the evolver scores the notes' already-stored embeddings. `now` is supplied by the
-    /// caller; the facade keeps no ambient clock, so link transaction time is deterministic.
+    /// A no-op (empty report) unless `config.enabled` is set. The shipped evolver is the
+    /// deterministic [`RuleLinkEvolver`]; a slow or unavailable evolver degrades gracefully — each
+    /// such call is recorded and writes no edge — so link evolution can never stall or corrupt the
+    /// cursor. It needs no embedder: the evolver scores the notes' already-stored embeddings. `now`
+    /// is supplied by the caller; the facade keeps no ambient clock, so link transaction time is
+    /// deterministic.
     ///
-    /// The caller is responsible for populating `config.endpoint` and `config.seed` from the same
-    /// completer configuration that built `evolver` — they are recorded in each call's provenance
-    /// audit (the `LinkEvolver` seam does not expose them), never used to drive behavior.
+    /// `config.endpoint` and `config.seed` are recorded in each call's provenance audit (the
+    /// `LinkEvolver` seam does not expose them) and never drive behavior; they are `None` for the
+    /// deterministic rule evolver and supplied by a caller only when it injects an inference evolver.
     ///
     /// **Cross-family guarded** (07 §3, M6.T01): each source note's writer set — its underlying
-    /// episode writers unioned with the model that authored it, for a distilled note — is
-    /// compared against the evolver's declared family before the model call, so a two-hop
-    /// launder (distill with X, then evolve with X) cannot pass. Same skip/warn/audit behavior
-    /// as [`Memory::distill`], with refusals counted in `LinkEvolveReport::guard_refused`.
+    /// episode writers unioned with any model recorded as having authored the note — is compared
+    /// against the evolver's declared family before the call, so an inference evolver cannot relate
+    /// notes that share its own family. A same-family or unverifiable source is skipped under
+    /// [`GuardMode::Refuse`] (counted in `LinkEvolveReport::guard_refused`) or proceeds with a
+    /// warning under [`GuardMode::Warn`]; either way a `subliminal_guard_warning` audit row records
+    /// the finding. The mode comes from [`MemoryConfig::consolidation_guard`], set at construction.
     ///
     /// # Errors
-    /// Returns [`EngineError::LinkEvolution`] if a store read or the final write fails. A model that
-    /// is unavailable or returns nothing usable is not an error.
+    /// Returns [`EngineError::LinkEvolution`] if a store read or the final write fails. An evolver
+    /// that is unavailable or returns nothing usable is not an error.
     pub async fn evolve_links<Lv>(
         &self,
         evolver: Lv,
@@ -1106,11 +1052,7 @@ pub enum EngineError {
     #[error("audit signing could not be provisioned")]
     AuditSigning(#[source] Box<aionforge_trust::ProvisionError>),
 
-    /// The optional off-cursor LLM distiller failed (a store read, embedding, or the write).
-    #[error("distillation failed")]
-    Distillation(#[from] DistillError),
-
-    /// The optional off-cursor LLM link evolver failed (a store read or the write).
+    /// The off-cursor note link evolver failed (a store read or the write).
     #[error("link evolution failed")]
     LinkEvolution(#[from] LinkEvolveError),
 

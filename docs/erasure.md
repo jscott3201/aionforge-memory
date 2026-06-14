@@ -20,7 +20,7 @@ fixed point, read-only against one snapshot, before any write happens.
 Two rules shape the set:
 
 - **Multi-parent survival.** A derivative joins the cascade only when *every* one of
-  its sources is already in it. A note distilled from two facts survives the erasure of
+  its sources is already in it. A note summarized from two facts survives the erasure of
   one of them — deleting it would destroy a memory still grounded in a source nobody
   asked to erase. Spared derivatives are reported by id, never dropped silently.
 - **Caps refuse whole.** The walk is bounded by a depth cap and a node cap

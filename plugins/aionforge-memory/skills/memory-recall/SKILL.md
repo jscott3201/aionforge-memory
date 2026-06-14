@@ -3,7 +3,7 @@ name: memory-recall
 description: Search Aionforge Memory before planning, answering, coding, review, debugging, release, or continuation work. Use proactively whenever prior decisions, user preferences, project facts, failures, or handoffs could change the answer.
 license: MIT OR Apache-2.0
 metadata:
-  aionforge-version: "0.2.0"
+  aionforge-version: "0.2.1"
 ---
 
 # Memory Recall
