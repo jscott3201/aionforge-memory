@@ -49,4 +49,20 @@ impl ConfigError {
             reason: reason.into(),
         }
     }
+
+    /// Prepend `prefix` to the offending key of a [`Missing`](ConfigError::Missing) or
+    /// [`Invalid`](ConfigError::Invalid) error, locating it under a parent section (e.g.
+    /// `deployments.prod.`). The `Load`/`SecretEnvMissing` variants carry no dotted key and are
+    /// returned unchanged. `prefix` is a config key path, never a value, so this stays
+    /// secret-free.
+    pub(crate) fn prefixed_key(self, prefix: &str) -> Self {
+        match self {
+            Self::Missing(key) => Self::Missing(format!("{prefix}{key}")),
+            Self::Invalid { key, reason } => Self::Invalid {
+                key: format!("{prefix}{key}"),
+                reason,
+            },
+            other => other,
+        }
+    }
 }

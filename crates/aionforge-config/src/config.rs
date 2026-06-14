@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::auth::AuthConfig;
 use crate::core_block::CoreBlockConfig;
+use crate::deployment::DeploymentConfig;
 use crate::drift::DriftConfig;
 use crate::error::ConfigError;
 use crate::forgetting::ForgettingConfig;
@@ -94,6 +95,18 @@ pub struct Config {
     /// stateful, no explicit allow-lists) is today's behavior. CLI `serve http` flags
     /// override these fields field-for-field when present.
     pub server: ServerHttpConfig,
+    /// Named per-deployment `[auth]`+`[server]` profiles (PR6b), keyed by name in canonical
+    /// (`BTreeMap`) order. Empty by default, which is today's single-profile config exactly.
+    /// When non-empty, [`Config::activate_deployment`] selects one by name to splice over the
+    /// top-level [`Config::auth`]/[`Config::server`] blocks; every declared profile — active or
+    /// not — is validated by [`Config::validate`], so a broken inactive profile fails at load.
+    pub deployments: BTreeMap<String, DeploymentConfig>,
+    /// The deployment selected at load when no CLI `--deployment` flag is given. `None` (the
+    /// default) selects nothing: with an empty [`Config::deployments`] map this is DEFAULT-OFF
+    /// (the top-level blocks run unchanged); with declared deployments it is a fail-closed
+    /// error, forcing an explicit choice. Maps from `AIONFORGE_ACTIVE_DEPLOYMENT` for free via
+    /// the env layer's `__`-split provider.
+    pub active_deployment: Option<String>,
 }
 
 /// On-disk state configuration.
@@ -763,6 +776,20 @@ impl Config {
         self.consolidation_guard.validate()?;
         self.auth.validate()?;
         self.server.validate()?;
+        // Validate every DECLARED deployment — active or not — so a broken inactive profile is
+        // caught at load rather than only when it is later selected. The inner key is prefixed
+        // with `deployments.<name>.` so an operator can locate the offending profile; the name
+        // is a config KEY (a declared deployment name), never a secret value.
+        for (name, deployment) in &self.deployments {
+            deployment
+                .auth
+                .validate()
+                .map_err(|error| error.prefixed_key(&format!("deployments.{name}.")))?;
+            deployment
+                .server
+                .validate()
+                .map_err(|error| error.prefixed_key(&format!("deployments.{name}.")))?;
+        }
         Ok(())
     }
 }

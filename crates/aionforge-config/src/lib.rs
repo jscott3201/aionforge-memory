@@ -51,6 +51,7 @@
 mod auth;
 mod config;
 mod core_block;
+mod deployment;
 mod drift;
 mod error;
 mod forgetting;
@@ -65,6 +66,7 @@ pub use config::{
     endpoint_transport_is_allowed,
 };
 pub use core_block::{CoreBlockConfig, CoreEditRuleConfig};
+pub use deployment::DeploymentConfig;
 pub use drift::DriftConfig;
 pub use error::ConfigError;
 pub use forgetting::ForgettingConfig;
