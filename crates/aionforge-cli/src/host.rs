@@ -22,10 +22,24 @@ const STARTUP_EMBEDDER_PROBE: &str = "aionforge-memory startup embedder health c
 pub(crate) struct HostOptions {
     pub(crate) config_path: PathBuf,
     pub(crate) data_dir: Option<PathBuf>,
+    pub(crate) deployment: Option<String>,
 }
 
 pub(crate) fn load_config(options: &HostOptions) -> Result<Config, CliError> {
     let mut config = Config::from_figment(Config::figment(&options.config_path))?;
+    // Resolve the deployment selector with the full three-tier precedence:
+    //   flag (`--deployment`)  >  env (`AIONFORGE_ACTIVE_DEPLOYMENT`)  >  file (`active_deployment`).
+    // The env-over-file tier is already resolved one layer down by the figment loader
+    // (`Config::figment` merges the env provider last, so `config.active_deployment` here is the
+    // env value when set, else the file value); this `or_else` only arbitrates the remaining
+    // flag-over-(env-or-file) tier. The resolved name is then spliced over the top-level
+    // [auth]+[server] posture and re-validated. DEFAULT-OFF (no deployments, no selector) is a
+    // no-op that leaves `config` byte-for-byte unchanged.
+    let selected = options
+        .deployment
+        .clone()
+        .or_else(|| config.active_deployment.clone());
+    config.activate_deployment(selected.as_deref())?;
     if let Some(data_dir) = &options.data_dir {
         config.persistence.data_dir = data_dir.clone();
         config.validate()?;
@@ -567,5 +581,134 @@ mod tests {
             "aionforge-cli-host-{label}-{nanos}-{}",
             std::process::id()
         ))
+    }
+
+    /// Write a `config.toml` declaring `local` (default-off) and `prod` (enabled, stateless)
+    /// deployments into a fresh temp dir, returning the config-file path. The host's
+    /// `load_config` reads this file and applies the deployment selector.
+    fn write_deployment_config(label: &str) -> (PathBuf, PathBuf) {
+        let dir = unique_dir(label);
+        std::fs::create_dir_all(&dir).expect("create config dir");
+        let config_path = dir.join("config.toml");
+        std::fs::write(
+            &config_path,
+            r#"
+                [deployments.local.server]
+                listen = "127.0.0.1:3918"
+
+                [deployments.prod.server]
+                listen = "0.0.0.0:8443"
+                stateful = false
+
+                [deployments.prod.auth]
+                enabled = true
+
+                [[deployments.prod.auth.issuers]]
+                issuer = "https://issuer.example/"
+                audience = "https://api.aionforge.dev"
+                agent_id_claim = "https://aionforge.dev/agent_id"
+            "#,
+        )
+        .expect("write config file");
+        (dir, config_path)
+    }
+
+    /// `load_config` for a config-file path with no deployment flag and no active_deployment
+    /// key set in the file. Used to prove DEFAULT-OFF round-trips a single-block config.
+    fn options_for(config_path: PathBuf, deployment: Option<&str>) -> HostOptions {
+        HostOptions {
+            config_path,
+            data_dir: None,
+            deployment: deployment.map(ToOwned::to_owned),
+        }
+    }
+
+    #[test]
+    fn load_config_default_off_leaves_a_single_block_config_unchanged() {
+        // A config with no deployments and no selector loads exactly as today: the
+        // deployment splice is a no-op and the top-level blocks are the live posture.
+        let dir = unique_dir("load-default-off");
+        std::fs::create_dir_all(&dir).expect("create dir");
+        let config_path = dir.join("config.toml");
+        std::fs::write(
+            &config_path,
+            "[server]\nlisten = \"0.0.0.0:8080\"\nstateful = false\n",
+        )
+        .expect("write");
+
+        let config = load_config(&options_for(config_path, None)).expect("default-off loads");
+        assert_eq!(config.server.listen.to_string(), "0.0.0.0:8080");
+        assert!(!config.server.stateful);
+        assert!(!config.auth.enabled, "no auth without a deployment");
+        assert!(config.deployments.is_empty());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn the_deployment_flag_selects_and_splices_the_named_blocks() {
+        let (dir, config_path) = write_deployment_config("load-flag-select");
+        let config =
+            load_config(&options_for(config_path, Some("prod"))).expect("prod selected by flag");
+        assert!(config.auth.enabled, "the prod auth block is now live");
+        assert!(!config.server.stateful, "the prod server block is now live");
+        assert_eq!(config.server.listen.to_string(), "0.0.0.0:8443");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn the_deployment_flag_overrides_the_active_deployment_key() {
+        // The config file pins active_deployment = "prod"; the --deployment flag overrides it
+        // to the default-off "local" profile, proving flag precedence over the config key.
+        let dir = unique_dir("load-flag-overrides-key");
+        std::fs::create_dir_all(&dir).expect("create dir");
+        let config_path = dir.join("config.toml");
+        std::fs::write(
+            &config_path,
+            r#"
+                active_deployment = "prod"
+
+                [deployments.local.server]
+                listen = "127.0.0.1:3918"
+
+                [deployments.prod.server]
+                listen = "0.0.0.0:8443"
+                stateful = false
+
+                [deployments.prod.auth]
+                enabled = true
+
+                [[deployments.prod.auth.issuers]]
+                issuer = "https://issuer.example/"
+                audience = "https://api.aionforge.dev"
+                agent_id_claim = "https://aionforge.dev/agent_id"
+            "#,
+        )
+        .expect("write");
+
+        let config = load_config(&options_for(config_path, Some("local")))
+            .expect("the flag selects local over the prod key");
+        assert!(
+            !config.auth.enabled,
+            "the flag selected the default-off local profile, not prod"
+        );
+        assert_eq!(
+            config.server.listen.to_string(),
+            "127.0.0.1:3918",
+            "local's server block is live"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn declared_deployments_with_no_selection_fail_to_load() {
+        // No flag, no active_deployment key, but deployments are declared: load fails closed.
+        let (dir, config_path) = write_deployment_config("load-fail-closed");
+        let err = load_config(&options_for(config_path, None)).expect_err("a choice is required");
+        assert!(
+            matches!(err, CliError::Config(ref boxed)
+                if matches!(boxed.as_ref(), aionforge_config::ConfigError::Missing(key) if key == "active_deployment")),
+            "the missing-selector error surfaces through the CLI error: {err}"
+        );
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

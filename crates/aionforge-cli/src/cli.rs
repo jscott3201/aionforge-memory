@@ -31,6 +31,14 @@ pub(crate) struct Cli {
     )]
     data_dir: Option<PathBuf>,
 
+    #[arg(
+        long,
+        global = true,
+        value_name = "NAME",
+        help = "Select a named [deployments.<NAME>] auth+server block"
+    )]
+    deployment: Option<String>,
+
     #[command(subcommand)]
     pub(crate) command: Command,
 }
@@ -40,6 +48,7 @@ impl Cli {
         HostOptions {
             config_path: self.config.clone().unwrap_or_else(default_config_path),
             data_dir: self.data_dir.clone(),
+            deployment: self.deployment.clone(),
         }
     }
 }
