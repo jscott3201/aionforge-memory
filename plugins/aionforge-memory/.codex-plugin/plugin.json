@@ -31,7 +31,8 @@
     "termsOfServiceURL": "https://github.com/jscott3201/aionforge-memory/blob/development/LICENSE-MIT",
     "defaultPrompt": [
       "Use Aionforge Memory as the working substrate for this task.",
-      "Search memory before planning, then capture durable decisions and validation results."
+      "Search memory before planning, then capture durable facts (decisions, fixes, validation, handoffs) the moment they land, not batched to the end.",
+      "Track tasks, blockers, and TODOs as work items with work_create then work_advance as status changes. Tasks are work items, not memory episodes; there is no note to store directly."
     ]
   }
 }

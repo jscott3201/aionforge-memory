@@ -24,6 +24,7 @@ Use this skill to bring durable memory into the task early. Prefer a quick recal
 
 ## Search Defaults
 
+- `search` recalls memory **episodes**. To recall open **work** (tasks, blockers, TODOs), use `work_query` (filter by `work_status` / `level`) or `work_tree` — work items live in their own node kind and are not returned by `search`.
 - Use `limit: 10` by default. The store is built for large memory sets; sparse recall is usually worse than a few extra hits.
 - Use `limit: 20` for broad continuation, release, incident, or history questions.
 - Use `verbose: true` only when provenance, trust, namespace, or ranking details matter.

@@ -1,7 +1,7 @@
 interface:
   display_name: "Memory Loop"
   short_description: "Use Aionforge Memory through a whole task"
-  default_prompt: "Use Aionforge Memory as the working substrate: recall first, capture useful state during work, and finish with a handoff."
+  default_prompt: "Use Aionforge Memory as the working substrate: recall first (including open work via work_query), capture durable facts the moment they land (not at the end), track tasks as work items (work_create then work_advance), and finish with a handoff."
 dependencies:
   tools:
     - type: "mcp"

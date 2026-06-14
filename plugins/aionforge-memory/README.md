@@ -1,18 +1,27 @@
 # Aionforge Memory Plugin
 
-This plugin packages four small Agent Skills for an existing Aionforge Memory
+This plugin packages five small Agent Skills for an existing Aionforge Memory
 MCP server:
 
-- `memory-loop`: use memory through a whole task: recall first, capture useful state during work, and finish with a handoff.
+- `memory-loop`: use memory through a whole task: recall first, capture and track work during it, and finish with a handoff.
 - `memory-recall`: search durable memory before planning, coding, review, debugging, release, or support work.
-- `memory-capture`: write decisions, handoffs, project facts, validation outcomes, corrections, and failure patterns.
+- `memory-capture`: write decisions, handoffs, project facts, validation outcomes, corrections, and failure patterns *as they happen*.
+- `work-tracking`: track tasks, blockers, TODOs, and plans as durable **work items** (`work_create` → `work_advance` → `work_link`), distinct from decaying memory episodes.
 - `memory-maintenance`: inspect backlog, audit provenance, consolidate derived work, forget, or restore memory.
 
 The skills are plain Agent Skills under `skills/`, so clients that support the common `SKILL.md` format can use the same instructions. The plugin also includes compatibility manifests for Codex, Claude Code, and Cursor.
 
+The skills are intentionally *nudge-forward*: they push agents to recall before
+substantial work, capture durable facts the moment they land (not batched to the
+end), and track the work itself as work items. [`NUDGE.md`](NUDGE.md) is the
+canonical, single-source statement of that cadence and the capture-vs-work-item
+vocabulary; every other surface (skills, the steward agent, the hook, the Codex
+default prompt) distills from it.
+
 For Claude Code, the plugin also ships:
 
-- `aionforge-memory-steward`: a default main-thread agent that keeps recall, capture, and handoff in the task loop.
+- `aionforge-memory-steward`: a default main-thread agent that keeps recall, capture, work-tracking, and handoff in the task loop.
+- A `SessionStart` hook (`hooks/hooks.json`) that re-seeds the cadence into a fresh context after a startup, resume, or context compaction. It fires on the `startup|resume|compact` sources and injects a short reminder via `additionalContext`. (`PreCompact` is deliberately not used: it is blocking-only and cannot inject context, so it cannot deliver a reminder.)
 - `/aionforge-memory:memory-session`: starts a memory-backed Claude Code task.
 - `/aionforge-memory:memory-handoff`: captures a durable end-of-session handoff.
 

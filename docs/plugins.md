@@ -1,8 +1,8 @@
 # Agent Plugin
 
 Aionforge Memory ships a plugin package at
-[`plugins/aionforge-memory`](../plugins/aionforge-memory). It bundles four Agent
-Skills plus Claude Code and Cursor MCP templates.
+[`plugins/aionforge-memory`](../plugins/aionforge-memory). It bundles five Agent
+Skills plus a Claude Code steward agent, commands, and a SessionStart nudge hook.
 
 The plugin is meant to make the existing MCP service easier to use. It does not
 add a second server and it does not execute stored skills from memory. The MCP
@@ -16,18 +16,22 @@ approval hints.
 - `memory-recall`: search durable memory before planning, coding, review,
   debugging, release, or support work.
 - `memory-capture`: capture decisions, project facts, validation results, and
-  session handoffs when the user wants them persisted or project policy grants
-  standing permission.
+  session handoffs as they happen, when the user wants them persisted or project
+  policy grants standing permission.
+- `work-tracking`: track tasks, blockers, TODOs, and plans as durable work items
+  (`work_create` → `work_advance` → `work_link`), distinct from decaying memory
+  episodes.
 - `memory-maintenance`: inspect backlog, audit provenance, consolidate derived
   work, forget, or restore memory.
-- Claude Code agent `aionforge-memory-steward`: keeps recall, capture, and
-  handoff in the main task loop when the plugin is enabled.
+- Claude Code agent `aionforge-memory-steward`: keeps recall, capture,
+  work-tracking, and handoff in the main task loop when the plugin is enabled.
+- Claude Code SessionStart hook: re-seeds the capture/work-tracking cadence into a
+  fresh context after a startup, resume, or context compaction. (`PreCompact` is
+  not used: it is blocking-only and cannot inject context.)
 - Claude Code commands `/aionforge-memory:memory-session` and
   `/aionforge-memory:memory-handoff`: explicit workflows for starting a
   memory-backed task and ending with a durable handoff.
 - Client manifests for Codex, Claude Code, and Cursor.
-- Claude Code and Cursor MCP config files for the local HTTP endpoint at
-  `http://127.0.0.1:3918/mcp`.
 
 ## Identity Setup
 

@@ -14,13 +14,14 @@ Use this skill to make memory part of the task loop, not a final afterthought.
 
 ## Procedure
 
-1. Start with `memory-recall`. Search broadly enough to find prior decisions, preferences, blockers, release state, and failed attempts.
+1. Start with `memory-recall`. Search broadly enough to find prior decisions, preferences, blockers, release state, and failed attempts. Also recall open work with `work_query` / `work_tree` so you continue the backlog instead of re-deriving it.
 2. Work from current evidence. Recalled memory can guide attention, but repo state, tool output, and user instructions win.
-3. Capture along the way when a durable fact appears: decision made, blocker found, fix verified, release changed, user preference learned, or approach rejected.
-4. Be generous with memory. Aionforge can handle large memory sets; several precise captures are better than one vague end note.
-5. At natural checkpoints, search again if new terms, file paths, ids, or failures appear.
-6. Before ending, capture a handoff when future agents would benefit: branch, PR, commits, tests, CI, remaining work, and caveats.
-7. Run `consolidation_status`; run `consolidate` only when the approval policy permits mutating derived memory.
+3. Capture along the way the moment a durable fact lands: decision made, blocker found, fix verified, release changed, user preference learned, or approach rejected. Do not save these for the end — a context compaction can discard them first.
+4. Track the work as it moves. When a task, blocker, or TODO appears, `work_create` a work item (see the `work-tracking` skill); `work_advance` its status as it progresses. Tasks are work items, not memory episodes — and there is no "note" to store directly.
+5. Be generous with memory. Aionforge can handle large memory sets; several precise records are better than one vague end note.
+6. At natural checkpoints, search again if new terms, file paths, ids, or failures appear.
+7. Before ending, capture a handoff when future agents would benefit: branch, PR, commits, tests, CI, remaining work, and caveats. Leave the remaining work as work items so the next agent can `work_query` it.
+8. Run `consolidation_status`; run `consolidate` only when the approval policy permits mutating derived memory.
 
 ## User Control
 

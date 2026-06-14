@@ -19,8 +19,9 @@ Create a handoff that future agents can use without replaying the whole session.
    - Validation results and commands run.
    - Known failures, blockers, or caveats.
    - Exact next steps.
-4. Use `supersedes` when replacing an older handoff or corrected fact.
-5. Report the new memory ids when audit, forget, restore, or supersession may matter.
+4. Leave the remaining work as **work items**, not just prose: `work_create` (or `work_advance` an existing one) so the next agent can `work_query` the backlog instead of replaying the session. Tasks are work items, not memory episodes.
+5. Use `supersedes` when replacing an older handoff or corrected fact.
+6. Report the new memory ids when audit, forget, restore, or supersession may matter.
 
 ## Guardrails
 

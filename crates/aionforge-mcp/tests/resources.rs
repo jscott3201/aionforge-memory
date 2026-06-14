@@ -21,7 +21,7 @@ use rmcp::model::ReadResourceRequestParams;
 type TestError = Box<dyn std::error::Error + Send + Sync>;
 type TestResult<T = ()> = Result<T, TestError>;
 
-const TOTAL_STATIC_RESOURCE_BUDGET_BYTES: usize = 19_968;
+const TOTAL_STATIC_RESOURCE_BUDGET_BYTES: usize = 20_480;
 
 const RESOURCE_BODY_BUDGETS: &[(&str, usize)] = &[
     (TOOL_MANIFEST_RESOURCE_URI, 9_500),
@@ -29,7 +29,7 @@ const RESOURCE_BODY_BUDGETS: &[(&str, usize)] = &[
     (MCP_SURFACE_GUIDE_RESOURCE_URI, 2_100),
     (TOOL_APPROVAL_POLICY_RESOURCE_URI, 1_664),
     (CLIENT_OAUTH_GUIDE_RESOURCE_URI, 2_000),
-    (PLUGIN_PACKAGE_GUIDE_RESOURCE_URI, 2_300),
+    (PLUGIN_PACKAGE_GUIDE_RESOURCE_URI, 2_700),
     (CODEX_CONFIG_RESOURCE_URI, 3_800),
     (CLAUDE_CODE_CONFIG_RESOURCE_URI, 512),
     (OPENCODE_CONFIG_RESOURCE_URI, 1_024),
@@ -277,8 +277,10 @@ async fn mcp_transport_lists_client_policy_resources() -> TestResult {
     assert!(plugin.contains("memory-loop"));
     assert!(plugin.contains("memory-recall"));
     assert!(plugin.contains("memory-capture"));
+    assert!(plugin.contains("work-tracking"));
     assert!(plugin.contains("memory-maintenance"));
     assert!(plugin.contains("aionforge-memory-steward"));
+    assert!(plugin.contains("SessionStart hook"));
     assert!(plugin.contains("memory-session"));
     assert!(plugin.contains("[mcp_servers.aionforge_memory]"));
     assert!(!plugin.contains("aionforge_memory_plugin"));

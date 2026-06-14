@@ -14,7 +14,7 @@
 > console in a later release.
 
 Aionforge Memory is a Rust memory layer for agent systems. It stores episodes,
-facts, notes, skills, bad patterns, core memory, and audit events in
+facts, notes, skills, bad patterns, work items, core memory, and audit events in
 [`selene-db`](https://github.com/jscott3201/selene-db), then retrieves
 relevant context with lexical anchors, vector search, graph traversal, recency,
 importance, and trust signals.
@@ -39,6 +39,32 @@ new instructions.
   quorum-gated promotion across namespaces.
 - Runs as a Rust library, a single CLI binary, or an MCP server over stdio or
   Streamable HTTP.
+
+## Plugins and skills
+
+The repository ships an agent plugin at
+[`plugins/aionforge-memory`](plugins/aionforge-memory/README.md) that keeps memory
+*in the task loop* rather than as an afterthought. It packages small, single-sourced
+Agent Skills for an externally configured Aionforge Memory MCP server:
+
+- `memory-recall` — search durable memory before planning, coding, review, or release.
+- `memory-capture` — write decisions, facts, validation results, corrections, and handoffs *as they happen*.
+- `work-tracking` — track tasks, blockers, TODOs, and plans as durable **work items** (`work_create` → `work_advance` → `work_link`), distinct from decaying memory episodes.
+- `memory-loop` — use all of the above through a whole task: recall first, capture and track continuously, finish with a handoff.
+- `memory-maintenance` — inspect backlog, audit provenance, consolidate, forget, or restore.
+
+The skills are plain `SKILL.md` Agent Skills, so the same instructions work across
+clients that support the format. **Claude Code** and **Codex** get the deepest
+integration; the plugin also includes compatibility manifests for Cursor. For Claude
+Code it additionally ships a default `aionforge-memory-steward` agent, the
+`/aionforge-memory:memory-session` and `/aionforge-memory:memory-handoff` commands,
+and a `SessionStart` hook that re-seeds the capture/work-tracking cadence into a fresh
+context after a startup, resume, or context compaction.
+
+The plugin never registers an MCP server of its own — configure the standalone
+`aionforge-memory` server separately (see
+[docs/mcp-clients.md](docs/mcp-clients.md)); the skills assume it exists. See the
+[plugin README](plugins/aionforge-memory/README.md) for install and identity details.
 
 ## What it is not
 

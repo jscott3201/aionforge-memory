@@ -1,0 +1,13 @@
+interface:
+  display_name: "Work Tracking"
+  short_description: "Track tasks, blockers, and TODOs as durable work items"
+  default_prompt: "Track tasks, blockers, and TODOs as Aionforge Memory work items: work_create when one appears, then work_advance as status changes. Tasks are work items, not memory episodes; there is no note to store directly."
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "aionforge_memory"
+      description: "Aionforge Memory MCP server"
+      transport: "streamable_http"
+      url: "http://127.0.0.1:3918/mcp"
+policy:
+  allow_implicit_invocation: true

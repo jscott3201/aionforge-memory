@@ -1,7 +1,7 @@
 interface:
   display_name: "Memory Capture"
   short_description: "Persist decisions, facts, handoffs, and outcomes"
-  default_prompt: "Capture durable decisions, validation results, user preferences, and handoffs in Aionforge Memory."
+  default_prompt: "Capture durable facts (decisions, validation results, user preferences, handoffs) in Aionforge Memory the moment they land, not at the end. Tasks are work items (work_create), not memory episodes; there is no note to store directly."
 dependencies:
   tools:
     - type: "mcp"

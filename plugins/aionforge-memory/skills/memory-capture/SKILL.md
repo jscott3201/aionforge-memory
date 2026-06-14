@@ -12,6 +12,15 @@ Requires an enabled Aionforge Memory MCP server.
 
 Use this skill to make useful work durable. Prefer several focused captures over one sparse summary.
 
+Capture *as you go*, not at the end. The moment a durable fact lands — a decision made, a fix verified, a release or CI state change, a user preference learned, an approach rejected — write it. Batching to the end loses the precise context, and a context compaction can discard it first.
+
+## Route To The Right Node
+
+`capture` writes a memory **episode**: a durable fact that decays over time and can be superseded or forgotten. Two things are *not* episodes:
+
+- A **task, blocker, TODO, or plan step** is a **work item**, not a memory. Use the `work-tracking` skill (`work_create` → `work_advance`); work items persist and are status-tracked.
+- There is **no "note" you store directly.** Notes are derived by `consolidate` from episodes — never written by hand. If a "note" tempts you, it is either a durable fact (`capture`) or a thing to do (`work_create`).
+
 ## Procedure
 
 1. Write memory when the user asks, when project instructions grant standing permission, or when a substantial task produces durable facts future agents should know.

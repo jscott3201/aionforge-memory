@@ -21,6 +21,11 @@ Use this skill when the task is about the memory system itself.
 5. Use `forget` or `unforget` only when the user explicitly names the target memory id or asks for a specific lifecycle change.
 6. After lifecycle changes, search again when the user needs confirmation of visible recall state.
 
+## Scope
+
+- This skill maintains memory **episodes** and their derived work: consolidation, audit, decay, forget, and restore.
+- **Work items are out of scope here.** They are persistent and exempt from decay and forget; manage them with the `work-tracking` skill (`work_advance` to retire one to `done`/`dropped`), not `forget`. `work_advance` is itself audited, so `audit_history` still explains a work item's transitions.
+
 ## Defaults
 
 - Preserve memory ids in answers.

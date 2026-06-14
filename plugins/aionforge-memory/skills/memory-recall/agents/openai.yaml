@@ -1,7 +1,7 @@
 interface:
   display_name: "Memory Recall"
   short_description: "Recall durable Aionforge Memory context"
-  default_prompt: "Search Aionforge Memory before planning or answering when prior context could matter."
+  default_prompt: "Search Aionforge Memory before planning or answering when prior context could matter; recall open work (tasks, blockers) with work_query or work_tree."
 dependencies:
   tools:
     - type: "mcp"

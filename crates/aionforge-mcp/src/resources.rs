@@ -138,9 +138,11 @@ The repository ships a plugin at plugins/aionforge-memory.
 It bundles:
 - skills/memory-loop: use memory through a whole task: recall first, capture useful state during work, and finish with a handoff.
 - skills/memory-recall: search durable memory before planning, coding, review, debugging, release, or support work.
-- skills/memory-capture: capture decisions, project facts, validation results, corrections, and handoffs.
+- skills/memory-capture: capture decisions, project facts, validation results, corrections, and handoffs as they happen.
+- skills/work-tracking: track tasks, blockers, and TODOs as durable work items (work_create, work_advance, work_link), distinct from decaying memory episodes.
 - skills/memory-maintenance: inspect backlog, audit provenance, consolidate derived work, forget, or restore memory.
-- Claude Code agent aionforge-memory-steward: keeps recall, capture, and handoff in the main task loop.
+- Claude Code agent aionforge-memory-steward: keeps recall, capture, work-tracking, and handoff in the main task loop.
+- Claude Code SessionStart hook: re-seeds the capture/work-tracking cadence into a fresh context after a startup, resume, or compaction.
 - Claude Code commands /aionforge-memory:memory-session and /aionforge-memory:memory-handoff.
 
 No client manifest registers an MCP server. Configure the Aionforge MCP endpoint separately as `aionforge-memory` (see the client mcp.json templates) so the plugin does not collide with a user-managed server of the same name; the skills assume that server exists.
