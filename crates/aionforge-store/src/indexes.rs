@@ -216,6 +216,35 @@ pub struct VectorIndexStats {
     pub ivf_rebuild_recommended: bool,
 }
 
+/// One vector index whose live kind was reconciled to the catalog kind on open.
+///
+/// Returned by [`Store::reconcile_vector_index_kinds`] so the caller can emit one
+/// observability line per drop-and-recreate (the "auto-reconcile + metric" policy).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VectorKindReconciliation {
+    /// The indexed node label.
+    pub label: String,
+    /// The indexed vector property.
+    pub property: String,
+    /// The Debug-rendered kind the index had before reconciliation.
+    pub from_kind: String,
+    /// The Debug-rendered catalog kind the index now has.
+    pub to_kind: String,
+}
+
+/// The catalog kind declared for `(label, property)` in [`VECTOR_INDEXES`], or `None`
+/// when the pair is not a declared embedding index. The catalog is the single source of
+/// truth for the expected kind (mirrors `doctor::expected_vector_kind`, but returns the
+/// enum for a direct, Debug-free comparison against the live index entry).
+fn catalog_vector_kind(label: &str, property: &str) -> Option<VectorIndexKind> {
+    VECTOR_INDEXES
+        .iter()
+        .find(|(declared_label, declared_property, _kind)| {
+            *declared_label == label && *declared_property == property
+        })
+        .map(|&(_label, _property, kind)| kind)
+}
+
 impl Store {
     /// Register every §7–§8 index, idempotently. Called from the migration.
     pub(crate) fn register_indexes(&self, embedding_dimension: u32) -> Result<(), StoreError> {
@@ -231,26 +260,105 @@ impl Store {
             if self.vector_index_exists(label, property) {
                 continue;
             }
-            // selene rejects an HNSW construction config on a non-HNSW index
-            // (VectorIndexInvalidHnswConfig), so attach the HNSW config only to HNSW
-            // kinds; the TurboQuant/IVF cosine kinds take the empty default (their
-            // construction parameters are engine-internal).
-            let config = if kind.hnsw_metric().is_some() {
-                VectorIndexConfig::hnsw(HnswIndexConfig::DEFAULT)
-            } else {
-                VectorIndexConfig::default()
-            };
-            let name = db_string(&format!("vec_{label}_{property}"))?;
-            self.graph().create_vector_index_named_with_configs(
-                db_string(label)?,
-                db_string(property)?,
-                kind,
-                dimension,
-                Some(name),
-                config,
-            )?;
+            self.create_vector_index_for(label, property, kind, dimension)?;
         }
         Ok(())
+    }
+
+    /// Create one vector index with the kind-appropriate construction config.
+    ///
+    /// Shared by the migration's [`Store::register_vector_indexes`] (fresh creation) and
+    /// the recovery-time [`Store::reconcile_vector_index_kinds`] (drop-then-recreate), so
+    /// both paths build an index identically — there is no second create path to drift.
+    /// selene backfills the new index from the primary VECTOR columns, so a recreate is
+    /// non-lossy.
+    fn create_vector_index_for(
+        &self,
+        label: &str,
+        property: &str,
+        kind: VectorIndexKind,
+        dimension: u32,
+    ) -> Result<(), StoreError> {
+        // selene rejects an HNSW construction config on a non-HNSW index
+        // (VectorIndexInvalidHnswConfig), so attach the HNSW config only to HNSW kinds;
+        // the TurboQuant/IVF cosine kinds take the empty default (their construction
+        // parameters are engine-internal).
+        let config = if kind.hnsw_metric().is_some() {
+            VectorIndexConfig::hnsw(HnswIndexConfig::DEFAULT)
+        } else {
+            VectorIndexConfig::default()
+        };
+        let name = db_string(&format!("vec_{label}_{property}"))?;
+        self.graph().create_vector_index_named_with_configs(
+            db_string(label)?,
+            db_string(property)?,
+            kind,
+            dimension,
+            Some(name),
+            config,
+        )?;
+        Ok(())
+    }
+
+    /// Reconcile each catalog vector index whose live kind disagrees with the catalog,
+    /// by dropping it and recreating it at the catalog kind. selene backfills the new
+    /// index from the primary VECTOR columns, so the recreate is non-lossy.
+    ///
+    /// This is the interim "remove the greenfield tax" step (steward backlog #7): a
+    /// kind-only catalog change (e.g. `HnswCosine` -> `TurboQuantCosine`) converges on
+    /// the next open instead of forcing a fresh store. It needs no new graph types, so
+    /// it is safe to run on a recovered, already-migrated graph.
+    ///
+    /// Dimension-preserving by construction: an index whose dimension disagrees with
+    /// `embedder_dimension` is LEFT ALONE, because that is the embedder-changed case — a
+    /// lossy re-embed that [`Store::dimension_consistency_check`] must reject loudly,
+    /// not one reconciliation should silently paper over. Callers run this BEFORE that
+    /// check so the dimension guard still fires on a real embedder change.
+    ///
+    /// Idempotent: a second run finds no mismatches and returns an empty report. Each
+    /// drop+create is its own engine commit, so a crash mid-reconcile leaves a partially
+    /// converged store that the next open re-reconciles.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if dropping or recreating an index fails.
+    pub(crate) fn reconcile_vector_index_kinds(
+        &self,
+        embedder_dimension: u32,
+    ) -> Result<Vec<VectorKindReconciliation>, StoreError> {
+        // Snapshot the mismatches BEFORE mutating: dropping an index invalidates the live
+        // index iterator, so the drop loop cannot borrow it. Each tuple is
+        // (label, property, catalog_kind, from_kind_debug).
+        let pending: Vec<(String, String, VectorIndexKind, String)> = self
+            .graph()
+            .read()
+            .iter_vector_index_entries()
+            .filter_map(|(label, property, kind, dimension, ..)| {
+                let label = label.as_str().to_owned();
+                let property = property.as_str().to_owned();
+                let expected = catalog_vector_kind(&label, &property)?;
+                // Reconcile only a kind drift at the right dimension; skip indexes already
+                // at the catalog kind and dimension-mismatched indexes (deferred to the
+                // dimension check).
+                (kind != expected && dimension == embedder_dimension)
+                    .then(|| (label, property, expected, format!("{kind:?}")))
+            })
+            .collect();
+
+        let mut reconciled = Vec::with_capacity(pending.len());
+        for (label, property, to_kind, from_kind) in pending {
+            // Drop, then recreate at the catalog kind. selene backfills from the primary
+            // VECTOR columns, so no embedding is lost or re-embedded.
+            self.graph()
+                .drop_vector_index(db_string(&label)?, db_string(&property)?)?;
+            self.create_vector_index_for(&label, &property, to_kind, embedder_dimension)?;
+            reconciled.push(VectorKindReconciliation {
+                label,
+                property,
+                from_kind,
+                to_kind: format!("{to_kind:?}"),
+            });
+        }
+        Ok(reconciled)
     }
 
     fn register_text_indexes(&self) -> Result<(), StoreError> {
@@ -432,5 +540,153 @@ impl Store {
                 )
             })
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::StoreConfig;
+    use aionforge_domain::time::Timestamp;
+
+    const DIM: u32 = 4;
+
+    fn now() -> Timestamp {
+        "2026-06-06T12:00:00-05:00[America/Chicago]"
+            .parse()
+            .expect("valid zoned datetime")
+    }
+
+    /// A migrated in-memory store at a small embedding dimension.
+    fn migrated() -> Store {
+        let store = Store::open_with_config(StoreConfig {
+            embedding_dimension: DIM,
+        })
+        .expect("open store");
+        store.migrate(&now()).expect("migrate");
+        store
+    }
+
+    /// The live kind of `(label, property)`, Debug-rendered, or `None` if absent.
+    fn live_kind(store: &Store, label: &str, property: &str) -> Option<String> {
+        store
+            .vector_indexes()
+            .into_iter()
+            .find(|index| index.label == label && index.property == property)
+            .map(|index| index.kind)
+    }
+
+    /// Simulate catalog drift: replace a live index with one of a different kind /
+    /// dimension, the way a store written before a catalog change would carry it.
+    fn force_index(store: &Store, label: &str, property: &str, kind: VectorIndexKind, dim: u32) {
+        store
+            .graph()
+            .drop_vector_index(db_string(label).unwrap(), db_string(property).unwrap())
+            .expect("drop");
+        store
+            .create_vector_index_for(label, property, kind, dim)
+            .expect("recreate at drifted kind");
+    }
+
+    #[test]
+    fn reconcile_converges_a_drifted_kind_to_the_catalog() {
+        let store = migrated();
+        // Simulate a pre-TurboQuant store: Episode.embedding_v1 carries an HnswCosine index.
+        force_index(
+            &store,
+            "Episode",
+            "embedding_v1",
+            VectorIndexKind::HnswCosine,
+            DIM,
+        );
+        assert_eq!(
+            live_kind(&store, "Episode", "embedding_v1").as_deref(),
+            Some("HnswCosine"),
+            "drift is in place before reconciliation"
+        );
+
+        let reconciled = store.reconcile_vector_index_kinds(DIM).expect("reconcile");
+
+        // Exactly the drifted index is reported, with both kinds named for the metric line.
+        assert_eq!(reconciled.len(), 1, "one index reconciled: {reconciled:?}");
+        let row = &reconciled[0];
+        assert_eq!(row.label, "Episode");
+        assert_eq!(row.property, "embedding_v1");
+        assert_eq!(row.from_kind, "HnswCosine");
+        assert_eq!(row.to_kind, "TurboQuantCosine");
+
+        // The live index now matches the catalog, at the same dimension, and the full set
+        // is intact (drop+recreate did not lose any index).
+        assert_eq!(
+            live_kind(&store, "Episode", "embedding_v1").as_deref(),
+            Some("TurboQuantCosine"),
+            "Episode index converged to the catalog kind"
+        );
+        assert_eq!(store.vector_indexes().len(), 7, "no index was lost");
+        assert!(
+            store
+                .vector_indexes()
+                .iter()
+                .all(|index| index.dimension == DIM),
+            "dimension preserved across reconciliation"
+        );
+
+        // The doctor — which detects kind mismatches independently — now reports clean.
+        let report = store.doctor_report().expect("doctor report");
+        assert!(
+            report.indexes.vector_kind_mismatches.is_empty(),
+            "doctor sees no kind mismatch after reconciliation: {:?}",
+            report.indexes.vector_kind_mismatches
+        );
+        assert!(report.indexes.ok, "index health is restored");
+    }
+
+    #[test]
+    fn reconcile_is_idempotent() {
+        let store = migrated();
+        force_index(
+            &store,
+            "Fact",
+            "embedding_v1",
+            VectorIndexKind::HnswCosine,
+            DIM,
+        );
+
+        let first = store.reconcile_vector_index_kinds(DIM).expect("first");
+        assert_eq!(first.len(), 1, "first run converges the drift");
+
+        // A clean store reconciles nothing — the all-catalog state is a fixed point.
+        let second = store.reconcile_vector_index_kinds(DIM).expect("second");
+        assert!(second.is_empty(), "second run is a no-op: {second:?}");
+    }
+
+    #[test]
+    fn reconcile_skips_a_dimension_mismatch_for_the_dimension_check() {
+        let store = migrated();
+        // A drifted kind AND a wrong dimension: the embedder-changed (lossy) case.
+        // Reconciliation is dimension-preserving, so it must leave this index untouched
+        // and let `dimension_consistency_check` reject it loudly instead.
+        force_index(
+            &store,
+            "Episode",
+            "embedding_v1",
+            VectorIndexKind::HnswCosine,
+            DIM * 2,
+        );
+
+        let reconciled = store.reconcile_vector_index_kinds(DIM).expect("reconcile");
+        assert!(
+            reconciled.is_empty(),
+            "dimension-mismatched index is left for the dimension check: {reconciled:?}"
+        );
+        assert_eq!(
+            live_kind(&store, "Episode", "embedding_v1").as_deref(),
+            Some("HnswCosine"),
+            "the mismatched index is untouched, not silently rebuilt"
+        );
+        assert!(
+            store.dimension_consistency_check(DIM).is_err(),
+            "the dimension check still fails loudly on the real embedder change"
+        );
     }
 }

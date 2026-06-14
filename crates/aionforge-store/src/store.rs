@@ -192,9 +192,11 @@ impl Store {
     /// land, the recovery baseline must come from the snapshot's recorded type.
     ///
     /// Recovery does not migrate — the schema is already present in the replayed log —
-    /// but it does re-run the §13.5 dimension-consistency check and the audit-signature
-    /// latch check (02 §4.11), both of which the version-guarded [`Store::migrate`]
-    /// would skip on an already-current graph.
+    /// but it does reconcile drifted vector-index kinds to the catalog (the interim
+    /// greenfield-tax fix; non-lossy, dimension-preserving) and re-run the §13.5
+    /// dimension-consistency check and the audit-signature latch check (02 §4.11), all of
+    /// which the version-guarded [`Store::migrate`] would skip on an already-current
+    /// graph.
     ///
     /// # Errors
     /// Returns [`StoreError`] if recovery fails (corrupt or mismatched persistence,
@@ -210,6 +212,14 @@ impl Store {
         )
         .map_err(StoreError::from_recovery)?;
         let store = Self::assemble(graph, config);
+        // Converge any vector index whose kind drifted from the catalog (e.g. a store
+        // written before the all-TurboQuant default) by dropping and recreating it at the
+        // catalog kind — non-lossy, the engine backfills from the primary vectors. Run
+        // BEFORE the dimension check so it stays dimension-preserving and a real
+        // embedder-dimension change still fails loudly. This removes the index-kind slice
+        // of the greenfield tax: a kind-only change converges on open, no fresh store.
+        let reconciled = store.reconcile_vector_index_kinds(config.embedding_dimension)?;
+        emit_index_kind_reconciliation(&reconciled);
         store.dimension_consistency_check(config.embedding_dimension)?;
         store.audit_signature_latch_check()?;
         Ok(store)
@@ -930,6 +940,28 @@ fn emit_open_metrics(mode: &'static str, result: &Result<Store, StoreError>, ela
         "outcome" => outcome,
     )
     .record(elapsed.as_secs_f64());
+}
+
+/// Record the recovery-time vector-index kind reconciliation: a counter per converged
+/// index plus a human-readable line, so the drop-and-recreate is observable (the
+/// "auto-reconcile + metric" policy). Silent when nothing drifted.
+fn emit_index_kind_reconciliation(reconciled: &[crate::indexes::VectorKindReconciliation]) {
+    for row in reconciled {
+        metrics::counter!(
+            "aionforge_store_vector_index_kind_reconciled_total",
+            "label" => row.label.clone(),
+            "property" => row.property.clone(),
+            "to_kind" => row.to_kind.clone(),
+        )
+        .increment(1);
+        tracing::info!(
+            label = %row.label,
+            property = %row.property,
+            from_kind = %row.from_kind,
+            to_kind = %row.to_kind,
+            "reconciled vector index kind to catalog on open (non-lossy rebuild)"
+        );
+    }
 }
 
 #[cfg(unix)]
