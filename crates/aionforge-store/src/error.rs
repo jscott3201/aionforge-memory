@@ -27,7 +27,7 @@ pub enum StoreError {
     /// well-formed but their format version predates the one this build reads, so
     /// the actionable response is to recreate the store fresh (greenfield — there is
     /// no in-place migration) and re-capture, not to attempt repair. Surfaced by
-    /// [`StoreError::from_recovery`] when recovery hits selene's typed
+    /// `StoreError::from_recovery` when recovery hits selene's typed
     /// [`UnsupportedVersion`](PersistError::UnsupportedVersion) gate, so the
     /// doctor/recover runbook can tell "store too old" apart from a damaged WAL.
     #[error(

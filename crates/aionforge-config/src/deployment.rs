@@ -55,10 +55,10 @@ impl Config {
     ///   mutation or re-validation*. This is the backward-compatibility keystone: a config with
     ///   no deployments and no selector is left byte-for-byte unchanged.
     /// - **`(None, deployments declared)`** — fail-closed. Returns
-    ///   [`ConfigError::missing`]`("active_deployment")`: declaring deployments forces an
+    ///   `ConfigError::missing``("active_deployment")`: declaring deployments forces an
     ///   explicit choice rather than silently running the top-level blocks.
     /// - **`(Some(name), _)`** — looks `name` up under `[deployments]`. An unknown name is
-    ///   [`ConfigError::invalid`]`("active_deployment", …)`; a known one has its `auth` and
+    ///   `ConfigError::invalid``("active_deployment", …)`; a known one has its `auth` and
     ///   `server` blocks cloned over the top-level fields, then the whole [`Config`] is
     ///   re-validated.
     ///
@@ -66,8 +66,8 @@ impl Config {
     /// deployment value, keeping the error space secret-free.
     ///
     /// # Errors
-    /// Returns [`ConfigError::missing`] when deployments are declared but none is selected,
-    /// [`ConfigError::invalid`] when the selected name is not declared, or any validation
+    /// Returns `ConfigError::missing` when deployments are declared but none is selected,
+    /// `ConfigError::invalid` when the selected name is not declared, or any validation
     /// error surfaced by re-running [`Config::validate`] after the splice.
     pub fn activate_deployment(&mut self, selected: Option<&str>) -> Result<(), ConfigError> {
         match (selected, self.deployments.is_empty()) {

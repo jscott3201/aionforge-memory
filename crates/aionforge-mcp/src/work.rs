@@ -68,7 +68,7 @@ pub struct WorkCreateToolParams {
         description = "Optional explicit target namespace, such as team:project-alpha. Omit for a private work item."
     )]
     pub target_namespace: Option<String>,
-    /// The acting agent namespace, agent:<id>. Legacy shorthand for principal.agent_id.
+    /// The acting agent namespace, `agent:<id>`. Legacy shorthand for principal.agent_id.
     #[serde(default)]
     #[schemars(
         description = "The acting agent namespace, agent:<id>. Legacy shorthand for principal.agent_id."
@@ -100,7 +100,7 @@ pub struct WorkAdvanceToolParams {
         description = "Optional expected current status (snake_case); when set, the advance is refused unless it matches (a guarded compare-and-set)."
     )]
     pub expected_from: Option<String>,
-    /// The acting agent namespace, agent:<id>. Legacy shorthand for principal.agent_id.
+    /// The acting agent namespace, `agent:<id>`. Legacy shorthand for principal.agent_id.
     #[serde(default)]
     #[schemars(
         description = "The acting agent namespace, agent:<id>. Legacy shorthand for principal.agent_id."
@@ -127,7 +127,7 @@ pub struct WorkLinkToolParams {
     /// Optional human-readable display name, recorded when the tag is first minted.
     #[schemars(description = "Optional display name, recorded when the tag is first minted.")]
     pub display: Option<String>,
-    /// The acting agent namespace, agent:<id>. Legacy shorthand for principal.agent_id.
+    /// The acting agent namespace, `agent:<id>`. Legacy shorthand for principal.agent_id.
     #[serde(default)]
     #[schemars(
         description = "The acting agent namespace, agent:<id>. Legacy shorthand for principal.agent_id."
@@ -153,7 +153,7 @@ pub struct WorkTreeToolParams {
         description = "How many generations of descendants to include below the root (default 3, max 8)."
     )]
     pub depth: Option<usize>,
-    /// The reading agent namespace, agent:<id>.
+    /// The reading agent namespace, `agent:<id>`.
     #[serde(default)]
     #[schemars(description = "The reading agent namespace, agent:<id>.")]
     pub viewer: Option<String>,
@@ -182,7 +182,7 @@ pub struct WorkQueryToolParams {
     /// Maximum items to return (default 50, max 200).
     #[schemars(description = "Maximum items to return (default 50, max 200).")]
     pub limit: Option<usize>,
-    /// The reading agent namespace, agent:<id>.
+    /// The reading agent namespace, `agent:<id>`.
     #[serde(default)]
     #[schemars(description = "The reading agent namespace, agent:<id>.")]
     pub viewer: Option<String>,

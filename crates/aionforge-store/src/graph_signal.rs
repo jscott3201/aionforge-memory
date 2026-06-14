@@ -15,7 +15,7 @@
 //!
 //! ## Why one session
 //! A selene graph projection lives in the *session*, not the graph, so the projection and
-//! the PageRank over it must run in a single session — hence [`Store::execute_session`]
+//! the PageRank over it must run in a single session — hence [`Store::execute_session_within`]
 //! rather than two [`Store::execute`] calls. The projection is ephemeral: it is built per
 //! call and dies with the session, so there is no cross-call cache to invalidate as the
 //! graph advances.
