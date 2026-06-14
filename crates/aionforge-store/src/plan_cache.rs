@@ -4,7 +4,7 @@
 //! process-lifetime graph and runs fixed, parameter-bound source strings (capture,
 //! recall, RRF, pagerank, dedup, …). selene 1.2 lets short-lived sessions share one
 //! parse/lower cache per graph: this module builds that pair once per
-//! [`Store`](crate::Store) so the same plans are reused across the many requests
+//! [`Store`] so the same plans are reused across the many requests
 //! instead of being re-parsed and re-lowered on every call.
 
 use std::num::NonZeroUsize;

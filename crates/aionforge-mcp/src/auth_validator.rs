@@ -9,13 +9,13 @@
 //!
 //! # What it owns
 //!
-//! * [`AuthValidators`] — built once at startup from an [`AuthConfig`](aionforge_config::AuthConfig).
-//!   It holds one [`JwtValidator`](aionforge_auth::JwtValidator) per trusted issuer (keyed by the
+//! * [`AuthValidators`] — built once at startup from an [`AuthConfig`].
+//!   It holds one [`JwtValidator`] per trusted issuer (keyed by the
 //!   exact `iss` string), the RFC 9728 well-known path, the resource identifier, and the issuer
 //!   origins for posture reporting. It carries **no secret** — no token, no JWKS, no key.
 //! * [`AuthValidators::authenticate`] — the per-request gate a Tower validator (the cli's
 //!   `HttpMcpRouter`) calls for each `/mcp` request. It extracts the Bearer token, selects the
-//!   issuer by the token's `iss`, validates it, maps the claims to a [`Principal`], and on success
+//!   issuer by the token's `iss`, validates it, maps the claims to a `Principal`, and on success
 //!   returns the [`ValidatedPrincipal`] to insert into the request's
 //!   `http::request::Parts.extensions` (the two-level nesting PR4 reads). Every failure is a
 //!   secret-free `401`/`403` [`HttpResponse`] the caller returns verbatim.
@@ -192,7 +192,7 @@ impl AuthValidators {
     ///    route, and an unrecognized issuer is rejected, never trusted.
     /// 3. Validate the token (signature, issuer, audience, algorithm, expiry). Any failure ⇒
     ///    `401` (`error="invalid_token"`); the [`AuthError`] is never echoed into the response.
-    /// 4. Map the verified claims to a [`Principal`]. A [`MapError`] ⇒ `403`
+    /// 4. Map the verified claims to a `Principal`. A [`MapError`] ⇒ `403`
     ///    (`error="insufficient_scope"`, reason `ERR_PRINCIPAL_MAPPING`); e.g. an unanchored
     ///    writer is refused here.
     ///
@@ -200,7 +200,7 @@ impl AuthValidators {
     /// `http::request::Parts.extensions` — the two-level nesting PR4 reads back.
     ///
     /// # Errors
-    /// Returns the secret-free `401`/`403` [`HttpResponse`] to send when authentication fails.
+    /// Returns the secret-free `401`/`403` `HttpResponse` to send when authentication fails.
     pub async fn authenticate(
         &self,
         authorization: Option<&HeaderValue>,
