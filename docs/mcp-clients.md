@@ -169,11 +169,18 @@ enabled_tools = [
   "session_manifest",
   "consolidation_status",
   "audit_history",
+  "work_tree",
+  "work_query",
   "capture",
   "batch_capture",
   "consolidate",
   "forget",
   "unforget",
+  "pin",
+  "unpin",
+  "work_create",
+  "work_advance",
+  "work_link",
 ]
 [mcp_servers.aionforge_memory.tools.server_status]
 approval_mode = "approve"
@@ -187,6 +194,10 @@ approval_mode = "approve"
 approval_mode = "approve"
 [mcp_servers.aionforge_memory.tools.audit_history]
 approval_mode = "approve"
+[mcp_servers.aionforge_memory.tools.work_tree]
+approval_mode = "approve"
+[mcp_servers.aionforge_memory.tools.work_query]
+approval_mode = "approve"
 [mcp_servers.aionforge_memory.tools.capture]
 approval_mode = "prompt"
 [mcp_servers.aionforge_memory.tools.batch_capture]
@@ -196,6 +207,16 @@ approval_mode = "prompt"
 [mcp_servers.aionforge_memory.tools.forget]
 approval_mode = "prompt"
 [mcp_servers.aionforge_memory.tools.unforget]
+approval_mode = "prompt"
+[mcp_servers.aionforge_memory.tools.pin]
+approval_mode = "prompt"
+[mcp_servers.aionforge_memory.tools.unpin]
+approval_mode = "prompt"
+[mcp_servers.aionforge_memory.tools.work_create]
+approval_mode = "prompt"
+[mcp_servers.aionforge_memory.tools.work_advance]
+approval_mode = "prompt"
+[mcp_servers.aionforge_memory.tools.work_link]
 approval_mode = "prompt"
 ```
 
@@ -269,11 +290,18 @@ rules for this server:
     "aionforge-memory_session_manifest": "allow",
     "aionforge-memory_consolidation_status": "allow",
     "aionforge-memory_audit_history": "allow",
+    "aionforge-memory_work_tree": "allow",
+    "aionforge-memory_work_query": "allow",
     "aionforge-memory_capture": "ask",
     "aionforge-memory_batch_capture": "ask",
     "aionforge-memory_consolidate": "ask",
     "aionforge-memory_forget": "ask",
-    "aionforge-memory_unforget": "ask"
+    "aionforge-memory_unforget": "ask",
+    "aionforge-memory_pin": "ask",
+    "aionforge-memory_unpin": "ask",
+    "aionforge-memory_work_create": "ask",
+    "aionforge-memory_work_advance": "ask",
+    "aionforge-memory_work_link": "ask"
   }
 }
 ```
@@ -311,15 +339,20 @@ Authorization header.
 ## Tool approval posture
 
 Read-like tools are `server_status`, `search`, `read_memory`,
-`session_manifest`, `consolidation_status`, and `audit_history`. `read_memory`
+`session_manifest`, `consolidation_status`, `audit_history`, `work_tree`, and
+`work_query`. `work_tree` returns a work item's subtree and `work_query` filters
+work items by `work_status` and/or `level`. `read_memory`
 reads 1..=16 visible captured memories by receipt id (missing or unauthorized
 ids are silently absent; `full=true` returns untruncated bodies);
 `session_manifest` lists the visible captured memories for a session. `audit_history` reads the principal-scoped audit subgraph by
 subject, by `kind`, or by subject+kind; when `subject_id` is omitted, `kind` is
 required and the compact output uses `subject=*` while listing each row's
 subject. Mutating tools are `capture`, `batch_capture`, `consolidate`, `forget`,
-and `unforget`; configure clients to ask before running them unless the host has a
-stronger local policy. `batch_capture` captures an array of memories (1..=64) in
+`unforget`, `pin`, `unpin`, `work_create`, `work_advance`, and `work_link`;
+configure clients to ask before running them unless the host has a stronger local
+policy. `pin`/`unpin` hold or release a memory against decay; `work_create`,
+`work_advance` (a guarded, audited status compare-and-set), and `work_link` create
+and maintain work items. `batch_capture` captures an array of memories (1..=64) in
 one call under a single shared writer identity, committing each item best-effort
 in input order: it returns a `[batch_capture] items/new/dup/err` header then one
 `[capture]` receipt or `ERR_ITEM[i]` line per item, where `dup` counts stored

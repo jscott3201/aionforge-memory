@@ -88,16 +88,29 @@ The honest scope boundary is documented in
 The MCP server supports stdio and local Streamable HTTP. Put an OAuth-aware
 front end in front of HTTP before exposing it beyond loopback.
 
-Tools:
+Read-like tools (allowed without a prompt):
 
-- `capture`
 - `search`
-- `forget`
-- `unforget`
-- `consolidate`
+- `read_memory`
+- `session_manifest`
 - `consolidation_status`
 - `audit_history`
 - `server_status`
+- `work_tree`
+- `work_query`
+
+Mutating tools (gated by the client approval policy):
+
+- `capture`
+- `batch_capture`
+- `forget`
+- `unforget`
+- `pin`
+- `unpin`
+- `consolidate`
+- `work_create`
+- `work_advance`
+- `work_link`
 
 Each tool is annotated with MCP safety hints. Responses are compact receipt
 lines rather than large JSON payloads. Recalled memory is wrapped in a

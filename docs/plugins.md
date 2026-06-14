@@ -105,9 +105,11 @@ The plugin follows the MCP service posture:
   durable facts appear; Aionforge is designed for large memory sets.
 - User direction still wins: a user can ask the agent to remember, update,
   forget, audit, consolidate, or avoid memory for a task.
-- Read-like tools are `server_status`, `search`, `consolidation_status`, and
-  `audit_history`.
-- Mutating tools are `capture`, `consolidate`, `forget`, and `unforget`; keep
+- Read-like tools are `server_status`, `search`, `read_memory`,
+  `session_manifest`, `consolidation_status`, `audit_history`, `work_tree`, and
+  `work_query`.
+- Mutating tools are `capture`, `batch_capture`, `consolidate`, `forget`,
+  `unforget`, `pin`, `unpin`, `work_create`, `work_advance`, and `work_link`; keep
   them behind user approval unless your deployment has a stricter local rule.
 
 The server also publishes the compact resource
