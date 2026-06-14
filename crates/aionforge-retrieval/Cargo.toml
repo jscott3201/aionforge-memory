@@ -10,8 +10,8 @@ homepage.workspace = true
 description = "Hybrid retrieval: lexical/dense/graph/recency/trust signals, RRF fusion, query-class router, and the recall bundle."
 
 [dependencies]
-aionforge-domain = { path = "../aionforge-domain", version = "0.2.0" }
-aionforge-store = { path = "../aionforge-store", version = "0.2.0" }
+aionforge-domain = { path = "../aionforge-domain", version = "0.2.1" }
+aionforge-store = { path = "../aionforge-store", version = "0.2.1" }
 regex = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
@@ -19,8 +19,8 @@ tracing = { workspace = true }
 miette = { workspace = true }
 
 [dev-dependencies]
-aionforge-domain = { path = "../aionforge-domain", version = "0.2.0" }
-aionforge-store = { path = "../aionforge-store", version = "0.2.0" }
+aionforge-domain = { path = "../aionforge-domain", version = "0.2.1" }
+aionforge-store = { path = "../aionforge-store", version = "0.2.1" }
 tokio = { workspace = true }
 
 [lints]

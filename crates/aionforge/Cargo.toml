@@ -10,9 +10,9 @@ homepage.workspace = true
 description = "The public Rust library API for the Aionforge Memory substrate."
 
 [dependencies]
-aionforge-engine = { path = "../aionforge-engine", version = "0.2.0" }
-aionforge-domain = { path = "../aionforge-domain", version = "0.2.0" }
-aionforge-procedural = { path = "../aionforge-procedural", version = "0.2.0" }
+aionforge-engine = { path = "../aionforge-engine", version = "0.2.1" }
+aionforge-domain = { path = "../aionforge-domain", version = "0.2.1" }
+aionforge-procedural = { path = "../aionforge-procedural", version = "0.2.1" }
 
 [dev-dependencies]
 serde_json = { workspace = true }

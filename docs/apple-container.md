@@ -43,12 +43,12 @@ Equivalent raw commands:
 
 ```bash
 container system start
-container image pull --platform linux/arm64 ghcr.io/jscott3201/aionforge-memory:0.2.0
+container image pull --platform linux/arm64 ghcr.io/jscott3201/aionforge-memory:0.2.1
 container run -d \
   --name aionforge-memory \
   --platform linux/arm64 \
   --publish 127.0.0.1:3918:3918 \
-  ghcr.io/jscott3201/aionforge-memory:0.2.0
+  ghcr.io/jscott3201/aionforge-memory:0.2.1
 ```
 
 The runtime image keeps the same default command as Docker:
