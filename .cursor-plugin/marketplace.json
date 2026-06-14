@@ -15,8 +15,8 @@
       "author": {
         "name": "Aionforge Labs"
       },
-      "homepage": "https://github.com/Aionforge-Labs/aionforge-memory/tree/development/plugins/aionforge-memory",
-      "repository": "https://github.com/Aionforge-Labs/aionforge-memory",
+      "homepage": "https://github.com/jscott3201/aionforge-memory/tree/development/plugins/aionforge-memory",
+      "repository": "https://github.com/jscott3201/aionforge-memory",
       "license": "MIT OR Apache-2.0",
       "keywords": ["memory", "mcp", "agent-skills", "retrieval"],
       "category": "Productivity",

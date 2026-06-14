@@ -21,7 +21,7 @@ COPY --from=builder /workspace/target/release/aionforge /aionforge
 
 FROM debian:bookworm-slim AS runtime
 
-LABEL org.opencontainers.image.source="https://github.com/Aionforge-Labs/aionforge-memory"
+LABEL org.opencontainers.image.source="https://github.com/jscott3201/aionforge-memory"
 LABEL org.opencontainers.image.description="Aionforge Memory single-binary MCP server"
 
 ENV AIONFORGE_PERSISTENCE__DATA_DIR=/data

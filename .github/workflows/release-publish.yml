@@ -203,8 +203,8 @@ jobs:
       # Bind a signed SLSA provenance attestation to the pushed image digest and
       # store it in GHCR alongside the image. Only on a real tag push (the image
       # is not pushed on the workflow_dispatch dry run). Verify with:
-      #   gh attestation verify oci://ghcr.io/aionforge-labs/aionforge-memory:<ver> \
-      #     --repo Aionforge-Labs/aionforge-memory
+      #   gh attestation verify oci://ghcr.io/jscott3201/aionforge-memory:<ver> \
+      #     --repo jscott3201/aionforge-memory
       - name: attest container image provenance
         if: github.event_name == 'push'
         uses: actions/attest-build-provenance@v4
@@ -252,7 +252,7 @@ jobs:
           path: release-artifacts
           merge-multiple: true
       # Sign SLSA build provenance for each release tarball (keyless, via Sigstore).
-      # Verify with: gh attestation verify <file>.tar.gz --repo Aionforge-Labs/aionforge-memory
+      # Verify with: gh attestation verify <file>.tar.gz --repo jscott3201/aionforge-memory
       - name: attest release binary provenance
         uses: actions/attest-build-provenance@v4
         with:

@@ -32,8 +32,8 @@ fn redacts_an_email_and_records_the_original_span() {
 #[test]
 fn does_not_redact_ssh_git_remotes_as_email() {
     for remote in [
-        "git@github.com:Aionforge-Labs/aionforge-memory.git",
-        "ssh://git@github.com/Aionforge-Labs/aionforge-memory.git",
+        "git@github.com:jscott3201/aionforge-memory.git",
+        "ssh://git@github.com/jscott3201/aionforge-memory.git",
     ] {
         let out = filter().filter(remote).expect("filter");
         assert!(
