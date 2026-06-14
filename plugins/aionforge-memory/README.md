@@ -67,7 +67,9 @@ The Claude manifest does not register an MCP server. Configure the Aionforge MCP
 
 When the plugin is enabled in Claude Code, `settings.json` selects the `aionforge-memory-steward` agent by default. Run `/reload-plugins` after local edits, then check `/agents` and `/help` to confirm the agent and commands are loaded.
 
-Cursor can load it as a local plugin by symlinking or copying this directory into `~/.cursor/plugins/local/aionforge-memory`. Cursor reads `.cursor-plugin/plugin.json` for the skills; configure the Aionforge MCP server separately in Cursor's MCP settings.
+Cursor can load it as a local plugin by symlinking or copying this directory into `~/.cursor/plugins/local/aionforge-memory`. Cursor reads `.cursor-plugin/plugin.json`, which declares both the `skills/` and the bundled always-apply rule at `rules/aionforge-memory.mdc` (`alwaysApply: true`). On Cursor builds that surface plugin-bundled rules, that rule registers as an always-apply rule, keeping the recall/capture/work-tracking nudge active; confirm or adjust it under Settings > Rules. If your build does not surface plugin-bundled rules, drop the same `.mdc` into your project's `.cursor/rules/`. Configure the Aionforge MCP server separately in Cursor's MCP settings.
+
+For OpenCode and other editors (Windsurf, Cline, Zed, Gemini CLI, Aider) the nudge is a short block you add to that editor's always-on instructions file — see [`docs/agent-nudges.md`](../../docs/agent-nudges.md). It distills the same `NUDGE.md` cadence and vocabulary. MCP setup stays separate for every editor.
 
 ## Identity
 

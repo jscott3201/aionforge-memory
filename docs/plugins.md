@@ -31,7 +31,16 @@ approval hints.
 - Claude Code commands `/aionforge-memory:memory-session` and
   `/aionforge-memory:memory-handoff`: explicit workflows for starting a
   memory-backed task and ending with a durable handoff.
+- Cursor always-apply rule `rules/aionforge-memory.mdc` (`alwaysApply: true`):
+  declared by the Cursor manifest's `rules` field. On Cursor builds that surface
+  plugin-bundled rules it registers as an always-apply rule (confirm or adjust it under
+  Settings > Rules); otherwise drop the same `.mdc` into your project's `.cursor/rules/`.
 - Client manifests for Codex, Claude Code, and Cursor.
+
+For OpenCode and the best-effort tier (Windsurf, Cline, Zed, Gemini CLI, Aider), the
+same nudge is a short block the user adds to that editor's always-on instructions
+file; [`agent-nudges.md`](agent-nudges.md) is the per-editor wiring guide. All of it
+distills the canonical `plugins/aionforge-memory/NUDGE.md`.
 
 ## Identity Setup
 
@@ -79,10 +88,13 @@ the same name. The plugin root `settings.json` selects
 Code work starts with the memory loop available.
 
 Cursor can load the package as a local plugin from
-`~/.cursor/plugins/local/aionforge-memory`; it reads `.cursor-plugin/plugin.json`
-for the skills. As with Claude and Codex, the Cursor manifest does not register
-its own MCP server — configure the Aionforge endpoint separately in Cursor's MCP
-settings.
+`~/.cursor/plugins/local/aionforge-memory`; it reads `.cursor-plugin/plugin.json`,
+which declares both `skills/` and the bundled always-apply rule at
+`rules/aionforge-memory.mdc`. On Cursor builds that surface plugin-bundled rules, that
+rule registers as an always-apply rule (confirm it under Settings > Rules); if a build
+does not surface it, drop the same `.mdc` into your project's `.cursor/rules/`. As with
+Claude and Codex, the Cursor manifest does not register its own MCP server — configure
+the Aionforge endpoint separately in Cursor's MCP settings.
 
 ## Safety Posture
 

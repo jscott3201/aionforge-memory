@@ -165,16 +165,44 @@ if [ -f "$nudge_script" ] && [ ! -x "$nudge_script" ]; then
   fail "hook script is not executable: $nudge_script"
 fi
 
+# Cursor always-apply nudge rule, bundled and registered on install. It must be an
+# always-on rule (alwaysApply: true), declared by the Cursor manifest's rules field,
+# and carry no MCP config.
+cursor_rule="$plugin_dir/rules/aionforge-memory.mdc"
+require_file "$cursor_rule"
+require_grep "$cursor_rule" '^alwaysApply: true$' "Cursor always-apply rule type"
+# The .mdc is YAML+markdown, so guard the bare YAML `mcpServers:` key too, not just the
+# JSON-quoted token a manifest would use.
+reject_grep "$cursor_rule" '("mcpServers"|^[[:space:]]*mcpServers:)' "Cursor rule MCP path"
+# Anchor to the key AND value Cursor reads, mirroring the Codex skills-path check, so a
+# dropped/repointed field cannot pass on an incidental "rules" substring.
+require_grep "$plugin_dir/.cursor-plugin/plugin.json" '"rules"[[:space:]]*:[[:space:]]*"\./rules/"' "Cursor rules field"
+
+# Landscape wiring guide for the editors the plugin cannot auto-bundle.
+require_file "docs/agent-nudges.md"
+require_grep "docs/agent-nudges.md" 'OpenCode' "agent-nudges OpenCode coverage"
+
 # Vocabulary lock: every surface that nudges must route tasks to work items, so
 # work_create has to appear in the canonical source, the skill, the steward agent,
-# and the Codex default prompt. This catches a surface drifting off the shared lock.
+# the Codex default prompt, the Cursor rule, and the landscape guide. This catches a
+# surface drifting off the shared lock.
 for surface in \
   "$plugin_dir/NUDGE.md" \
   "$plugin_dir/skills/work-tracking/SKILL.md" \
   "$plugin_dir/agents/aionforge-memory-steward.md" \
-  "$plugin_dir/.codex-plugin/plugin.json"
+  "$plugin_dir/.codex-plugin/plugin.json" \
+  "$cursor_rule" \
+  "docs/agent-nudges.md"
 do
   require_grep "$surface" 'work_create' "work-item routing"
+done
+
+# The two new always-on surfaces (Cursor rule + landscape guide) are short distillations
+# with no SKILL.md body behind them, so lock the routing prose itself: the capture-vs-work
+# split and the notes-are-consolidation-derived rule must both be present.
+for surface in "$cursor_rule" "docs/agent-nudges.md"; do
+  require_grep "$surface" 'consolidate' "consolidate-derives-notes lock"
+  require_grep "$surface" 'no "note" to store directly|notes are derived' "no-direct-note routing lock"
 done
 
 if [ -e "$plugin_dir/.mcp.json" ]; then

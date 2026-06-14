@@ -1,7 +1,7 @@
 {
   "name": "aionforge-memory",
   "displayName": "Aionforge Memory",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Agent skills for using an externally configured Aionforge Memory MCP server as durable project memory.",
   "author": {
     "name": "Aionforge Labs",
