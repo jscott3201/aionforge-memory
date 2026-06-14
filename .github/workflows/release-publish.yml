@@ -5,8 +5,8 @@
 # tagged commit and, only if every check passes, publishes the GitHub Release.
 # A release therefore can never ship code that has not passed the gate.
 #
-# The artifact payload includes linux-musl binaries built through the Alpine
-# Docker builder, macOS binaries, and the Alpine runtime image pushed to GHCR
+# The artifact payload includes linux glibc binaries built through the Debian
+# Docker builder, macOS binaries, and the Debian runtime image pushed to GHCR
 # for linux/amd64 and linux/arm64.
 #
 # crates.io publishing is intentionally deferred until the selene-db 1.x crates
@@ -57,11 +57,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - target: x86_64-unknown-linux-musl
+          - target: x86_64-unknown-linux-gnu
             platform: linux/amd64
             runner: ubuntu-latest
             cache-scope: linux-binary-amd64
-          - target: aarch64-unknown-linux-musl
+          - target: aarch64-unknown-linux-gnu
             platform: linux/arm64
             runner: ubuntu-24.04-arm
             cache-scope: linux-binary-arm64
@@ -69,7 +69,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
-      - name: build Alpine binary artifact
+      - name: build linux binary artifact
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -144,7 +144,7 @@ jobs:
       - name: download Linux binary artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: aionforge-*-unknown-linux-musl
+          pattern: aionforge-*-unknown-linux-gnu
           path: dist/linux-artifacts
       - uses: docker/setup-qemu-action@v3
         with:
@@ -159,9 +159,9 @@ jobs:
       - name: prepare runtime image binaries
         run: |
           mkdir -p dist/docker/linux/amd64 dist/docker/linux/arm64
-          tar -xzf dist/linux-artifacts/aionforge-x86_64-unknown-linux-musl/aionforge-x86_64-unknown-linux-musl.tar.gz \
+          tar -xzf dist/linux-artifacts/aionforge-x86_64-unknown-linux-gnu/aionforge-x86_64-unknown-linux-gnu.tar.gz \
             -C dist/docker/linux/amd64
-          tar -xzf dist/linux-artifacts/aionforge-aarch64-unknown-linux-musl/aionforge-aarch64-unknown-linux-musl.tar.gz \
+          tar -xzf dist/linux-artifacts/aionforge-aarch64-unknown-linux-gnu/aionforge-aarch64-unknown-linux-gnu.tar.gz \
             -C dist/docker/linux/arm64
           chmod +x dist/docker/linux/amd64/aionforge dist/docker/linux/arm64/aionforge
       - name: compute runtime image metadata
