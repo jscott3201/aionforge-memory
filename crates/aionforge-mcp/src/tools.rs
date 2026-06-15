@@ -31,6 +31,15 @@ use crate::validated::ValidatedPrincipal;
 const DEFAULT_LIMIT: usize = 10;
 /// The most hits a single search will return, so a response stays small.
 const MAX_LIMIT: usize = 100;
+/// The most candidates a single search will generate per signal before fusion (the recall
+/// fan-out). Decoupled from `MAX_LIMIT` so a caller can cast a wide net for recall while
+/// still returning a small bundle; capped so one query stays bounded.
+///
+/// This bounds the per-signal `k` (how many candidates fusion sees), not the namespace-scoped
+/// episode scan itself: the scoped lexical/dense passes still examine the reader's whole
+/// visible scope to pick their top-`k`. The wall-clock cost of that scan is bounded separately
+/// by the recall deadline ([`aionforge_config::RetrievalConfig::recall_deadline_ms`]).
+const MAX_FANOUT: usize = 1000;
 /// The most items a single `batch_capture` call accepts, so one call stays bounded.
 pub const MAX_BATCH_ITEMS: usize = 64;
 
@@ -206,6 +215,13 @@ pub struct SearchToolParams {
         description = "Include episodes that have been superseded by a live replacement (default true)."
     )]
     pub include_superseded: Option<bool>,
+    /// Candidate fan-out per signal before fusion — the recall knob, decoupled from `limit`.
+    /// Raise it to widen recall (cast a wider net) without inflating the returned bundle;
+    /// omit to use the deployment default. Capped server-side.
+    #[schemars(
+        description = "Candidates generated per signal before fusion (recall fan-out), decoupled from limit. Higher = wider recall. Optional; capped server-side."
+    )]
+    pub fanout: Option<usize>,
 }
 
 /// Run the `capture` tool: stamp the event with `now`, capture it, and return a
@@ -475,6 +491,11 @@ pub async fn search_tool<E: Embedder>(
     let mut query = RecallQuery::new(params.query, principal, limit);
     query.options.now = Some(now.clone());
     query.options.include_superseded = params.include_superseded.unwrap_or(true);
+    // The recall fan-out knob (0 = use the deployment default), capped so one query stays
+    // bounded. Decoupled from `limit`: a wide net for recall, a small returned bundle.
+    if let Some(fanout) = params.fanout {
+        query.options.fanout = fanout.min(MAX_FANOUT);
+    }
     let bundle = memory
         .search(query)
         .await

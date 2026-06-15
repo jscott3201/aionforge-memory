@@ -16,7 +16,7 @@
 use std::collections::HashSet;
 use std::future::Future;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use aionforge_domain::authz::{Authorizer, DefaultAuthorizer};
 use aionforge_domain::contracts::{Embedder, Retriever};
@@ -35,7 +35,9 @@ use crate::selection::{
     bail_if_past, core_block_entries, effective_fanout, fact_dense_ranking, fact_graph_ranking,
     fact_lexical_ranking, fact_support_ranking, lexical_anchor_ranking, select, trust_rankings,
 };
-use crate::signals::{Signal, dense_ranking_for, embed_query, graph_ranking_for, lexical_ranking};
+use crate::signals::{
+    Signal, dense_ranking_in_nodes, embed_query, graph_ranking_for, lexical_ranking_in_nodes,
+};
 use crate::trace;
 
 /// The hard ceiling on [`RetrieverConfig::support_expansion_depth`] — the "bounded" half
@@ -78,6 +80,13 @@ pub struct RetrieverConfig {
     /// window, when cooling is enabled. In `(0, 1]`; out-of-range values are inert
     /// (the domain guard never zeroes a rank on misconfiguration).
     pub cooling_factor: f64,
+    /// The wall-clock budget applied to a recall whose caller left `RecallOptions::deadline`
+    /// unset (03 §8). `None` leaves an un-budgeted recall unbounded. This is the live cost
+    /// guard for the namespace-scoped episode scans: the scoped lexical/dense passes sweep
+    /// the reader's whole visible scope, and the engine's per-block cancellation only fires
+    /// when some deadline exists — so a deployment default here is what bounds a recall over a
+    /// large team namespace. An explicit per-query deadline always takes precedence (03 §6).
+    pub default_recall_budget: Option<Duration>,
 }
 
 impl Default for RetrieverConfig {
@@ -90,6 +99,10 @@ impl Default for RetrieverConfig {
             semantic_half_life_secs: 31_536_000.0,
             cooling_enabled: false,
             cooling_factor: 0.5,
+            // A generous safety ceiling, not a tuning target: a healthy recall finishes in
+            // milliseconds, so 5s never trips a normal query but bounds the scoped scans on a
+            // busy store. The host overrides this from `[retrieval] recall_deadline_ms`.
+            default_recall_budget: Some(Duration::from_secs(5)),
         }
     }
 }
@@ -138,7 +151,14 @@ impl<E: Embedder> HybridRetriever<E> {
 
     async fn run_inner(&self, query: RecallQuery) -> Result<RecallBundle, RetrievalError> {
         let started = Instant::now();
-        let deadline = query.options.deadline.map(|budget| started + budget);
+        // A per-query deadline wins; otherwise the deployment's default recall budget applies,
+        // so the scoped episode scans (and the engine's per-block cancellation) always run
+        // against some ceiling rather than open-ended on a busy store (03 §6, §8).
+        let deadline = query
+            .options
+            .deadline
+            .or(self.config.default_recall_budget)
+            .map(|budget| started + budget);
 
         // 1. Classify (or honor an override).
         let profile = trace::stage_span("classify").in_scope(|| {
@@ -148,6 +168,36 @@ impl<E: Embedder> HybridRetriever<E> {
                 .map_or_else(|| route(&query.text), profile_for)
         });
         let classify_ms = started.elapsed().as_millis();
+        bail_if_past(deadline)?;
+
+        // The reader's visible namespace set, computed UP FRONT so episode candidate
+        // generation can be scoped to it (06 §1, 03 §6). Unlike facts (which the current-
+        // support set already bounds), the episode lexical/dense scans would otherwise sweep
+        // every namespace and spend the per-signal fan-out on episodes the reader cannot see,
+        // then drop them in the post-fusion authorization filter — starving a reader whose
+        // namespace is a minority of the store. The admin reveal (07 §4) widens the set in
+        // lockstep with `include_system`; the assemble stage reuses this same `visible`.
+        let surface_system =
+            query.options.include_system && self.authorizer.may_surface_system(&query.principal);
+        let visible = {
+            let base = self.authorizer.visible_namespaces(&query.principal);
+            if surface_system {
+                base.with_system()
+            } else {
+                base
+            }
+        };
+        // Every episode in a visible namespace, by id — the scope the episode lexical/dense
+        // signals generate candidates over. The per-signal fan-out then caps how many of
+        // these each signal ranks, spent entirely on episodes the reader may see. (The graph
+        // episode signal is not yet scoped — a tracked follow-up — but its post-fusion filter
+        // still bounds it to the visible set.)
+        let episode_scope = self
+            .store
+            .episode_nodes_in_namespaces(&visible.namespaces())?;
+        // Enumerating the visible scope is itself an indexed scan over the namespace; on a
+        // busy store it can be the first place a tight recall budget is spent, so bail here
+        // before fanning the signals over it rather than only at the next stage boundary.
         bail_if_past(deadline)?;
 
         // 2. Run the signals the profile weights call for, over both episodes and facts.
@@ -198,10 +248,13 @@ impl<E: Embedder> HybridRetriever<E> {
 
         if profile.weights.lexical > 0.0 {
             let _signal_span = trace::signal_span(Signal::Lexical, fanout).entered();
-            let episodes = lexical_ranking(
+            // Episodes are scoped to the reader's visible namespaces (06 §1, 03 §6); facts
+            // ride their own current-support scoping below.
+            let episodes = lexical_ranking_in_nodes(
                 &self.store,
                 SearchKind::Episode,
                 &query.text,
+                &episode_scope,
                 fanout,
                 deadline,
             )?;
@@ -236,12 +289,15 @@ impl<E: Embedder> HybridRetriever<E> {
 
         if let Some(embedding) = &query_embedding {
             let _signal_span = trace::signal_span(Signal::Dense, fanout).entered();
-            let episodes = dense_ranking_for(
+            // Episodes are scoped to the reader's visible namespaces and exact-scored over
+            // that set (06 §1, 03 §6); the fact dense path keeps its current-support scoping
+            // and high-precision graph-seed composition below.
+            let episodes = dense_ranking_in_nodes(
                 &self.store,
                 SearchKind::Episode,
                 embedding,
+                &episode_scope,
                 fanout,
-                profile.exact_rerank,
                 deadline,
             )?;
             // The high-precision default path (03 §4): for the factual/temporal-current
@@ -411,25 +467,19 @@ impl<E: Embedder> HybridRetriever<E> {
         bail_if_past(deadline)?;
 
         // 3. Fuse, then resolve, authorize, temporally filter, and diversity-cap. The
-        //    reader's visible set is computed once here, through the injected authority,
-        //    so every candidate is gated by the same O(1) membership check (06 §1).
+        //    reader's visible set was computed up front (it now also scopes episode candidate
+        //    generation); every candidate is still gated by the same O(1) membership check
+        //    here (06 §1). The admin reveal (07 §4, M6.T02) was folded into `visible` /
+        //    `surface_system` above, in lockstep with `include_system`.
         let assemble_started = Instant::now();
         let _assemble_span = trace::stage_span("assemble").entered();
         let fused = fuse(&rankings, DEFAULT_RRF_K);
-        // The admin reveal (07 §4, M6.T02): system-role memories surface only when the
-        // caller requests it AND the injected authority grants the capability — the request
-        // flag alone is inert. When granted, BOTH exclusion gates lift in lockstep: the
-        // visible set admits the system namespace, and `admit_episode` skips the role gate.
-        let surface_system =
-            query.options.include_system && self.authorizer.may_surface_system(&query.principal);
-        let visible = {
-            let base = self.authorizer.visible_namespaces(&query.principal);
-            if surface_system {
-                base.with_system()
-            } else {
-                base
-            }
-        };
+        // The true candidate pool the selection examined — the distinct fused candidates
+        // across every signal, before authorization / temporal / supersession / diversity
+        // attrition. This is the honest "considered" count for the explanation: the gap
+        // between it and `returned` is the recall attrition an operator needs to see (it was
+        // previously reported as ~= returned, hiding it entirely; 03 §6).
+        let fused_pool = fused.len();
         // The identity pre-pass (05 §4): every live core block in the reader's
         // visible set is prepended ahead of the ranked results — identity is the
         // standing context a recall is read against, not a hit that competes on
@@ -452,7 +502,7 @@ impl<E: Embedder> HybridRetriever<E> {
         // 4. Structured view stays in score order behind the identity prefix; the
         //    rendered view re-sorts by serialization id so the same set renders
         //    byte-identically (03 §6).
-        let considered = selection.considered + core.len();
+        let considered = fused_pool + core.len();
         let mut structured = core;
         structured.extend(selection.entries);
         let mut rendered_order = structured.clone();

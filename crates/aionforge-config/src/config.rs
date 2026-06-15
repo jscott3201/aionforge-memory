@@ -165,20 +165,43 @@ impl Default for EmbedderConfig {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RetrievalConfig {
-    /// Default number of results when a query does not specify one.
+    /// Default per-signal candidate fan-out when a query does not set its own (the host
+    /// maps this to `RetrieverConfig::default_fanout`). This is the recall ceiling: each
+    /// retrieval signal generates at most this many candidates before fusion, so too small
+    /// a value silently caps recall (a relevant memory ranked past it is never retrieved).
+    /// It is NOT the returned-result count — the bundle is still bounded by the query's
+    /// `limit`; a generous fan-out with a modest limit gives fusion a deep pool to rank.
     pub default_k: u32,
     /// The reciprocal-rank-fusion constant (the conventional default is 60).
     pub fusion_constant: u32,
     /// The default retrieval mode label (e.g. `hybrid`, `lexical`, `vector`).
     pub default_mode: String,
+    /// The wall-clock budget, in milliseconds, applied to a recall whose caller did not set
+    /// its own deadline (the host maps this to `RetrieverConfig::default_recall_budget`).
+    /// `0` disables the default — a recall then runs unbounded unless the caller sets one.
+    ///
+    /// This is the live cost guard for the namespace-scoped episode scans: with a generous
+    /// `default_k` the scoped lexical/dense passes sweep the reader's whole visible scope, so
+    /// the engine's per-block cancellation only bites if some deadline is set. A non-zero
+    /// default ensures a pathological scope (a large team namespace) aborts the recall rather
+    /// than running it open-ended (03 §6, §8).
+    pub recall_deadline_ms: u64,
 }
 
 impl Default for RetrievalConfig {
     fn default() -> Self {
         Self {
-            default_k: 12,
+            // A deep default fan-out: with namespace-scoped episode generation the budget is
+            // spent on the reader's own memories, so a generous pool is cheap and keeps
+            // recall from silently capping on a busy store (was 12 — far too tight; see the
+            // search-recall investigation). The bundle is still limited by the query's limit.
+            default_k: 200,
             fusion_constant: 60,
             default_mode: "hybrid".to_owned(),
+            // A generous safety ceiling: a normal recall finishes in milliseconds, so 5s never
+            // trips a healthy query, but it bounds the scoped scans on a busy store so a recall
+            // cannot run open-ended. Set 0 to disable.
+            recall_deadline_ms: 5_000,
         }
     }
 }

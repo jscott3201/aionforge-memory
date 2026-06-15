@@ -203,7 +203,7 @@ fn bm25_candidate_scoped_restricts_to_candidates() {
     seed_text(&store, "graph algorithms and traversal");
 
     let hits = store
-        .text_score_nodes(SearchKind::Episode, "graph", &[g1, v], 10)
+        .text_score_nodes(SearchKind::Episode, "graph", &[g1, v], 10, None)
         .expect("scoped bm25");
     let nodes: Vec<NodeId> = hits.iter().map(|h| h.node).collect();
 
@@ -307,7 +307,7 @@ fn empty_candidate_set_returns_no_hits() {
     );
     assert!(
         store
-            .text_score_nodes(SearchKind::Episode, "graph", &[], 5)
+            .text_score_nodes(SearchKind::Episode, "graph", &[], 5, None)
             .expect("text score over empty candidates")
             .is_empty()
     );
@@ -353,5 +353,71 @@ fn nearest_active_episode_is_none_when_every_neighbour_is_expired() {
     assert!(
         nearest.is_none(),
         "an expired-only neighbourhood yields no active match"
+    );
+}
+
+/// Seed an episode in a specific namespace (optionally soft-forgotten); return its node id.
+/// The shared `episode` fixture hardcodes `agent:alice`, so the namespace-scope test sets it.
+fn seed_in_ns(store: &Store, content: &str, namespace: &Namespace, expired: bool) -> NodeId {
+    let mut ep = episode(content, None);
+    ep.identity.namespace = namespace.clone();
+    if expired {
+        ep.identity.expired_at = Some(ts("2026-06-07T00:00:00-05:00[America/Chicago]"));
+    }
+    store
+        .insert_episode(&ep)
+        .expect("seed episode in namespace")
+}
+
+/// `episode_nodes_in_namespaces` returns exactly the episodes in the requested namespaces
+/// (the namespace-scoped recall candidate set, 03 §6): it dedupes, includes soft-forgotten
+/// nodes (the `include_expired` gate decides their fate later), and never leaks an
+/// out-of-namespace episode.
+#[test]
+fn episode_nodes_in_namespaces_scopes_to_the_requested_namespaces() {
+    let store = store();
+    let alice = Namespace::Agent("alice".to_string());
+    let bob = Namespace::Agent("bob".to_string());
+
+    let a1 = seed_in_ns(&store, "alice one", &alice, false);
+    let a2 = seed_in_ns(&store, "alice two (forgotten)", &alice, true);
+    let _b1 = seed_in_ns(&store, "bob one", &bob, false);
+    let g1 = seed_in_ns(&store, "global one", &Namespace::Global, false);
+
+    // Alice's scope: her two episodes (including the soft-forgotten one), never bob's.
+    let alice_scope = store
+        .episode_nodes_in_namespaces(std::slice::from_ref(&alice))
+        .expect("alice scope");
+    let alice_set: HashSet<NodeId> = alice_scope.iter().copied().collect();
+    assert_eq!(alice_set.len(), alice_scope.len(), "no duplicate node ids");
+    assert!(
+        alice_set.contains(&a1) && alice_set.contains(&a2),
+        "both alice episodes, including the forgotten one: {alice_scope:?}"
+    );
+    assert_eq!(
+        alice_scope.len(),
+        2,
+        "exactly alice's episodes: {alice_scope:?}"
+    );
+
+    // A multi-namespace scope unions the members and still excludes bob.
+    let multi: HashSet<NodeId> = store
+        .episode_nodes_in_namespaces(&[alice, Namespace::Global])
+        .expect("multi scope")
+        .into_iter()
+        .collect();
+    assert!(
+        multi.contains(&a1) && multi.contains(&a2) && multi.contains(&g1),
+        "alice's two plus the global one are unioned: {multi:?}"
+    );
+    assert_eq!(multi.len(), 3, "alice (2) + global (1), no bob: {multi:?}");
+
+    // An empty request scopes to nothing.
+    assert!(
+        store
+            .episode_nodes_in_namespaces(&[])
+            .expect("empty scope")
+            .is_empty(),
+        "an empty namespace list yields no candidates"
     );
 }
