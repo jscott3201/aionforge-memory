@@ -42,6 +42,12 @@ pub struct ReadMemoryToolParams {
     #[schemars(description = "Explicit host-verified principal. Optional.")]
     pub principal: Option<HostPrincipalToolParam>,
     /// Teams the host asserts this reader belongs to.
+    ///
+    /// Read authorization gates on the teams asserted in **this** call (parity with `search`):
+    /// to resolve a memory in `team:<name>` by id you MUST list that team here. A by-id read
+    /// never auto-widens to a team namespace you have not asserted, so omitting the team yields
+    /// not-found for that id — indistinguishable from a missing id, by design (no existence
+    /// oracle). See [`read_memory_tool`].
     #[serde(default)]
     #[schemars(description = "Teams the host asserts this reader belongs to. Optional.")]
     pub teams: Vec<String>,
@@ -123,6 +129,15 @@ struct RenderedSessionManifestCursor {
 
 /// Read one or more visible memories of any lifecycle kind by id (episode, fact, entity,
 /// note, skill, bad_pattern, or core block).
+///
+/// # Team-namespace authorization (parity with `search`)
+/// A by-id read is gated by the SAME per-call asserted teams as `search` and
+/// `session_manifest`: the reader sees only its own namespace plus the teams listed in
+/// [`ReadMemoryToolParams::teams`] on this call. To resolve a memory living in `team:<name>`
+/// the caller MUST assert that team in the same call; an id in an un-asserted team namespace is
+/// not auto-widened and drops from the found set. This is deliberate — a by-id read returns
+/// not-found for ids the caller has not asserted authorization for, and that not-found is
+/// indistinguishable from a wholly missing id (counts/outcomes only, no existence oracle).
 ///
 /// # Errors
 /// Returns a structured `ERR_*` message string on bad parameters or store failures.

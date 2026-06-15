@@ -45,7 +45,11 @@ This is the most common mistake, so decide deliberately:
    `display`); it is idempotent and mints the tag on first use.
 5. Read the backlog back with `work_query` (filter by `work_status` and/or `level`)
    and a subtree with `work_tree` (a `root_id` plus a `depth`). Recall the state
-   before assuming it.
+   before assuming it. **Assert the teams you belong to** on these reads (e.g.
+   `teams: ["aionforge-memory-team"]`): read authorization is per-call, so a team's
+   work items are out of scope unless you assert that team in the same call — and a
+   by-id `read_memory` of a team work item likewise requires the team asserted in
+   that call (parity with search). Never assert a team you are not a member of.
 6. Default to a private item (omit `target_namespace`). Use a shared
    `target_namespace` (e.g. `team:project-alpha`) only when the host or user authorizes
    that scope.
