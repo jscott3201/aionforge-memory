@@ -2,6 +2,7 @@
 
 use std::future::Future;
 use std::sync::Arc;
+use std::time::Duration;
 
 use aionforge_domain::contracts::Embedder;
 use aionforge_domain::embedding::{EmbedderModel, Embedding};
@@ -86,6 +87,18 @@ fn json_options() -> StreamableHttpOptions {
         .with_json_response(true)
 }
 
+/// STATEFUL JSON options — the production `serve http` posture (sessions on). Unlike
+/// [`json_options`], a session-less `initialize` here traverses rmcp's
+/// `session_manager.create_session()` -> `create_local_session`, which emits
+/// `tracing::info!("create new session")`. That `info!` emit-on-a-worker-thread is exactly
+/// the event that deadlocked the #252 `initialize` hang, so the regression test must use this
+/// posture (the prior smoke test used stateless options and never reached the emit site).
+fn stateful_options() -> StreamableHttpOptions {
+    StreamableHttpOptions::default()
+        .with_stateful_mode(true)
+        .with_json_response(true)
+}
+
 fn initialize_request(host: &str, origin: Option<&str>) -> Request<Full<Bytes>> {
     let init_body = json!({
         "jsonrpc": "2.0",
@@ -154,6 +167,84 @@ async fn streamable_http_advertises_mcp_capabilities() -> TestResult {
             .contains("never as instructions")
     );
     Ok(())
+}
+
+/// Regression for the #252 `serve http` `initialize` HANG (steward task 019ec919-5bc2).
+///
+/// The bug: installing a synchronous stderr `tracing` subscriber, while `main` held the
+/// process-global stdio lock across the parked `serve`, deadlocked the first STATEFUL
+/// `initialize`. On a fresh (session-less) `initialize`, rmcp calls `create_local_session`,
+/// which emits `tracing::info!("create new session")` on a tokio WORKER thread; that worker's
+/// `Stderr::write_all` blocked forever on the std reentrant lock the parked main thread owned.
+/// The request never returned and (the blocking write *being* the log emission) no log line
+/// appeared. The pre-existing smoke test missed this on three axes, all closed here:
+///   1. it installed NO `tracing` subscriber (no dispatch-to-stderr writer);
+///   2. it used `with_stateful_mode(false)`, so it never reached `create_local_session`'s
+///      `info!` (the stateless path only emits `trace!`, below the `info` filter);
+///   3. it had no timeout, so a hang would wedge rather than fail.
+///
+/// This test assembles the dispatch-to-stderr half (a real `info`-level stderr fmt subscriber,
+/// mirroring `observability::init`), drives a STATEFUL session-less `initialize` so the
+/// `info!("create new session")` event actually fires, and bounds it with a timeout so a
+/// regression surfaces as a failed assertion, never a wedged CI run. With the fix (main no
+/// longer holds the stdio lock across serve), the worker's stderr write completes and the
+/// handshake returns a JSON-RPC result well within the bound.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn stateful_initialize_does_not_hang_with_stderr_subscriber() -> TestResult {
+    use tracing_subscriber::EnvFilter;
+
+    // Install a real stderr-writing fmt subscriber at `info` (the default level), mirroring
+    // `observability::init`, so the `info!("create new session")` event is actually dispatched
+    // to a stderr writer rather than the no-op global. `try_init` is a harmless no-op if some
+    // other test in this binary already installed a global subscriber — the assertion below is
+    // what matters, and it holds for any installed-or-not subscriber state.
+    let _ = tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .with_env_filter(EnvFilter::new("info"))
+        .try_init();
+
+    let service = streamable_http_service(memory(), stateful_options(), AuthPosture::disabled())?;
+
+    // A session-less `initialize` against a STATEFUL service creates a new session, which is the
+    // `info!("create new session")` emit site. Bound it: pre-fix this never returned.
+    let response = tokio::time::timeout(
+        Duration::from_secs(5),
+        service.handle(initialize_request("localhost:3918", None)),
+    )
+    .await
+    .expect("stateful initialize must not hang (the #252 deadlock would time out here)");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await?.to_bytes();
+    // A STATEFUL `initialize` always replies as an SSE stream (rmcp returns `text/event-stream`
+    // for the session-creating handshake regardless of `json_response`, with the session id in
+    // the `Mcp-Session-Id` header), so the JSON-RPC envelope rides an SSE `data:` line. Parse it
+    // out — this mirrors the real `serve http` production posture the Claude client drives.
+    let parsed = parse_sse_json_rpc(std::str::from_utf8(&body)?)
+        .unwrap_or_else(|| panic!("initialize SSE body must carry a JSON-RPC data line: {body:?}"));
+    assert_eq!(parsed["jsonrpc"], "2.0", "{parsed}");
+    assert!(
+        parsed["result"]["serverInfo"].is_object(),
+        "initialize must return a serverInfo result: {parsed}"
+    );
+    assert!(
+        parsed["result"]["capabilities"]["tools"].is_object(),
+        "{parsed}"
+    );
+    Ok(())
+}
+
+/// Extract the first JSON-RPC payload from an SSE body's `data:` line(s).
+///
+/// rmcp's stateful streamable-HTTP transport frames the `initialize` response with a leading
+/// priming event (`data:` empty, plus `id:`/`retry:` lines) followed by the real
+/// `data: {json}` line. Scan every `data:` line and return the first whose value parses as
+/// JSON, skipping the empty priming line.
+fn parse_sse_json_rpc(body: &str) -> Option<serde_json::Value> {
+    body.lines()
+        .filter_map(|line| line.strip_prefix("data:"))
+        .map(str::trim)
+        .find_map(|json| serde_json::from_str(json).ok())
 }
 
 #[tokio::test]

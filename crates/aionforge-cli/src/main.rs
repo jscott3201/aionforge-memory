@@ -1,6 +1,6 @@
 //! The aionforge single binary: serve, doctor, and recover subcommands.
 
-use std::io::{self, Write};
+use std::io::Write;
 use std::process::ExitCode;
 
 use clap::Parser;
@@ -24,24 +24,38 @@ fn main() -> ExitCode {
     // place before the serve command builds its tokio runtime. Writes to stderr only — the
     // stdio transport owns stdout for the MCP protocol.
     observability::init(cli.log_format());
-    let mut stdout = io::stdout().lock();
-    let mut stderr = io::stderr().lock();
 
-    match run(cli, &mut stdout) {
+    // DO NOT hold the process-global stdout/stderr locks across `run`. `run` parks the main
+    // thread for the entire lifetime of the server inside `runtime.block_on(serve::run(...))`,
+    // and the tracing subscriber installed above writes to `std::io::stderr`. If main held the
+    // std reentrant stdio lock here, a tokio WORKER thread emitting a `tracing` event during a
+    // request (e.g. rmcp's `info!("create new session")` on the first stateful `initialize`)
+    // would block forever in `Stderr::write_all` waiting on a lock the parked main thread owns
+    // — a cross-thread deadlock: the request never returns and (because the blocking write IS
+    // the log emission) no log line ever appears. That was the #252 `serve http` `initialize`
+    // hang. The locks must be acquired narrowly, only on the synchronous paths that print
+    // (Doctor/Recover stdout below, and the error arm's stderr), never spanning the async serve.
+    match run(cli) {
         Ok(code) => code,
         Err(error) => {
-            let _ = writeln!(stderr, "error: {error}");
+            // Freshly acquire stderr only in the (terminal) error arm — no worker thread is
+            // running here, so this can never race the subscriber's stderr writer. (Using
+            // `writeln!` to a scoped lock rather than `eprintln!` also keeps the workspace's
+            // `clippy::print_stderr` lint satisfied.)
+            let _ = writeln!(std::io::stderr().lock(), "error: {error}");
             ExitCode::FAILURE
         }
     }
 }
 
-fn run(cli: Cli, output: &mut impl Write) -> Result<ExitCode, CliError> {
+fn run(cli: Cli) -> Result<ExitCode, CliError> {
     let host_options = cli.host_options();
     match cli.command {
         Command::Doctor(args) => {
             let outcome = doctor::run(&host_options, args)?;
-            writeln!(output, "{}", outcome.rendered)?;
+            // Lock stdout only here, scoped to this synchronous arm — never across the async
+            // serve (see the deadlock note in `main`). The Serve arm never writes to stdout.
+            writeln!(std::io::stdout().lock(), "{}", outcome.rendered)?;
             Ok(if outcome.ok {
                 ExitCode::SUCCESS
             } else {
@@ -50,7 +64,8 @@ fn run(cli: Cli, output: &mut impl Write) -> Result<ExitCode, CliError> {
         }
         Command::Recover(args) => {
             let outcome = recover::run(&host_options, args)?;
-            writeln!(output, "{}", outcome.rendered)?;
+            // Lock stdout only here, scoped to this synchronous arm — see the Doctor arm above.
+            writeln!(std::io::stdout().lock(), "{}", outcome.rendered)?;
             Ok(if outcome.ok {
                 ExitCode::SUCCESS
             } else {
