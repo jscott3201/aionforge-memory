@@ -17,9 +17,8 @@ use aionforge_domain::nodes::procedural::{BadPattern, Skill};
 use aionforge_domain::nodes::semantic::{Entity, Fact};
 use aionforge_domain::time::Timestamp;
 use aionforge_engine::{
-    AuditCursor, AuditPage, AuditRecord, AuditVerification, ConsolidationConfig, Memory,
-    PassConfig, PointForget, PointPin, PointUnforget, PointUnpin, RuleExtractor, RuleInducer,
-    RuleSummarizer, TickReport,
+    AuditCursor, AuditPage, AuditRecord, AuditVerification, Memory, PointForget, PointPin,
+    PointUnforget, PointUnpin, RuleExtractor, RuleInducer, RuleSummarizer, TickReport,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -197,8 +196,8 @@ pub async fn consolidate_tool<E: Embedder + 'static>(
                 RuleExtractor::with_default_rules(),
                 RuleSummarizer::with_default_rules(),
                 RuleInducer::with_default_rules(),
-                ConsolidationConfig::default(),
-                PassConfig::default(),
+                memory.consolidation_config(),
+                memory.pass_config(),
             )
             .await
             .map_err(|error| format!("ERR_CONSOLIDATE: {error}"))?;
