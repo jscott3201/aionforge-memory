@@ -44,8 +44,8 @@ pub use aionforge_capture::{
 };
 pub use aionforge_consolidate::{
     ConsolidationConfig, ConsolidationHandle, ConsolidationLag, ConsolidationProfile,
-    DetectionConfig, InductionConfig, LinkEvolveConfig, LinkEvolveError, LinkEvolveReport,
-    ObjectRule, PassConfig, PassProfile, PredicateRule, RELATIONSHIP_VOCABULARY,
+    DetectionConfig, ExtractionConfig, InductionConfig, LinkEvolveConfig, LinkEvolveError,
+    LinkEvolveReport, ObjectRule, PassConfig, PassProfile, PredicateRule, RELATIONSHIP_VOCABULARY,
     RULE_LINK_EVOLVE_VERSION, ResolutionConfig, Rule, RuleExtractor, RuleInducer, RuleLinkEvolver,
     RuleSummarizer, STAGE_DETECTION, STAGE_INDUCTION, STAGE_ORDER, STAGE_RESOLUTION,
     STAGE_SUMMARIZATION, StageProfile, SummarizationConfig, TickReport,

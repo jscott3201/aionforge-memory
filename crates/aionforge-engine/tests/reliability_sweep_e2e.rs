@@ -93,6 +93,7 @@ async fn a_real_contradiction_quarantine_is_swept_end_to_end() {
             detection,
             summarization: SummarizationConfig::default(),
             induction: InductionConfig::default(),
+            ..PassConfig::default()
         },
     )));
     loop {

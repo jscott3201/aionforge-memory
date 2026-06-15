@@ -17,6 +17,48 @@ use aionforge_domain::nodes::episodic::Episode;
 use aionforge_domain::nodes::semantic::SourceSpan;
 use aionforge_domain::value::ObjectValue;
 
+use crate::config::ExtractionConfig;
+
+/// Leading connectives that disqualify a surface from being a fact subject: a clause that
+/// opens with a subordinating or relative connective is a dependent fragment
+/// (`"because the build failed"`, `"which she uses daily"`), not a standalone subject. Matched
+/// as a lowercased EXACT first token only (a proper noun that merely *contains* one of these as
+/// a substring is untouched), mirroring the closed-list discipline of
+/// [`RELATIONSHIP_VOCABULARY`](crate::RELATIONSHIP_VOCABULARY).
+///
+/// **Precision/recall tradeoff.** This list errs toward RECALL: it carries only the
+/// unambiguous subordinating/relative-clause markers plus the two coordinating conjunctions
+/// (`and`/`but`) that practically never open a proper noun. The short coordinators `as`, `so`,
+/// `or`, `nor`, and `yet` were DROPPED because they are common proper-noun starters — the city
+/// `"As Salt"`, titles like `"As You Like It"` or `"So Long, Marianne"`, the company `"Yet
+/// Another …"` — and exact-first-token matching them would silently discard those real
+/// subjects. The cost is that the rare sentence whose subject genuinely opens with a dropped
+/// coordinator (`"or the fallback path is used"`) survives this gate; that residual is accepted
+/// rather than sacrifice the proper nouns, and the bare-pronoun and length gates still apply.
+pub const SUBJECT_LEADING_STOPWORDS: &[&str] = &[
+    "because", "and", "but", "which", "that", "when", "while", "if", "although", "though", "since",
+    "unless", "whereas",
+];
+
+/// Bare pronouns/deictics that disqualify a surface when they are the WHOLE subject: an
+/// unresolved `"it"`/`"they"`/`"this"` carries no referent the resolver can canonicalize, so
+/// it would mint a junk entity. Matched against the entire lowercased surface (a multi-word
+/// subject that merely begins with one of these is untouched), mirroring the closed-list
+/// discipline of [`RELATIONSHIP_VOCABULARY`](crate::RELATIONSHIP_VOCABULARY).
+pub const SUBJECT_BARE_PRONOUNS: &[&str] = &[
+    "this", "that", "it", "they", "these", "those", "here", "there",
+];
+
+/// The most whitespace tokens a plausible subject (or entity-object) surface may carry. A
+/// surface longer than this is a clause, not a name, so it is rejected before it can mint an
+/// entity. Conservative: real subjects are short (`"Alice"`, `"Alice Smith"`, an org name),
+/// and this ceiling leaves ample room for the longest legitimate proper-noun phrase.
+pub const MAX_SUBJECT_TOKENS: usize = 6;
+
+/// The most characters a plausible subject (or entity-object) surface may carry — a second,
+/// length-based guard so a few very long tokens cannot slip past [`MAX_SUBJECT_TOKENS`].
+pub const MAX_SUBJECT_CHARS: usize = 80;
+
 /// What a matched rule produces for the object position.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ObjectRule {
@@ -52,12 +94,25 @@ pub struct Rule {
 pub struct RuleExtractor {
     identity: ExtractorIdentity,
     rules: Vec<Rule>,
+    config: ExtractionConfig,
 }
 
 impl RuleExtractor {
-    /// Build an extractor from an explicit ruleset and rule-set version.
+    /// Build an extractor from an explicit ruleset and rule-set version, with the default
+    /// precision gates ([`ExtractionConfig::default`]).
     #[must_use]
     pub fn new(rule_version: impl Into<String>, rules: Vec<Rule>) -> Self {
+        Self::with_config(rule_version, rules, ExtractionConfig::default())
+    }
+
+    /// Build an extractor from an explicit ruleset, rule-set version, and precision-gate
+    /// config (the `min_confidence` floor that filters low-confidence rules).
+    #[must_use]
+    pub fn with_config(
+        rule_version: impl Into<String>,
+        rules: Vec<Rule>,
+        config: ExtractionConfig,
+    ) -> Self {
         Self {
             identity: ExtractorIdentity {
                 model_family: None,
@@ -65,12 +120,26 @@ impl RuleExtractor {
                 rule_version: rule_version.into(),
             },
             rules,
+            config,
         }
     }
 
-    /// Build an extractor with a small general-purpose ruleset (`rule-v1`).
+    /// Build an extractor with a small general-purpose ruleset (`rule-v2`).
+    ///
+    /// Only the four **typed entity** rules ship: `works_on`/`based_in`/`prefers`/`uses`,
+    /// each resolving its object to a canonical entity. The earlier free-text `is a`→`is_a`
+    /// catch-all was removed (M-precision): it matched any `"X is a Y"` clause and so turned
+    /// dependent fragments and bare pronouns into junk facts. The subject (and entity-object)
+    /// of every match is now screened by [`is_plausible_subject`], and a rule whose confidence
+    /// falls below [`ExtractionConfig::min_confidence`] is skipped entirely.
     #[must_use]
     pub fn with_default_rules() -> Self {
+        Self::with_default_rules_and_config(ExtractionConfig::default())
+    }
+
+    /// [`with_default_rules`](Self::with_default_rules) with an explicit precision-gate config.
+    #[must_use]
+    pub fn with_default_rules_and_config(config: ExtractionConfig) -> Self {
         let entity = |entity_type: &str| ObjectRule::Entity {
             entity_type: entity_type.to_string(),
         };
@@ -81,15 +150,15 @@ impl RuleExtractor {
             object,
             confidence,
         };
-        Self::new(
-            "rule-v1",
+        Self::with_config(
+            "rule-v2",
             vec![
                 rule("works on", "works_on", "Person", entity("Project"), 0.9),
                 rule("is based in", "based_in", "Person", entity("Place"), 0.85),
                 rule("prefers", "prefers", "Person", entity("Technology"), 0.85),
                 rule("uses", "uses", "Person", entity("Tool"), 0.8),
-                rule("is a", "is_a", "Entity", ObjectRule::Text, 0.7),
             ],
+            config,
         )
     }
 
@@ -98,6 +167,11 @@ impl RuleExtractor {
         let mut facts = Vec::new();
         for (offset, sentence) in sentences(&episode.content) {
             for rule in &self.rules {
+                // Confidence floor: a rule that does not clear `min_confidence` never fires, so
+                // a deployment can dial out low-confidence (noisier) rules without recompiling.
+                if rule.confidence < self.config.min_confidence {
+                    continue;
+                }
                 let pattern = format!(" {} ", rule.marker);
                 let Some(pos) = sentence.find(&pattern) else {
                     continue;
@@ -111,6 +185,18 @@ impl RuleExtractor {
                     continue;
                 }
                 if looks_like_code_fragment(subject) || looks_like_code_fragment(object) {
+                    continue;
+                }
+                // Precision gate: a leading connective, a bare pronoun, or an over-long clause
+                // is not a subject — reject before it can mint a junk entity (the root cause the
+                // removed `is a` catch-all exposed). An entity-typed object is held to the same
+                // bar; a text-literal object is content stored as-is, so it is exempt.
+                if !is_plausible_subject(subject) {
+                    continue;
+                }
+                if let ObjectRule::Entity { .. } = &rule.object
+                    && !is_plausible_subject(object)
+                {
                     continue;
                 }
                 facts.push(ExtractedFact {
@@ -153,6 +239,52 @@ fn looks_like_code_fragment(value: &str) -> bool {
         || value.contains('}')
         || value.contains('(')
         || value.contains(')')
+}
+
+/// Whether `surface` is plausibly a fact subject (or entity-typed object), and not a clause
+/// fragment the marker accidentally split off.
+///
+/// Deterministic and conservative — it rejects three unambiguous non-subject shapes and
+/// passes everything else, so a legitimate short proper-noun subject is never turned away:
+/// - a leading subordinating or relative connective (or the coordinators `and`/`but`)
+///   ([`SUBJECT_LEADING_STOPWORDS`], lowercased EXACT first-token match) — a dependent clause;
+/// - a bare unresolved pronoun/deictic as the WHOLE surface
+///   ([`SUBJECT_BARE_PRONOUNS`], lowercased full-surface match) — no canonicalizable referent;
+/// - a surface over the [`MAX_SUBJECT_TOKENS`] / [`MAX_SUBJECT_CHARS`] budget — a clause, not
+///   a name.
+///
+/// An empty surface is not plausible (the caller already trims and skips empties, so this is
+/// belt-and-suspenders).
+#[must_use]
+pub fn is_plausible_subject(surface: &str) -> bool {
+    let trimmed = surface.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    // Length budget (chars then tokens): a clause is not a subject.
+    if trimmed.chars().count() > MAX_SUBJECT_CHARS {
+        return false;
+    }
+    let mut tokens = trimmed.split_whitespace();
+    let Some(first) = tokens.next() else {
+        return false;
+    };
+    let token_count = 1 + tokens.count();
+    if token_count > MAX_SUBJECT_TOKENS {
+        return false;
+    }
+    // A leading connective marks a dependent clause (exact lowercased first-token match, so a
+    // proper noun that merely contains a stopword as a substring is untouched).
+    let first_lower = first.to_lowercase();
+    if SUBJECT_LEADING_STOPWORDS.contains(&first_lower.as_str()) {
+        return false;
+    }
+    // A bare pronoun/deictic as the WHOLE surface has no referent to canonicalize.
+    let whole_lower = trimmed.to_lowercase();
+    if SUBJECT_BARE_PRONOUNS.contains(&whole_lower.as_str()) {
+        return false;
+    }
+    true
 }
 
 impl FactExtractor for RuleExtractor {
@@ -222,6 +354,151 @@ mod tests {
         let facts = RuleExtractor::with_default_rules().extract_sync(&episode);
         assert_eq!(facts.len(), 1);
         assert_eq!(facts[0].predicate, "uses");
+        assert_eq!(facts[0].subject.surface, "Alice");
+    }
+
+    #[test]
+    fn rejects_the_is_a_dependent_clause_exemplar() {
+        // The removed `is a`→`is_a` catch-all used to turn this dependent fragment into a
+        // junk fact ("which means it is a feature ..."). With that rule gone AND the subject
+        // gate live, no typed rule matches and nothing is extracted.
+        let episode =
+            episode("The release shipped, which means it is a feature users have wanted.");
+        let facts = RuleExtractor::with_default_rules().extract_sync(&episode);
+        assert!(
+            facts.is_empty(),
+            "the is_a dependent-clause exemplar yields no fact: {facts:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_a_conjunction_led_subject() {
+        // A typed marker still matches, but the subject opens with a connective ("because the
+        // build failed"), so the subject gate drops it as a dependent clause.
+        let episode = episode("because the build failed she uses a workaround");
+        let facts = RuleExtractor::with_default_rules().extract_sync(&episode);
+        assert!(
+            facts.is_empty(),
+            "a conjunction-led subject is rejected: {facts:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_a_bare_pronoun_subject() {
+        // "It" alone is an unresolved deictic with no canonicalizable referent, so even a
+        // clean typed match is dropped.
+        let pronoun = episode("It uses Rust.");
+        let facts = RuleExtractor::with_default_rules().extract_sync(&pronoun);
+        assert!(
+            facts.is_empty(),
+            "a bare-pronoun subject is rejected: {facts:?}"
+        );
+        // But a real name that merely STARTS with pronoun-like text is untouched.
+        let proper = episode("Italo uses Rust.");
+        let kept = RuleExtractor::with_default_rules().extract_sync(&proper);
+        assert_eq!(kept.len(), 1, "a real proper-noun subject still fires");
+        assert_eq!(kept[0].subject.surface, "Italo");
+    }
+
+    #[test]
+    fn rejects_an_over_long_clause_subject() {
+        // A subject longer than the token budget is a clause, not a name.
+        let episode = episode("Alice Bob Carol Dave Eve Frank Grace uses Rust.");
+        let facts = RuleExtractor::with_default_rules().extract_sync(&episode);
+        assert!(
+            facts.is_empty(),
+            "an over-long clause subject is rejected: {facts:?}"
+        );
+    }
+
+    #[test]
+    fn the_default_min_confidence_keeps_every_typed_rule_firing() {
+        // The four shipped typed rules carry confidences 0.9/0.85/0.85/0.8; the default
+        // `min_confidence` (0.8) is at-or-below the lowest, so all four still fire. (The
+        // confidence floor is `<`, so the 0.8 `uses` rule is kept.)
+        let cfg = ExtractionConfig::default();
+        for rule in RuleExtractor::with_default_rules_and_config(cfg.clone()).rules {
+            assert!(
+                rule.confidence >= cfg.min_confidence,
+                "the default min_confidence ({}) must not silence the typed `{}` rule (conf {})",
+                cfg.min_confidence,
+                rule.predicate,
+                rule.confidence
+            );
+        }
+    }
+
+    #[test]
+    fn a_raised_min_confidence_floor_skips_lower_rules() {
+        // Raising the floor above `uses` (0.8) silences it but keeps the 0.9 `works_on` rule.
+        let cfg = ExtractionConfig {
+            min_confidence: 0.81,
+            ..ExtractionConfig::default()
+        };
+        let extractor = RuleExtractor::with_default_rules_and_config(cfg);
+        assert!(
+            extractor
+                .extract_sync(&episode("Alice uses Rust."))
+                .is_empty(),
+            "the 0.8 `uses` rule is below the raised floor"
+        );
+        let kept = extractor.extract_sync(&episode("Alice works on Aionforge."));
+        assert_eq!(kept.len(), 1, "the 0.9 `works_on` rule still clears 0.81");
+        assert_eq!(kept[0].predicate, "works_on");
+    }
+
+    #[test]
+    fn is_plausible_subject_passes_short_proper_nouns() {
+        for ok in ["Alice", "Alice Smith", "Aionforge Memory", "Mary Jane"] {
+            assert!(is_plausible_subject(ok), "`{ok}` is a plausible subject");
+        }
+        for bad in [
+            "because the build failed",
+            "which she uses",
+            "it",
+            "this",
+            "There",
+        ] {
+            assert!(
+                !is_plausible_subject(bad),
+                "`{bad}` is not a plausible subject"
+            );
+        }
+    }
+
+    #[test]
+    fn dropped_short_coordinators_no_longer_reject_proper_noun_subjects() {
+        // The recall fix: `as`/`so`/`or`/`nor`/`yet` were removed from the leading-stopword
+        // list because they are common proper-noun starters. A subject that opens with one of
+        // them is now ACCEPTED — the gate must not silence the city "As Salt" or a title like
+        // "As You Like It"/"So Long, Marianne".
+        for ok in [
+            "As Salt",
+            "As You Like It",
+            "So Long, Marianne",
+            "Or",
+            "Nor Industries",
+            "Yet Another Company",
+        ] {
+            assert!(
+                is_plausible_subject(ok),
+                "`{ok}` opens with a dropped coordinator and is now a plausible subject"
+            );
+        }
+        // None of the dropped tokens remain in the list.
+        for removed in ["as", "so", "or", "nor", "yet"] {
+            assert!(
+                !SUBJECT_LEADING_STOPWORDS.contains(&removed),
+                "`{removed}` was dropped from SUBJECT_LEADING_STOPWORDS for recall"
+            );
+        }
+        // The unambiguous subordinating/relative markers are kept.
+        for kept in ["because", "which", "that", "when", "while", "if", "since"] {
+            assert!(
+                SUBJECT_LEADING_STOPWORDS.contains(&kept),
+                "`{kept}` is an unambiguous clause marker and must stay"
+            );
+        }
     }
 
     fn episode(content: &str) -> Episode {

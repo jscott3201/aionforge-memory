@@ -36,6 +36,10 @@
 //! max_retries = 5            # transient failures an episode may accrue before it fails
 //! lag_ceiling_secs = 5       # warn when the oldest pending episode is older than this
 //!
+//! [consolidation.extraction]
+//! min_confidence = 0.8        # rules below this confidence never fire (recall-preserving floor)
+//! derived_trust_factor = 0.9  # discount a derived fact's trust so it ranks below its episode
+//!
 //! [consolidation.resolution]
 //! candidate_k = 8            # candidate entities each lexical/vector probe pulls
 //! merge_threshold = 0.12     # cosine-distance ceiling under which a neighbor is the same entity
@@ -86,6 +90,8 @@ pub struct ConsolidationConfig {
     /// The steady-state lag ceiling, in seconds: the scheduler warns when the oldest pending
     /// episode is older than this. Validated `> 0`.
     pub lag_ceiling_secs: u64,
+    /// Fact-extraction precision tuning (confidence floor, derived-trust discount).
+    pub extraction: ExtractionSettings,
     /// Entity-resolution tuning.
     pub resolution: ResolutionSettings,
     /// Supersession/contradiction detection tuning.
@@ -105,10 +111,36 @@ impl Default for ConsolidationConfig {
             apply_timeout_secs: 30,
             max_retries: 5,
             lag_ceiling_secs: 5,
+            extraction: ExtractionSettings::default(),
             resolution: ResolutionSettings::default(),
             detection: DetectionSettings::default(),
             summarization: SummarizationSettings::default(),
             induction: InductionSettings::default(),
+        }
+    }
+}
+
+/// Fact-extraction precision tuning, mirroring `aionforge_consolidate::ExtractionConfig`
+/// knob-for-knob (the subject/connective/pronoun gates are compile-time constants, not knobs).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ExtractionSettings {
+    /// The confidence floor: a rule whose confidence is below this never fires. Validated
+    /// finite and in `[0.0, 1.0]`. Default `0.8` — at or below every shipped typed rule, so
+    /// recall is preserved.
+    pub min_confidence: f64,
+    /// The multiplier applied to a derived fact's inherited episode trust, so a derived fact
+    /// ranks strictly below its source episode. Validated finite and in `[0.0, 1.0]`. Default
+    /// `0.9`.
+    pub derived_trust_factor: f64,
+}
+
+impl Default for ExtractionSettings {
+    fn default() -> Self {
+        // Mirrors `aionforge_consolidate::ExtractionConfig::default()`.
+        Self {
+            min_confidence: 0.8,
+            derived_trust_factor: 0.9,
         }
     }
 }
@@ -272,6 +304,15 @@ impl ConsolidationConfig {
                 "must be at least 1",
             ));
         }
+        // Extraction (both knobs are `[0.0, 1.0]` thresholds).
+        validate_unit_interval(
+            "consolidation.extraction.min_confidence",
+            self.extraction.min_confidence,
+        )?;
+        validate_unit_interval(
+            "consolidation.extraction.derived_trust_factor",
+            self.extraction.derived_trust_factor,
+        )?;
         // Resolution.
         if self.resolution.candidate_k == 0 {
             return Err(ConfigError::invalid(
@@ -364,6 +405,8 @@ mod tests {
         assert_eq!(config.apply_timeout_secs, 30);
         assert_eq!(config.max_retries, 5);
         assert_eq!(config.lag_ceiling_secs, 5);
+        assert_eq!(config.extraction.min_confidence, 0.8);
+        assert_eq!(config.extraction.derived_trust_factor, 0.9);
         assert_eq!(config.resolution.candidate_k, 8);
         assert_eq!(config.resolution.merge_threshold, 0.12);
         assert!(config.detection.enabled);
@@ -463,6 +506,24 @@ mod tests {
             .expect_err("detection threshold is checked too");
         assert!(
             error.to_string().contains("high_trust_threshold"),
+            "{error}"
+        );
+
+        // The extraction knobs are bounded to [0.0, 1.0] too.
+        let mut config = ConsolidationConfig::default();
+        config.extraction.min_confidence = 1.5;
+        let error = config
+            .validate()
+            .expect_err("an out-of-range min_confidence is rejected");
+        assert!(error.to_string().contains("min_confidence"), "{error}");
+
+        let mut config = ConsolidationConfig::default();
+        config.extraction.derived_trust_factor = -0.2;
+        let error = config
+            .validate()
+            .expect_err("an out-of-range derived_trust_factor is rejected");
+        assert!(
+            error.to_string().contains("derived_trust_factor"),
             "{error}"
         );
     }

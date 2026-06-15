@@ -31,7 +31,7 @@ use aionforge_domain::time::{BiTemporal, Timestamp};
 use aionforge_domain::value::ObjectValue;
 use aionforge_store::{CandidateSet, FactKey, MaterializedFact, MaterializedNote};
 
-use crate::config::{DetectionConfig, PassConfig, SummarizationConfig};
+use crate::config::{DetectionConfig, ExtractionConfig, PassConfig, SummarizationConfig};
 use crate::detect::{CurrentFact, detect};
 use crate::pass::{ConsolidationPass, PassContext, PassError, PassOutput, PassRun};
 use crate::profile::{
@@ -51,6 +51,7 @@ pub struct FactExtractionPass<X, E, S> {
     extractor: Arc<X>,
     embedder: Arc<E>,
     summarizer: Arc<S>,
+    extraction: ExtractionConfig,
     resolution: crate::config::ResolutionConfig,
     detection: DetectionConfig,
     summarization: SummarizationConfig,
@@ -83,6 +84,7 @@ where
             extractor,
             embedder,
             summarizer,
+            extraction: config.extraction,
             resolution: config.resolution,
             detection: config.detection,
             summarization: config.summarization,
@@ -297,7 +299,10 @@ where
         // 3: M2.T06b added conservative summary-note output to this pass.
         // 4: M6.T02 skips system-role episodes so a system directive cannot launder
         //    into a role-less fact (the gate is version-keyed for replay determinism).
-        4
+        // 5: extraction-precision — subject/connective/pronoun gating + confidence floor
+        //    (rule-v2) and the derived-fact trust discount change the derived output, so the
+        //    version is bumped to signal "reprocess".
+        5
     }
 
     async fn apply(&self, cx: &PassContext<'_>) -> Result<PassRun, PassError> {
@@ -446,10 +451,16 @@ where
                 extraction_rule_version: Some(rule_version.clone()),
             };
             statements.push(extracted_fact.statement.clone());
+            // A derived FACT is weaker evidence than its source episode: discount the inherited
+            // episode trust by `derived_trust_factor` (< 1) so the fact ranks strictly below the
+            // episode (entities/notes keep the undiscounted `derived_stats` trust). Trust is not
+            // part of `fact_id`, so this never affects idempotency.
+            let mut fact_stats = derived_stats(episode, &cx.now);
+            fact_stats.trust *= self.extraction.derived_trust_factor;
             facts.push(MaterializedFact {
                 fact: Fact {
                     identity: identity(fact_id, namespace, &cx.now),
-                    stats: derived_stats(episode, &cx.now),
+                    stats: fact_stats,
                     subject_id: subject.id,
                     predicate: extracted_fact.predicate.clone(),
                     object,
