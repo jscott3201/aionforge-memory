@@ -194,7 +194,14 @@ pub async fn consolidate_tool<E: Embedder + 'static>(
     for _ in 0..max_ticks {
         let report = memory
             .consolidate_once(
-                RuleExtractor::with_default_rules(),
+                // Build the rule extractor WITH the deployment's extraction config so the
+                // `[consolidation.extraction] min_confidence` floor is genuinely live: the
+                // extractor reads its own `config.min_confidence`, so the parameterless
+                // `with_default_rules()` would silently pin it at the hardcoded default and
+                // make the deployment knob inert. `pass_config().extraction` is the same
+                // config `consolidate_once` threads into the derivation step, so the floor and
+                // the derived-trust discount come from one source.
+                RuleExtractor::with_default_rules_and_config(memory.pass_config().extraction),
                 RuleSummarizer::with_default_rules(),
                 RuleInducer::with_default_rules(),
                 memory.consolidation_config(),

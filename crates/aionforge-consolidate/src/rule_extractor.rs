@@ -20,16 +20,24 @@ use aionforge_domain::value::ObjectValue;
 use crate::config::ExtractionConfig;
 
 /// Leading connectives that disqualify a surface from being a fact subject: a clause that
-/// opens with a subordinating/coordinating conjunction or relative connective is a dependent
-/// fragment (`"because the build failed"`, `"which she uses daily"`), not a standalone
-/// subject. Matched as a lowercased EXACT first token only (a proper noun that merely
-/// *contains* one of these as a substring is untouched), mirroring the closed-list
-/// discipline of [`RELATIONSHIP_VOCABULARY`](crate::RELATIONSHIP_VOCABULARY). Conservative
-/// by construction: the list is short and unambiguous so a legitimate short proper-noun
-/// subject is never rejected.
+/// opens with a subordinating or relative connective is a dependent fragment
+/// (`"because the build failed"`, `"which she uses daily"`), not a standalone subject. Matched
+/// as a lowercased EXACT first token only (a proper noun that merely *contains* one of these as
+/// a substring is untouched), mirroring the closed-list discipline of
+/// [`RELATIONSHIP_VOCABULARY`](crate::RELATIONSHIP_VOCABULARY).
+///
+/// **Precision/recall tradeoff.** This list errs toward RECALL: it carries only the
+/// unambiguous subordinating/relative-clause markers plus the two coordinating conjunctions
+/// (`and`/`but`) that practically never open a proper noun. The short coordinators `as`, `so`,
+/// `or`, `nor`, and `yet` were DROPPED because they are common proper-noun starters — the city
+/// `"As Salt"`, titles like `"As You Like It"` or `"So Long, Marianne"`, the company `"Yet
+/// Another …"` — and exact-first-token matching them would silently discard those real
+/// subjects. The cost is that the rare sentence whose subject genuinely opens with a dropped
+/// coordinator (`"or the fallback path is used"`) survives this gate; that residual is accepted
+/// rather than sacrifice the proper nouns, and the bare-pronoun and length gates still apply.
 pub const SUBJECT_LEADING_STOPWORDS: &[&str] = &[
-    "because", "so", "and", "but", "or", "nor", "yet", "which", "that", "when", "while", "if",
-    "although", "though", "since", "as",
+    "because", "and", "but", "which", "that", "when", "while", "if", "although", "though", "since",
+    "unless", "whereas",
 ];
 
 /// Bare pronouns/deictics that disqualify a surface when they are the WHOLE subject: an
@@ -238,7 +246,7 @@ fn looks_like_code_fragment(value: &str) -> bool {
 ///
 /// Deterministic and conservative — it rejects three unambiguous non-subject shapes and
 /// passes everything else, so a legitimate short proper-noun subject is never turned away:
-/// - a leading subordinating/coordinating conjunction or relative connective
+/// - a leading subordinating or relative connective (or the coordinators `and`/`but`)
 ///   ([`SUBJECT_LEADING_STOPWORDS`], lowercased EXACT first-token match) — a dependent clause;
 /// - a bare unresolved pronoun/deictic as the WHOLE surface
 ///   ([`SUBJECT_BARE_PRONOUNS`], lowercased full-surface match) — no canonicalizable referent;
@@ -454,6 +462,41 @@ mod tests {
             assert!(
                 !is_plausible_subject(bad),
                 "`{bad}` is not a plausible subject"
+            );
+        }
+    }
+
+    #[test]
+    fn dropped_short_coordinators_no_longer_reject_proper_noun_subjects() {
+        // The recall fix: `as`/`so`/`or`/`nor`/`yet` were removed from the leading-stopword
+        // list because they are common proper-noun starters. A subject that opens with one of
+        // them is now ACCEPTED — the gate must not silence the city "As Salt" or a title like
+        // "As You Like It"/"So Long, Marianne".
+        for ok in [
+            "As Salt",
+            "As You Like It",
+            "So Long, Marianne",
+            "Or",
+            "Nor Industries",
+            "Yet Another Company",
+        ] {
+            assert!(
+                is_plausible_subject(ok),
+                "`{ok}` opens with a dropped coordinator and is now a plausible subject"
+            );
+        }
+        // None of the dropped tokens remain in the list.
+        for removed in ["as", "so", "or", "nor", "yet"] {
+            assert!(
+                !SUBJECT_LEADING_STOPWORDS.contains(&removed),
+                "`{removed}` was dropped from SUBJECT_LEADING_STOPWORDS for recall"
+            );
+        }
+        // The unambiguous subordinating/relative markers are kept.
+        for kept in ["because", "which", "that", "when", "while", "if", "since"] {
+            assert!(
+                SUBJECT_LEADING_STOPWORDS.contains(&kept),
+                "`{kept}` is an unambiguous clause marker and must stay"
             );
         }
     }
