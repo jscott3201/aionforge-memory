@@ -50,6 +50,7 @@
 
 mod auth;
 mod config;
+mod consolidation;
 mod core_block;
 mod deployment;
 mod drift;
@@ -63,6 +64,10 @@ pub use auth::{AuthConfig, IssuerConfig};
 pub use config::{
     CategoryPromotionRule, Config, DecayConfig, EmbedderConfig, PersistenceConfig, PromotionConfig,
     ReliabilityConfig, RetrievalConfig, SecurityConfig, endpoint_transport_is_allowed,
+};
+pub use consolidation::{
+    ConsolidationConfig, DetectionSettings, InductionSettings, ResolutionSettings,
+    SummarizationSettings,
 };
 pub use core_block::{CoreBlockConfig, CoreEditRuleConfig};
 pub use deployment::DeploymentConfig;

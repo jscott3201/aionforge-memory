@@ -45,3 +45,37 @@ enabled = false
 [consolidation_guard]
 mode = "refuse"
 declared_consolidator_family = "production-consolidator"
+
+# Deterministic consolidation pass tuning. The whole block is optional: omitting it (or any
+# field) keeps the engine defaults exactly, so behavior is unchanged. Every value below IS the
+# default — uncomment and edit only what you need. Durations are in seconds.
+[consolidation]
+tick_interval_secs = 5     # how often the loop wakes to drain work
+batch_size = 32            # most episodes one tick takes (per-tick concurrency bound; >= 1)
+apply_timeout_secs = 30    # wall-clock budget for one pass over one episode
+max_retries = 5            # transient failures an episode may accrue before it fails
+lag_ceiling_secs = 5       # warn when the oldest pending episode is older than this
+
+[consolidation.resolution]
+candidate_k = 8            # candidate entities each lexical/vector probe pulls (>= 1)
+merge_threshold = 0.12     # cosine-distance ceiling under which a neighbor is the same entity [0,1]
+
+[consolidation.detection]
+enabled = true             # off => extraction-only (the built-in predicate ruleset is fixed)
+high_trust_threshold = 0.7 # incumbent trust at/above which a contradiction is quarantined [0,1]
+
+[consolidation.summarization]
+enabled = true                   # off => extraction/detection only
+min_facts = 3                    # fewest facts a subject needs before its cluster is summarized (>= 1)
+min_entities = 2                 # fewest distinct entities before a cluster is summarized (>= 1)
+entity_retention_threshold = 0.9 # fraction of entities a summary must preserve to be written [0,1]
+confidence_floor = 0.6           # mean source-fact confidence a cluster must clear [0,1]
+
+[consolidation.induction]
+enabled = false            # OFF by default: set true to induce recurring procedures into skills
+recurrence_window = 50     # most recent same-content episodes the recurrence probe counts (>= 1)
+repetition_threshold = 3   # fewest exact-content recurrences before an episode is induced (>= 1)
+min_distinct_tokens = 5    # fewest distinct whitespace tokens to be worth inducing (>= 1)
+min_body_chars = 16        # fewest characters the content must carry (>= 1)
+max_body_chars = 4096      # most characters an induced body may carry (>= min_body_chars)
+name_prefix = "induced/"   # prefix on every induced skill name (non-empty)

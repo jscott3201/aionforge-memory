@@ -190,6 +190,10 @@ pub(crate) fn memory_config(config: &Config) -> Result<MemoryConfig, CliError> {
     } else {
         None
     };
+    // Map the layered [consolidation] block into the engine's scheduler config + pass tuning.
+    // With an absent block this returns the engine defaults knob-for-knob (no behavior change);
+    // the mapping lives in `consolidation_config` so host.rs stays under the file-size cap.
+    let (consolidation, pass) = crate::consolidation_config::consolidation_settings(config);
     Ok(MemoryConfig {
         capture: CaptureConfig {
             embed_on_capture: config.embedder.enabled,
@@ -204,6 +208,8 @@ pub(crate) fn memory_config(config: &Config) -> Result<MemoryConfig, CliError> {
         erasure: Default::default(),
         core_block: core_block_policy(config),
         consolidation_guard: consolidation_guard_policy(config),
+        consolidation,
+        pass,
     })
 }
 

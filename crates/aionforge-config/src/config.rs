@@ -8,6 +8,7 @@ use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 
 use crate::auth::AuthConfig;
+use crate::consolidation::ConsolidationConfig;
 use crate::core_block::CoreBlockConfig;
 use crate::deployment::DeploymentConfig;
 use crate::drift::DriftConfig;
@@ -76,6 +77,13 @@ pub struct Config {
     /// the declared consolidating family the startup single-family check reads.
     /// Always-on policy, inert until an inference-backed consolidation rule runs.
     pub consolidation_guard: ConsolidationGuardConfig,
+    /// Deterministic consolidation-pass posture (write-and-consolidation §2-§3): the
+    /// scheduler's pacing/bounds and the four pass-level tunings (resolution, detection,
+    /// summarization, induction). **Always live** — the shipped consolidation path always
+    /// runs; the all-default block is today's behavior exactly (induction off, the
+    /// conservative summarization floors, the 5s/32-episode scheduler). The host maps these
+    /// primitives into the engine's `aionforge_consolidate::{ConsolidationConfig, PassConfig}`.
+    pub consolidation: ConsolidationConfig,
     /// OAuth resource-server posture: the master switch and trusted token issuers.
     /// **Default-off** — when [`AuthConfig::enabled`] is `false` (the default) the
     /// server derives no identity from a connection. Config only in this PR; JWT
@@ -656,6 +664,7 @@ impl Config {
         self.core_block.validate()?;
         self.drift.validate()?;
         self.consolidation_guard.validate()?;
+        self.consolidation.validate()?;
         self.auth.validate()?;
         self.server.validate()?;
         // Validate every DECLARED deployment — active or not — so a broken inactive profile is
