@@ -9,7 +9,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use aionforge_consolidate::{
-    Clock, ConsolidationConfig, ConsolidationPass, PassContext, PassError, PassOutput,
+    Clock, ConsolidationConfig, ConsolidationPass, PassContext, PassError, PassProfile, PassRun,
+    StageProfile,
 };
 use aionforge_domain::blocks::{Identity, Stats};
 use aionforge_domain::ids::{ContentHash, Id};
@@ -128,9 +129,9 @@ impl ConsolidationPass for CountingPass {
     fn version(&self) -> u32 {
         1
     }
-    async fn apply(&self, _cx: &PassContext<'_>) -> Result<PassOutput, PassError> {
+    async fn apply(&self, _cx: &PassContext<'_>) -> Result<PassRun, PassError> {
         self.applied.fetch_add(1, Ordering::SeqCst);
-        Ok(PassOutput::default())
+        Ok(PassRun::empty())
     }
 }
 
@@ -148,12 +149,12 @@ impl ConsolidationPass for FlakyPass {
     fn version(&self) -> u32 {
         1
     }
-    async fn apply(&self, _cx: &PassContext<'_>) -> Result<PassOutput, PassError> {
+    async fn apply(&self, _cx: &PassContext<'_>) -> Result<PassRun, PassError> {
         let n = self.applied.fetch_add(1, Ordering::SeqCst) + 1;
         if n <= self.fail_times {
             Err(PassError::Transient(format!("attempt {n}")))
         } else {
-            Ok(PassOutput::default())
+            Ok(PassRun::empty())
         }
     }
 }
@@ -171,11 +172,11 @@ impl ConsolidationPass for FailOnContentPass {
     fn version(&self) -> u32 {
         1
     }
-    async fn apply(&self, cx: &PassContext<'_>) -> Result<PassOutput, PassError> {
+    async fn apply(&self, cx: &PassContext<'_>) -> Result<PassRun, PassError> {
         if cx.episode.content == self.fail_content {
             Err(PassError::Transient("targeted failure".to_string()))
         } else {
-            Ok(PassOutput::default())
+            Ok(PassRun::empty())
         }
     }
 }
@@ -193,7 +194,7 @@ impl ConsolidationPass for AlwaysFailPass {
     fn version(&self) -> u32 {
         1
     }
-    async fn apply(&self, _cx: &PassContext<'_>) -> Result<PassOutput, PassError> {
+    async fn apply(&self, _cx: &PassContext<'_>) -> Result<PassRun, PassError> {
         if self.fatal {
             Err(PassError::Fatal("permanent".to_string()))
         } else {
@@ -216,7 +217,7 @@ impl ConsolidationPass for ObserveStatePass {
     fn version(&self) -> u32 {
         1
     }
-    async fn apply(&self, cx: &PassContext<'_>) -> Result<PassOutput, PassError> {
+    async fn apply(&self, cx: &PassContext<'_>) -> Result<PassRun, PassError> {
         let state = cx
             .store
             .episode_by_node_id(cx.episode_node_id)
@@ -224,7 +225,7 @@ impl ConsolidationPass for ObserveStatePass {
             .expect("episode present")
             .consolidation_state;
         *self.observed.lock().expect("observed mutex") = Some(state);
-        Ok(PassOutput::default())
+        Ok(PassRun::empty())
     }
 }
 
@@ -243,7 +244,7 @@ impl ConsolidationPass for ObserveThenFailPass {
     fn version(&self) -> u32 {
         1
     }
-    async fn apply(&self, cx: &PassContext<'_>) -> Result<PassOutput, PassError> {
+    async fn apply(&self, cx: &PassContext<'_>) -> Result<PassRun, PassError> {
         let state = cx
             .store
             .episode_by_node_id(cx.episode_node_id)
@@ -273,11 +274,34 @@ impl ConsolidationPass for ConcurrencyProbePass {
     fn version(&self) -> u32 {
         1
     }
-    async fn apply(&self, _cx: &PassContext<'_>) -> Result<PassOutput, PassError> {
+    async fn apply(&self, _cx: &PassContext<'_>) -> Result<PassRun, PassError> {
         let current = self.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
         self.max_in_flight.fetch_max(current, Ordering::SeqCst);
         tokio::time::sleep(Duration::from_millis(5)).await;
         self.in_flight.fetch_sub(1, Ordering::SeqCst);
-        Ok(PassOutput::default())
+        Ok(PassRun::empty())
+    }
+}
+
+/// Returns a fixed per-stage profile every apply, so a scheduler test can prove the tick
+/// accumulates and exposes the profile (counts only). Derives nothing — the artifacts stay
+/// empty, so it stands in for a real pass without needing a store-backed extractor.
+pub struct ProfilingPass {
+    pub stages: Vec<StageProfile>,
+}
+
+#[async_trait]
+impl ConsolidationPass for ProfilingPass {
+    fn name(&self) -> &'static str {
+        "profiling"
+    }
+    fn version(&self) -> u32 {
+        1
+    }
+    async fn apply(&self, _cx: &PassContext<'_>) -> Result<PassRun, PassError> {
+        Ok(PassRun {
+            output: Default::default(),
+            profile: PassProfile::from_stages(self.stages.clone()),
+        })
     }
 }

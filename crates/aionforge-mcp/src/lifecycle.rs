@@ -17,8 +17,9 @@ use aionforge_domain::nodes::procedural::{BadPattern, Skill};
 use aionforge_domain::nodes::semantic::{Entity, Fact};
 use aionforge_domain::time::Timestamp;
 use aionforge_engine::{
-    AuditCursor, AuditPage, AuditRecord, AuditVerification, Memory, PointForget, PointPin,
-    PointUnforget, PointUnpin, RuleExtractor, RuleInducer, RuleSummarizer, TickReport,
+    AuditCursor, AuditPage, AuditRecord, AuditVerification, ConsolidationProfile, Memory,
+    PointForget, PointPin, PointUnforget, PointUnpin, RuleExtractor, RuleInducer, RuleSummarizer,
+    StageProfile, TickReport,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -206,6 +207,8 @@ pub async fn consolidate_tool<E: Embedder + 'static>(
         total.retried += report.retried;
         total.failed += report.failed;
         total.pending_after = report.pending_after;
+        // Fold each tick's per-stage profile into the run total (deterministic, count-only).
+        total.profile.merge_profile(&report.profile);
 
         if report.pending_after == 0
             || report.retried > 0
@@ -222,8 +225,43 @@ pub async fn consolidate_tool<E: Embedder + 'static>(
     );
     if params.verbose.unwrap_or(false) {
         out.push_str(" mode=foreground rule_set=deterministic_defaults");
+        out.push_str(&render_stage_profile(&total.profile));
     }
     Ok(out)
+}
+
+/// Render the per-stage consolidation profile as a single appended `key=value` line of
+/// counts only (no content, ids, or arguments). Each stage contributes one token of the form
+/// `stage:enabled=<bool>,considered=<n>,derived=<n>,merged=<n>,quarantined=<n>,rejected=<n>`,
+/// so an operator can read why a stage produced nothing (disabled vs saw-nothing vs all
+/// rejected) straight from the verbose receipt. An empty profile (no episode consolidated)
+/// renders nothing, keeping the receipt compact.
+fn render_stage_profile(profile: &ConsolidationProfile) -> String {
+    if profile.is_empty() {
+        return String::new();
+    }
+    let mut line = String::from(" stages=");
+    for (i, stage) in profile.stages().iter().enumerate() {
+        if i > 0 {
+            line.push(' ');
+        }
+        line.push_str(&render_stage(stage));
+    }
+    line
+}
+
+/// Render one stage profile as a compact, content-free `key=value` token.
+fn render_stage(stage: &StageProfile) -> String {
+    format!(
+        "{}:enabled={},considered={},derived={},merged={},quarantined={},rejected={}",
+        stage.stage,
+        stage.enabled,
+        stage.candidates_considered,
+        stage.derived,
+        stage.merged,
+        stage.quarantined,
+        stage.rejected_by_guard,
+    )
 }
 
 /// Soft-forget one writable memory by id.

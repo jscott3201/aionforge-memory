@@ -43,10 +43,12 @@ pub use aionforge_capture::{
     SignedProvenance, WriterContext,
 };
 pub use aionforge_consolidate::{
-    ConsolidationConfig, ConsolidationHandle, ConsolidationLag, DetectionConfig, InductionConfig,
-    LinkEvolveConfig, LinkEvolveError, LinkEvolveReport, ObjectRule, PassConfig, PredicateRule,
-    RELATIONSHIP_VOCABULARY, RULE_LINK_EVOLVE_VERSION, ResolutionConfig, Rule, RuleExtractor,
-    RuleInducer, RuleLinkEvolver, RuleSummarizer, SummarizationConfig, TickReport,
+    ConsolidationConfig, ConsolidationHandle, ConsolidationLag, ConsolidationProfile,
+    DetectionConfig, InductionConfig, LinkEvolveConfig, LinkEvolveError, LinkEvolveReport,
+    ObjectRule, PassConfig, PassProfile, PredicateRule, RELATIONSHIP_VOCABULARY,
+    RULE_LINK_EVOLVE_VERSION, ResolutionConfig, Rule, RuleExtractor, RuleInducer, RuleLinkEvolver,
+    RuleSummarizer, STAGE_DETECTION, STAGE_INDUCTION, STAGE_ORDER, STAGE_RESOLUTION,
+    STAGE_SUMMARIZATION, StageProfile, SummarizationConfig, TickReport,
 };
 pub use aionforge_domain::authz::{
     AuthorizationError, Authorizer, DefaultAuthorizer, DenyReason, OperatorAwareAuthorizer,
