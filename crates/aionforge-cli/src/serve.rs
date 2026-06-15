@@ -292,7 +292,7 @@ fn report_auth_startup(auth: &AuthConfig, validators: &Option<AuthValidators>) {
 ///
 /// Routes `/mcp` to the inner Streamable HTTP service and, when auth is enabled, gates it: it
 /// serves the RFC 9728 well-known metadata, extracts and validates the Bearer token, maps the
-/// claims to a principal, and inserts the [`ValidatedPrincipal`] into the request's
+/// claims to a principal, and inserts the [`ValidatedPrincipal`](aionforge_mcp::ValidatedPrincipal) into the request's
 /// `http::request::Parts.extensions` — the two-level nesting PR4 reads back downstream. When
 /// `validators` is `None` (the DEFAULT-OFF path) it is byte-for-byte the pre-PR5 router: `/mcp`
 /// delegates straight to the inner service and every other path 404s, with no validation, no

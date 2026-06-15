@@ -148,10 +148,14 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.95.0
       - uses: Swatinem/rust-cache@v2
-      - name: cargo doc (deny warnings)
+      - name: cargo doc — libs (deny warnings)
         env:
           RUSTDOCFLAGS: "-D warnings"
         run: cargo doc --no-deps --workspace --lib --document-private-items
+      - name: cargo doc — bins (deny warnings)
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+        run: cargo doc --no-deps --workspace --bins --document-private-items
 
   deny:
     name: cargo-deny
