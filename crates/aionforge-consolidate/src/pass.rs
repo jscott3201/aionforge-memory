@@ -17,6 +17,8 @@ use aionforge_domain::nodes::episodic::Episode;
 use aionforge_domain::time::Timestamp;
 use aionforge_store::{NodeId, Store};
 
+use crate::profile::PassProfile;
+
 /// What a pass derived for the scheduler to commit.
 ///
 /// This is the store's [`ConsolidationArtifacts`](aionforge_store::ConsolidationArtifacts)
@@ -26,6 +28,38 @@ use aionforge_store::{NodeId, Store};
 /// type so a pass's return value is exactly what the commit writes, with no copy step.
 /// A no-deriving pass returns [`PassOutput::default`]; M2.T04+ passes fill it in.
 pub use aionforge_store::ConsolidationArtifacts as PassOutput;
+
+/// What a pass returns: the artifacts to commit plus a content-free per-stage profile.
+///
+/// The artifacts ([`PassOutput`]) are what the scheduler materializes; the
+/// [`PassProfile`] is the operator-facing counts/outcomes the scheduler accumulates into the
+/// tick's [`ConsolidationProfile`](crate::ConsolidationProfile) for a verbose receipt. The
+/// profile is bundled here, rather than added to [`PassOutput`], so the store crate's
+/// [`ConsolidationArtifacts`](aionforge_store::ConsolidationArtifacts) stays a pure storage
+/// payload (the store crate boundary carries no profiling vocabulary).
+pub struct PassRun {
+    /// The derived artifacts for the scheduler to commit.
+    pub output: PassOutput,
+    /// The per-stage profile (counts/outcomes only) for the verbose receipt.
+    pub profile: PassProfile,
+}
+
+impl PassRun {
+    /// A run that derived `output` and carries no profiled stage (the seam-only/no-op case).
+    #[must_use]
+    pub fn unprofiled(output: PassOutput) -> Self {
+        Self {
+            output,
+            profile: PassProfile::empty(),
+        }
+    }
+
+    /// A run that derived nothing and carries no profile (the empty no-op case).
+    #[must_use]
+    pub fn empty() -> Self {
+        Self::unprofiled(PassOutput::default())
+    }
+}
 
 /// One consolidation rule over a single episode.
 #[async_trait::async_trait]
@@ -46,10 +80,13 @@ pub trait ConsolidationPass: Send + Sync + 'static {
     /// Derive output for one episode from a read-only snapshot. Side-effect-free: the
     /// scheduler, not the pass, performs every write.
     ///
+    /// Returns a [`PassRun`] bundling the artifacts to commit with a content-free per-stage
+    /// [`PassProfile`]; a pass with nothing to report returns [`PassRun::unprofiled`].
+    ///
     /// # Errors
     /// Returns [`PassError::Transient`] for a recoverable failure (retry next tick) or
     /// [`PassError::Fatal`] for a permanent one (the episode is marked failed).
-    async fn apply(&self, cx: &PassContext<'_>) -> Result<PassOutput, PassError>;
+    async fn apply(&self, cx: &PassContext<'_>) -> Result<PassRun, PassError>;
 }
 
 /// The read-only context handed to a pass for one episode.
@@ -94,7 +131,7 @@ impl ConsolidationPass for NoopPass {
         1
     }
 
-    async fn apply(&self, _cx: &PassContext<'_>) -> Result<PassOutput, PassError> {
-        Ok(PassOutput::default())
+    async fn apply(&self, _cx: &PassContext<'_>) -> Result<PassRun, PassError> {
+        Ok(PassRun::empty())
     }
 }

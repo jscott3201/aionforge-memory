@@ -32,10 +32,16 @@ use crate::clock::{Clock, SystemClock};
 use crate::config::ConsolidationConfig;
 use crate::error::ConsolidationError;
 use crate::lag::ConsolidationLag;
-use crate::pass::{ConsolidationPass, PassContext, PassError, PassOutput};
+use crate::pass::{ConsolidationPass, PassContext, PassError, PassOutput, PassRun};
+use crate::profile::ConsolidationProfile;
 
 /// What one tick accomplished.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+///
+/// Carries the per-stage [`ConsolidationProfile`] (counts/outcomes only) accumulated across
+/// the tick's passes, so a foreground caller can fold it across ticks and a verbose receipt
+/// can answer "why did 0 notes appear?". The profile holds a `Vec`, so [`TickReport`] is
+/// `Clone` but not `Copy`.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct TickReport {
     /// Episodes consolidated this tick.
     pub consolidated: usize,
@@ -45,6 +51,8 @@ pub struct TickReport {
     pub failed: usize,
     /// Episodes still pending after the tick (the live backlog).
     pub pending_after: u64,
+    /// The per-stage profile accumulated across this tick's passes (counts/outcomes only).
+    pub profile: ConsolidationProfile,
 }
 
 /// The outcome of consolidating a single episode.
@@ -141,7 +149,8 @@ impl<C: Clock> Consolidator<C> {
             // commit must never advance the cursor past a held-back failure (the cursor
             // tracks the contiguous consolidated prefix). The skipped tail stays pending
             // and is rediscovered, in order, next tick.
-            match self.process_episode(&item).await? {
+            let outcome = self.process_episode(&item, &mut report.profile).await?;
+            match outcome {
                 EpisodeOutcome::Consolidated => report.consolidated += 1,
                 EpisodeOutcome::Retried => {
                     report.retried += 1;
@@ -219,9 +228,14 @@ impl<C: Clock> Consolidator<C> {
     }
 
     /// Run the passes over one episode and commit the outcome.
+    ///
+    /// `profile` accumulates each successful pass's per-stage profile across the episode (and,
+    /// since the caller passes the tick's profile, across the tick). A failed/retried episode
+    /// contributes nothing — only a committed episode's passes ran to completion.
     async fn process_episode(
         &self,
         item: &ConsolidationWorkItem,
+        profile: &mut ConsolidationProfile,
     ) -> Result<EpisodeOutcome, ConsolidationError> {
         let span = tracing::info_span!(
             "aionforge.consolidation.episode",
@@ -232,7 +246,7 @@ impl<C: Clock> Consolidator<C> {
             error = tracing::field::Empty,
         );
         let result = self
-            .process_episode_inner(item)
+            .process_episode_inner(item, profile)
             .instrument(span.clone())
             .await;
         record_episode_span(&span, &result);
@@ -242,6 +256,7 @@ impl<C: Clock> Consolidator<C> {
     async fn process_episode_inner(
         &self,
         item: &ConsolidationWorkItem,
+        profile: &mut ConsolidationProfile,
     ) -> Result<EpisodeOutcome, ConsolidationError> {
         let now = self.clock.now();
         let rule_versions = self.rule_versions();
@@ -255,8 +270,11 @@ impl<C: Clock> Consolidator<C> {
 
         // Accumulate every enabled pass's derived output, then materialize the merged set
         // in the same commit as the flip — so all of one episode's consolidation lands
-        // atomically, never partially.
+        // atomically, never partially. The per-stage profile accumulates alongside, but is
+        // folded into the tick's profile only after the commit succeeds — a failed episode
+        // contributes no counts.
         let mut artifacts = PassOutput::default();
+        let mut episode_profile = ConsolidationProfile::new();
         for pass in self.passes.iter().filter(|pass| pass.enabled()) {
             let cx = PassContext {
                 store: &self.store,
@@ -285,7 +303,10 @@ impl<C: Clock> Consolidator<C> {
             };
             record_pass_span(&span, &result);
             match result {
-                Ok(output) => artifacts.merge(output),
+                Ok(run) => {
+                    episode_profile.merge(&run.profile);
+                    artifacts.merge(run.output);
+                }
                 Err(error) => return self.handle_failure(item, pass.name(), &error, &now),
             }
         }
@@ -307,6 +328,8 @@ impl<C: Clock> Consolidator<C> {
             &now,
             &artifacts,
         )?;
+        // The commit landed: fold this episode's profile into the tick's accumulator.
+        profile.merge_profile(&episode_profile);
         Ok(EpisodeOutcome::Consolidated)
     }
 
@@ -429,7 +452,7 @@ fn record_episode_span(span: &tracing::Span, result: &Result<EpisodeOutcome, Con
     }
 }
 
-fn record_pass_span(span: &tracing::Span, result: &Result<PassOutput, PassError>) {
+fn record_pass_span(span: &tracing::Span, result: &Result<PassRun, PassError>) {
     match result {
         Ok(_) => {
             span.record("outcome", "success");

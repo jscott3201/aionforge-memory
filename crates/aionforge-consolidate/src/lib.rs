@@ -28,6 +28,7 @@ mod lag;
 mod link_evolution;
 mod merge;
 mod pass;
+mod profile;
 mod resolve;
 mod rule_extractor;
 mod rule_inducer;
@@ -49,7 +50,11 @@ pub use lag::ConsolidationLag;
 pub use link_evolution::{
     LinkEvolveConfig, LinkEvolveError, LinkEvolvePass, LinkEvolveReport, RELATIONSHIP_VOCABULARY,
 };
-pub use pass::{ConsolidationPass, NoopPass, PassContext, PassError, PassOutput};
+pub use pass::{ConsolidationPass, NoopPass, PassContext, PassError, PassOutput, PassRun};
+pub use profile::{
+    ConsolidationProfile, PassProfile, STAGE_DETECTION, STAGE_INDUCTION, STAGE_ORDER,
+    STAGE_RESOLUTION, STAGE_SUMMARIZATION, StageProfile,
+};
 pub use rule_extractor::{ObjectRule, Rule, RuleExtractor};
 pub use rule_inducer::RuleInducer;
 pub use rule_link_evolver::{RULE_LINK_EVOLVE_VERSION, RuleLinkEvolver};
