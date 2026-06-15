@@ -204,7 +204,7 @@ impl Store {
     }
 
     /// Whether a node type with this label is declared in the bound graph type.
-    fn has_node_type(&self, name: &str) -> bool {
+    pub(crate) fn has_node_type(&self, name: &str) -> bool {
         self.graph()
             .graph_type()
             .as_deref()

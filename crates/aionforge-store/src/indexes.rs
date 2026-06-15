@@ -155,20 +155,42 @@ pub(crate) const SCALAR_INDEXES: &[(&str, &str, TypedIndexKind)] = &[
     ("Tag", "slug", TypedIndexKind::String),
 ];
 
-/// Composite indexes (§8). DDL-only — no Rust wrapper. The `AuditEvent` temporal
-/// composites order a subject's (or a kind's) audit history by `occurred_at` at the
-/// index, so the by-subject and by-kind readers scan in instant order without a
-/// sort-after-scan. Other §8 timestamp composites that no reader needs yet are omitted.
-const COMPOSITE_INDEXES: &[&str] = &[
-    "CREATE INDEX IF NOT EXISTS cidx_fact_subject_predicate ON :Fact(subject_id, predicate)",
-    "CREATE INDEX IF NOT EXISTS cidx_fact_subject_status ON :Fact(subject_id, status)",
-    "CREATE INDEX IF NOT EXISTS cidx_skill_name_version ON :Skill(name, version)",
-    "CREATE INDEX IF NOT EXISTS cidx_audit_subject_occurred ON :AuditEvent(subject_id, occurred_at)",
-    "CREATE INDEX IF NOT EXISTS cidx_audit_kind_occurred ON :AuditEvent(kind, occurred_at)",
+/// Composite indexes (§8) as `(node_label, DDL)`. DDL-only — no Rust wrapper. The label
+/// is carried alongside the DDL so the registrar can skip an entry whose type the bound
+/// graph does not declare (a partial recovery) without parsing the statement; on a fresh
+/// migration every type is already declared, so the guard never skips there. The
+/// `AuditEvent` temporal composites order a subject's (or a kind's) audit history by
+/// `occurred_at` at the index, so the by-subject and by-kind readers scan in instant order
+/// without a sort-after-scan. Other §8 timestamp composites that no reader needs yet are
+/// omitted.
+const COMPOSITE_INDEXES: &[(&str, &str)] = &[
+    (
+        "Fact",
+        "CREATE INDEX IF NOT EXISTS cidx_fact_subject_predicate ON :Fact(subject_id, predicate)",
+    ),
+    (
+        "Fact",
+        "CREATE INDEX IF NOT EXISTS cidx_fact_subject_status ON :Fact(subject_id, status)",
+    ),
+    (
+        "Skill",
+        "CREATE INDEX IF NOT EXISTS cidx_skill_name_version ON :Skill(name, version)",
+    ),
+    (
+        "AuditEvent",
+        "CREATE INDEX IF NOT EXISTS cidx_audit_subject_occurred ON :AuditEvent(subject_id, occurred_at)",
+    ),
+    (
+        "AuditEvent",
+        "CREATE INDEX IF NOT EXISTS cidx_audit_kind_occurred ON :AuditEvent(kind, occurred_at)",
+    ),
     // Orders a work item's children by `ordinal` at the index, so the by-parent reader returns
     // siblings in declared order. The substrate probes the single `parent_id` scalar and the
     // composite serves the ordering; it is not a two-key equality lookup.
-    "CREATE INDEX IF NOT EXISTS cidx_workitem_parent_ordinal ON :WorkItem(parent_id, ordinal)",
+    (
+        "WorkItem",
+        "CREATE INDEX IF NOT EXISTS cidx_workitem_parent_ordinal ON :WorkItem(parent_id, ordinal)",
+    ),
 ];
 
 /// A registered vector index, for inventory and tests.
@@ -247,6 +269,13 @@ fn catalog_vector_kind(label: &str, property: &str) -> Option<VectorIndexKind> {
 
 impl Store {
     /// Register every §7–§8 index, idempotently. Called from the migration.
+    ///
+    /// Each per-class registrar returns the `(label, property)` pairs it actually
+    /// created; the migration discards them (it only needs the indexes to exist), but
+    /// the same registrars are the single create-if-missing path that the recovery-time
+    /// [`Store::ensure_catalog_indexes`] (`reconcile.rs`) reuses and whose return value
+    /// it collects — so there is exactly one creation path per class and the two callers
+    /// cannot drift.
     pub(crate) fn register_indexes(&self, embedding_dimension: u32) -> Result<(), StoreError> {
         self.register_vector_indexes(embedding_dimension)?;
         self.register_text_indexes()?;
@@ -255,14 +284,25 @@ impl Store {
         Ok(())
     }
 
-    fn register_vector_indexes(&self, dimension: u32) -> Result<(), StoreError> {
+    /// Create every missing catalog vector index at `dimension`, returning the
+    /// `(label, property)` pairs created (empty when all already existed).
+    pub(crate) fn register_vector_indexes(
+        &self,
+        dimension: u32,
+    ) -> Result<Vec<(String, String)>, StoreError> {
+        let mut created = Vec::new();
         for &(label, property, kind) in VECTOR_INDEXES {
-            if self.vector_index_exists(label, property) {
+            // Skip a label the bound type does not declare. The migration always declares
+            // every type before registering indexes, so this never skips there; it only
+            // matters on recovery of a partial/drifted binding, where index creation must
+            // not crash on an undeclared type — the schema/latch checks own that verdict.
+            if !self.has_node_type(label) || self.vector_index_exists(label, property) {
                 continue;
             }
             self.create_vector_index_for(label, property, kind, dimension)?;
+            created.push((label.to_owned(), property.to_owned()));
         }
-        Ok(())
+        Ok(created)
     }
 
     /// Create one vector index with the kind-appropriate construction config.
@@ -361,40 +401,66 @@ impl Store {
         Ok(reconciled)
     }
 
-    fn register_text_indexes(&self) -> Result<(), StoreError> {
+    /// Create every missing catalog text index, returning the `(label, property)` pairs
+    /// created (empty when all already existed).
+    pub(crate) fn register_text_indexes(&self) -> Result<Vec<(String, String)>, StoreError> {
+        let mut created = Vec::new();
         for &(label, property) in TEXT_INDEXES {
-            if self.text_index_exists(label, property) {
+            // See `register_vector_indexes`: skip a label the bound type does not declare.
+            if !self.has_node_type(label) || self.text_index_exists(label, property) {
                 continue;
             }
-            let name = db_string(&format!("txt_{label}_{property}"))?;
-            self.graph().create_text_index_named(
-                db_string(label)?,
-                db_string(property)?,
-                Some(name),
-            )?;
+            self.create_text_index_for(label, property)?;
+            created.push((label.to_owned(), property.to_owned()));
         }
+        Ok(created)
+    }
+
+    /// Create one BM25 text index. The single text-index create path, shared by the
+    /// migration's [`Store::register_text_indexes`] and the recovery-time
+    /// [`Store::ensure_catalog_indexes`], so neither can build one differently.
+    fn create_text_index_for(&self, label: &str, property: &str) -> Result<(), StoreError> {
+        let name = db_string(&format!("txt_{label}_{property}"))?;
+        self.graph().create_text_index_named(
+            db_string(label)?,
+            db_string(property)?,
+            Some(name),
+        )?;
         Ok(())
     }
 
-    fn register_property_indexes(&self) -> Result<(), StoreError> {
-        // namespace is indexed on every kind (§11).
+    /// Create every missing catalog scalar/property index — the per-`NODE_TYPES`
+    /// `namespace` index (§11) and each [`SCALAR_INDEXES`] entry — returning the
+    /// `(label, property)` pairs created (empty when all already existed).
+    pub(crate) fn register_property_indexes(&self) -> Result<Vec<(String, String)>, StoreError> {
+        let mut created = Vec::new();
+        // namespace is indexed on every kind (§11). Skip a label the bound type does not
+        // declare (see `register_vector_indexes`): only reachable on a partial recovery.
         for type_ddl in NODE_TYPES {
-            self.ensure_property_index(type_ddl.name, "namespace", TypedIndexKind::String)?;
+            if self.has_node_type(type_ddl.name)
+                && self.ensure_property_index(type_ddl.name, "namespace", TypedIndexKind::String)?
+            {
+                created.push((type_ddl.name.to_owned(), "namespace".to_owned()));
+            }
         }
         for &(label, property, kind) in SCALAR_INDEXES {
-            self.ensure_property_index(label, property, kind)?;
+            if self.has_node_type(label) && self.ensure_property_index(label, property, kind)? {
+                created.push((label.to_owned(), property.to_owned()));
+            }
         }
-        Ok(())
+        Ok(created)
     }
 
+    /// Ensure one scalar property index exists. Returns `true` if it was created here,
+    /// `false` if it already existed (so callers can report only the new ones).
     fn ensure_property_index(
         &self,
         label: &str,
         property: &str,
         kind: TypedIndexKind,
-    ) -> Result<(), StoreError> {
+    ) -> Result<bool, StoreError> {
         if self.property_index_exists(label, property) {
-            return Ok(());
+            return Ok(false);
         }
         let name = db_string(&format!("pidx_{label}_{property}"))?;
         self.graph().create_property_index_named(
@@ -403,12 +469,23 @@ impl Store {
             kind,
             Some(name),
         )?;
-        Ok(())
+        Ok(true)
     }
 
-    fn register_composite_indexes(&self) -> Result<(), StoreError> {
-        for ddl in COMPOSITE_INDEXES {
-            self.execute(&BoundQuery::new(*ddl))?;
+    /// Run the composite-index DDL (`CREATE INDEX IF NOT EXISTS`), which is idempotent by
+    /// construction. Shared by the migration and the recovery-time
+    /// [`Store::ensure_catalog_indexes`]. The DDL does not report which (if any) it
+    /// created, so this returns nothing; granular per-composite reporting is left out
+    /// (the engine treats an already-present composite as a no-op).
+    pub(crate) fn register_composite_indexes(&self) -> Result<(), StoreError> {
+        for &(label, ddl) in COMPOSITE_INDEXES {
+            // Skip a label the bound type does not declare (see `register_vector_indexes`):
+            // only reachable on a partial recovery, where the schema/latch checks own the
+            // "schema is broken" verdict — composite DDL must not crash ahead of them.
+            if !self.has_node_type(label) {
+                continue;
+            }
+            self.execute(&BoundQuery::new(ddl))?;
         }
         Ok(())
     }

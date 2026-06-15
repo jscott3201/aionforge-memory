@@ -193,10 +193,12 @@ impl Store {
     ///
     /// Recovery does not migrate — the schema is already present in the replayed log —
     /// but it does reconcile drifted vector-index kinds to the catalog (the interim
-    /// greenfield-tax fix; non-lossy, dimension-preserving) and re-run the §13.5
-    /// dimension-consistency check and the audit-signature latch check (02 §4.11), all of
-    /// which the version-guarded [`Store::migrate`] would skip on an already-current
-    /// graph.
+    /// greenfield-tax fix; non-lossy, dimension-preserving), create any catalog index the
+    /// recovered graph is MISSING (a catalog index added after this store was first
+    /// migrated; non-lossy — the engine backfills it from primary data; via
+    /// `ensure_catalog_indexes`), and re-run the §13.5 dimension-consistency
+    /// check and the audit-signature latch check (02 §4.11), all of which the
+    /// version-guarded [`Store::migrate`] would skip on an already-current graph.
     ///
     /// # Errors
     /// Returns [`StoreError`] if recovery fails (corrupt or mismatched persistence,
@@ -221,6 +223,17 @@ impl Store {
         let reconciled = store.reconcile_vector_index_kinds(config.embedding_dimension)?;
         emit_index_kind_reconciliation(&reconciled);
         store.dimension_consistency_check(config.embedding_dimension)?;
+        // Idempotently create any catalog index this recovered graph is MISSING — a
+        // vector/text/scalar/composite index added to the catalog after the store was
+        // first migrated, which the version-guarded `migrate` skips on an already-current
+        // graph. Non-lossy: the engine backfills a created index from the primary data.
+        // Run AFTER `dimension_consistency_check`: a newly created vector index is built at
+        // `config.embedding_dimension` over the existing primary VECTOR columns, so it is
+        // only safe to create once the dim-check has proven the stored vectors match that
+        // dimension. Running before the check could build a new index at the wrong
+        // dimension on a real embedder change.
+        let created = store.ensure_catalog_indexes(config.embedding_dimension)?;
+        crate::reconcile::emit_catalog_index_created(&created);
         store.audit_signature_latch_check()?;
         Ok(store)
     }

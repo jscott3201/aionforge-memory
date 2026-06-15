@@ -46,6 +46,7 @@ mod provenance;
 mod providers;
 mod purge_read;
 mod purge_write;
+mod reconcile;
 mod relates_to;
 mod schema;
 mod search;
