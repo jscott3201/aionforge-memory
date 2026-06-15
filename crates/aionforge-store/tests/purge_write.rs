@@ -425,7 +425,7 @@ fn the_wal_round_trips_a_purge() {
         drop(store);
     }
 
-    let recovered = Store::recover(&dir, config).expect("recover");
+    let recovered = Store::recover(&dir, config, &now()).expect("recover");
     assert!(
         !is_live(&recovered, &e.identity.id, "Episode"),
         "a purged memory stays purged across recovery"

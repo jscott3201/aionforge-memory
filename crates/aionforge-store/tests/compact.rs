@@ -182,7 +182,7 @@ fn a_compacted_store_still_recovers_from_its_wal() {
 
     // Compaction writes no snapshot: recovery replays the full WAL from the empty
     // baseline and converges on the same state — purged stays purged, keeper lives.
-    let recovered = Store::recover(&dir, config).expect("recover");
+    let recovered = Store::recover(&dir, config, &now()).expect("recover");
     assert!(
         recovered
             .memory_by_id(&erased.identity.id, &["Episode"])

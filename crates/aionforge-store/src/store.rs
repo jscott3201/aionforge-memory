@@ -191,20 +191,26 @@ impl Store {
     /// shape this store writes (no on-disk snapshots yet); once snapshots/compaction
     /// land, the recovery baseline must come from the snapshot's recorded type.
     ///
-    /// Recovery does not migrate — the schema is already present in the replayed log —
-    /// but it does reconcile drifted vector-index kinds to the catalog (the interim
-    /// greenfield-tax fix; non-lossy, dimension-preserving), create any catalog index the
-    /// recovered graph is MISSING (a catalog index added after this store was first
-    /// migrated; non-lossy — the engine backfills it from primary data; via
-    /// `ensure_catalog_indexes`), and re-run the §13.5 dimension-consistency
-    /// check and the audit-signature latch check (02 §4.11), all of which the
-    /// version-guarded [`Store::migrate`] would skip on an already-current graph.
+    /// Recovery does not run the full migration — the schema is already present in the
+    /// replayed log — but it does perform the non-lossy, in-place reconciliations the
+    /// version-guarded [`Store::migrate`] would skip on an already-current graph, removing
+    /// the interim greenfield tax for additive catalog changes: it CREATES any catalog
+    /// node/edge TYPE the recovered binding is MISSING (a type added to the catalog after
+    /// this store was first migrated; additive `CREATE ... IF NOT EXISTS`, never touches
+    /// existing rows; advances the recorded `SchemaVersion` once the binding declares the
+    /// full catalog; via `reconcile_additive_schema`), reconciles drifted vector-index
+    /// kinds to the catalog (non-lossy, dimension-preserving), creates any catalog INDEX the
+    /// recovered graph is MISSING (non-lossy — the engine backfills it from primary data;
+    /// via `ensure_catalog_indexes`), and re-runs the §13.5 dimension-consistency check and
+    /// the audit-signature latch check (02 §4.11). Breaking schema changes (a type's
+    /// columns, the audit-signature latch) are NOT additive and stay gated to 1.0.0. `now`
+    /// stamps `SchemaVersion.applied_at` only if the version advances.
     ///
     /// # Errors
     /// Returns [`StoreError`] if recovery fails (corrupt or mismatched persistence,
     /// type drift, a recovered vector index whose dimension disagrees with `config`,
     /// or a replayed schema that still declares `AuditEvent.signature` immutable).
-    pub fn recover(dir: &Path, config: StoreConfig) -> Result<Self, StoreError> {
+    pub fn recover(dir: &Path, config: StoreConfig, now: &Timestamp) -> Result<Self, StoreError> {
         vet_locked_store_dir(dir)?;
         let graph = SharedGraph::recover_closed_with_providers(
             dir,
@@ -214,6 +220,17 @@ impl Store {
         )
         .map_err(StoreError::from_recovery)?;
         let store = Self::assemble(graph, config);
+        // Create any catalog node/edge type this recovered binding is MISSING — a type added
+        // to the catalog after the store was first migrated — idempotently and non-lossily
+        // (an additive CREATE never touches existing rows). Run BEFORE the index
+        // reconciliations so a newly created type's indexes are then built by
+        // `ensure_catalog_indexes` (its per-class registrars skip a type the binding does not
+        // declare). This removes the schema-additive slice of the greenfield tax: an additive
+        // catalog bump converges on open instead of forcing a fresh store. The recorded
+        // `SchemaVersion` is NOT advanced here — that happens LAST, after the validation
+        // checks below, so a binding that fails to validate never persists a version it does
+        // not satisfy (see `advance_recorded_schema_version_if_converged`).
+        let created_types = store.reconcile_additive_schema()?;
         // Converge any vector index whose kind drifted from the catalog (e.g. a store
         // written before the all-TurboQuant default) by dropping and recreating it at the
         // catalog kind — non-lossy, the engine backfills from the primary vectors. Run
@@ -235,6 +252,16 @@ impl Store {
         let created = store.ensure_catalog_indexes(config.embedding_dimension)?;
         crate::reconcile::emit_catalog_index_created(&created);
         store.audit_signature_latch_check()?;
+        // Record the recorded version LAST — only now that the binding is validated
+        // forward-migratable (the dimension and audit-signature-latch checks above passed).
+        // Mirrors `migrate`, which records its version after its own checks; a pre-latch or
+        // dimension-mismatched binding errors above before any version is written, so the
+        // persisted version never claims a convergence the binding does not satisfy.
+        let version_advanced_to = store.advance_recorded_schema_version_if_converged(now)?;
+        emit_additive_schema_reconciliation(&crate::migrate::AdditiveSchemaReconciliation {
+            created: created_types,
+            version_advanced_to,
+        });
         Ok(store)
     }
 
@@ -243,7 +270,8 @@ impl Store {
     /// If a WAL is present at `dir`, recover from it; otherwise create the directory,
     /// open fresh, and migrate. This is the ready-to-use entry point for a durable
     /// store whose first run and later runs take the same call. `now` stamps the
-    /// `SchemaVersion` on the first run and is unused on recovery.
+    /// `SchemaVersion` on the first run (migration) and, on recovery, only if an additive
+    /// schema reconciliation advances the recorded version (otherwise unused).
     ///
     /// # Errors
     /// Returns [`StoreError`] if recovery or fresh open/migration fails.
@@ -259,7 +287,7 @@ impl Store {
             "fresh"
         };
         let result = if mode == "recover" {
-            Self::recover(dir, config)
+            Self::recover(dir, config, now)
         } else {
             Self::open_persistent_migrated(dir, config, now)
         };
@@ -961,6 +989,31 @@ fn emit_open_metrics(mode: &'static str, result: &Result<Store, StoreError>, ela
         tracing::info!(target: "aionforge::store", mode, outcome, elapsed_ms, "store opened");
     } else {
         tracing::warn!(target: "aionforge::store", mode, outcome, elapsed_ms, "store open failed");
+    }
+}
+
+/// Record the recovery-time additive schema reconciliation: a counter per created catalog
+/// type plus a counter when the recorded version advances, each with a human-readable line,
+/// so an additive in-place schema convergence is observable. Mirrors
+/// `emit_index_kind_reconciliation`. Silent when nothing changed.
+fn emit_additive_schema_reconciliation(schema: &crate::migrate::AdditiveSchemaReconciliation) {
+    for name in &schema.created {
+        metrics::counter!(
+            "aionforge_store_catalog_type_created_total",
+            "type" => name.clone(),
+        )
+        .increment(1);
+        tracing::info!(
+            catalog_type = %name,
+            "created missing catalog type on open (additive, non-lossy)"
+        );
+    }
+    if let Some(version) = schema.version_advanced_to {
+        metrics::counter!("aionforge_store_schema_version_advanced_total").increment(1);
+        tracing::info!(
+            to_version = version,
+            "advanced recorded schema version after additive reconciliation on open"
+        );
     }
 }
 

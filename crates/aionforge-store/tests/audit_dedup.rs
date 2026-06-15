@@ -310,7 +310,7 @@ fn recovery_refuses_a_pre_latch_immutable_signature_schema() {
             ))
             .expect("declare the pre-latch type");
     }
-    let err = Store::recover(&dir, StoreConfig::default())
+    let err = Store::recover(&dir, StoreConfig::default(), &now())
         .expect_err("a pre-latch binding must be refused at open, not at a later commit");
     assert!(
         err.to_string().contains("AuditEvent.signature"),

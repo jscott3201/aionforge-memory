@@ -256,7 +256,7 @@ fn recover_refuses_group_or_other_accessible_data_dir() {
     }
 
     set_mode(&dir, 0o755);
-    let error = Store::recover(&dir, config).expect_err("loose recovery dir is refused");
+    let error = Store::recover(&dir, config, &now()).expect_err("loose recovery dir is refused");
     assert!(
         error.to_string().contains("looser than 0700"),
         "unexpected error: {error}"
@@ -312,7 +312,7 @@ fn persistence_round_trips_schema_data_indexes_and_providers() {
     }
 
     // Recovery phase: from the WAL alone, everything must come back identical.
-    let recovered = Store::recover(&dir, config).expect("recover");
+    let recovered = Store::recover(&dir, config, &now()).expect("recover");
     assert_eq!(
         recovered.schema_version().expect("schema version"),
         SCHEMA_VERSION,
@@ -410,7 +410,7 @@ fn persistence_round_trips_schema_data_indexes_and_providers() {
     );
     drop(recovered);
 
-    let rerecovered = Store::recover(&dir, config).expect("re-recover");
+    let rerecovered = Store::recover(&dir, config, &now()).expect("re-recover");
     assert_eq!(
         fact_count(&rerecovered),
         3,
@@ -439,12 +439,13 @@ fn recovery_runs_the_dimension_consistency_check() {
         embedding_dimension: 1536,
     };
     assert!(
-        Store::recover(&dir, mismatched).is_err(),
+        Store::recover(&dir, mismatched, &now()).is_err(),
         "recovery rejects a dimension mismatch"
     );
 
     // Recovering under the dimension the indexes were built at succeeds.
-    let recovered = Store::recover(&dir, written).expect("recover at the written dimension");
+    let recovered =
+        Store::recover(&dir, written, &now()).expect("recover at the written dimension");
     assert!(
         recovered
             .vector_indexes()
@@ -481,7 +482,8 @@ fn recovery_maps_an_unsupported_on_disk_format_to_a_distinct_error() {
     // Recovery must surface the distinct UnsupportedFormat arm — not an opaque
     // Graph/corruption error — so the runbook can say "recreate fresh", and the
     // message must carry the on-disk version and the actionable guidance.
-    let error = Store::recover(&dir, config).expect_err("an older on-disk format is rejected");
+    let error =
+        Store::recover(&dir, config, &now()).expect_err("an older on-disk format is rejected");
     assert!(
         matches!(error, StoreError::UnsupportedFormat { minor: 0, .. }),
         "expected a distinct UnsupportedFormat, got: {error:?}"
@@ -541,7 +543,7 @@ fn recovered_wal_preserves_episode_event_and_ingestion_time() {
         drop(store);
     }
 
-    let recovered = Store::recover(&dir, config).expect("recover");
+    let recovered = Store::recover(&dir, config, &now()).expect("recover");
     let episode = recovered
         .episode_by_id(&episode_id)
         .expect("episode lookup")
@@ -722,7 +724,7 @@ fn candidate_state_providers_survive_recovery() {
     }
 
     // Every provider's membership must rebuild from the WAL alone.
-    let recovered = Store::recover(&dir, config).expect("recover");
+    let recovered = Store::recover(&dir, config, &now()).expect("recover");
     for (name, count) in expected {
         assert_eq!(
             provider_count(&recovered, name),

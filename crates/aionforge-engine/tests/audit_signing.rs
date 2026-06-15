@@ -225,7 +225,8 @@ fn a_restart_on_the_same_anchor_heals_idempotently() {
             1
         );
     }
-    let recovered = Arc::new(Store::recover(&dir, store_config).expect("recover"));
+    let recovered =
+        Arc::new(Store::recover(&dir, store_config, &Timestamp::now()).expect("recover"));
     Memory::new(
         Arc::clone(&recovered),
         FakeEmbedder::new(),
