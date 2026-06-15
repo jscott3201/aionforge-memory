@@ -164,6 +164,16 @@ pub fn read_params(ids: &[Id], agent: Id) -> ReadMemoryToolParams {
     }
 }
 
+/// Like [`read_params`] but with the reader asserting the given `teams` on this same call —
+/// the per-call team assertion a by-id read of a team-namespace memory requires (parity with
+/// `search`). `teams` are bare slugs; the resolver maps each to `Namespace::Team(<slug>)`.
+pub fn read_params_with_teams(ids: &[Id], agent: Id, teams: &[&str]) -> ReadMemoryToolParams {
+    ReadMemoryToolParams {
+        teams: teams.iter().map(ToString::to_string).collect(),
+        ..read_params(ids, agent)
+    }
+}
+
 fn stats() -> Stats {
     Stats {
         importance: 0.5,
