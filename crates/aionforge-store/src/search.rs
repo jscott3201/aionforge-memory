@@ -15,12 +15,15 @@
 //! higher-is-better. Either way the returned list is ordered best-first, which is all
 //! rank fusion (M1.T05) needs.
 
+use std::collections::HashSet;
 use std::time::Instant;
 
 use aionforge_domain::Embedding;
-use selene_core::{NodeId, Value};
+use aionforge_domain::namespace::Namespace;
+use aionforge_domain::nodes::episodic::Episode;
+use selene_core::{NodeId, Value, db_string};
 
-use crate::convert::{as_f64, as_node_ref, embedding_value};
+use crate::convert::{as_f64, as_node_ref, embedding_value, namespace_value};
 use crate::error::StoreError;
 use crate::gql::{BoundQuery, QueryResult};
 use crate::store::Store;
@@ -436,15 +439,21 @@ impl Store {
 
     /// BM25-score an explicit candidate set over the text index (03 §2 scoped lexical).
     ///
+    /// `deadline` bounds the scan the same way [`Self::text_search_within`] bounds the
+    /// unscoped index search: the engine checks cancellation per node block, so a large
+    /// candidate list (an episode scope spanning a busy namespace, 03 §6) cannot run the
+    /// recall past its budget. `None` leaves the scan uninterrupted.
+    ///
     /// # Errors
     /// Returns [`StoreError::Search`] if `kind` maintains no text index, or another
-    /// [`StoreError`] if the binds or execution fails.
+    /// [`StoreError`] if the binds, execution, or the deadline fails.
     pub fn text_score_nodes(
         &self,
         kind: SearchKind,
         query: &str,
         candidates: &[NodeId],
         k: usize,
+        deadline: Option<Instant>,
     ) -> Result<Vec<SearchHit>, StoreError> {
         let label = kind.label();
         let prop = text_property(kind)?;
@@ -455,7 +464,48 @@ impl Store {
             .bind_str("query", query)?
             .bind("nodes", node_list_value(candidates))?
             .bind("k", k_value(k))?;
-        extract_hits(self.execute(&query)?, "score")
+        extract_hits(self.execute_within(&query, deadline)?, "score")
+    }
+
+    /// The `NodeId` handles of every episode in any of `namespaces` (03 §1, §6).
+    ///
+    /// The namespace-scoped candidate set a recall generates episode candidates over, so
+    /// the per-signal fan-out is spent on episodes the reader may actually see rather than
+    /// the whole cross-namespace label index (the post-fusion visible-set filter then
+    /// becomes a cheap near-no-op for episodes). Reads the indexed `namespace` scalar (§11),
+    /// so it is an index probe per namespace, not a full scan, and returns ids without
+    /// decoding the episodes. De-duplicates across namespaces.
+    ///
+    /// Includes soft-forgotten (`expired_at`-stamped) nodes: the recall path's
+    /// `include_expired` gate decides their fate post-fusion, exactly as it did for the
+    /// unscoped scans this replaces — scoping must not silently change expiry semantics.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if a namespace value fails to encode.
+    pub fn episode_nodes_in_namespaces(
+        &self,
+        namespaces: &[Namespace],
+    ) -> Result<Vec<NodeId>, StoreError> {
+        let snapshot = self.graph().read();
+        let label = db_string(Episode::LABEL)?;
+        let prop = db_string("namespace")?;
+        let mut nodes: Vec<NodeId> = Vec::new();
+        let mut seen: HashSet<NodeId> = HashSet::new();
+        for namespace in namespaces {
+            let value = namespace_value(namespace)?;
+            let Some(rows) = snapshot.nodes_with_property_eq(&label, &prop, &value) else {
+                continue;
+            };
+            for row in rows.iter() {
+                let Some(node) = snapshot.node_id_for_row(selene_graph::RowIndex::new(row)) else {
+                    continue;
+                };
+                if seen.insert(node) {
+                    nodes.push(node);
+                }
+            }
+        }
+        Ok(nodes)
     }
 }
 

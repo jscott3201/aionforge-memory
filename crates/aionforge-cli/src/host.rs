@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use aionforge::{
     Authorizer, CaptureConfig, CategoryRule, ConsolidationGuardPolicy, CoreEditPolicy,
@@ -221,6 +222,10 @@ fn retriever_config(config: &Config) -> RetrieverConfig {
         semantic_half_life_secs: config.decay.semantic_half_life_secs as f64,
         cooling_enabled: config.drift.enabled,
         cooling_factor: config.drift.cooling_factor,
+        // 0 disables the default recall budget (leaving an un-budgeted recall unbounded);
+        // any positive value becomes the wall-clock ceiling for a deadline-less query.
+        default_recall_budget: (config.retrieval.recall_deadline_ms > 0)
+            .then(|| Duration::from_millis(config.retrieval.recall_deadline_ms)),
         ..RetrieverConfig::default()
     }
 }

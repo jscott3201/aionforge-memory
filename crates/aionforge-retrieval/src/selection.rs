@@ -31,10 +31,11 @@ const EPISODE_KIND_TAG: &str = "episode";
 /// The serialization-id kind tag for a core block (02 §10, 05 §4).
 const CORE_KIND_TAG: &str = "core";
 
-/// The chosen entries plus how many candidates were considered.
+/// The chosen entries. The "candidates considered" count for the explanation is the
+/// fused-pool size, computed by the caller before selection attrition (03 §6) — selection
+/// reports only what it kept, not a misleading post-attrition count.
 pub(crate) struct Selection {
     pub(crate) entries: Vec<StructuredEntry>,
-    pub(crate) considered: usize,
 }
 
 enum ResolvedCandidate {
@@ -128,14 +129,12 @@ pub(crate) fn select(
     if limit == 0 {
         return Ok(Selection {
             entries: Vec::new(),
-            considered: 0,
         });
     }
     let cap = query.options.session_diversity_cap;
     let mut primary: Vec<StructuredEntry> = Vec::new();
     let mut spill: Vec<StructuredEntry> = Vec::new();
     let mut per_session: HashMap<Option<String>, usize> = HashMap::new();
-    let mut considered = 0usize;
     let mut resolved = Vec::new();
     let mut episode_ids = Vec::new();
 
@@ -168,7 +167,6 @@ pub(crate) fn select(
                 let Some(entry) = resolve_fact(store, query, visible, &candidate)? else {
                     continue;
                 };
-                considered += 1;
                 primary.push(entry);
                 continue;
             }
@@ -177,7 +175,6 @@ pub(crate) fn select(
                 if !query.options.include_superseded && replacement.is_some() {
                     continue;
                 }
-                considered += 1;
                 let entry =
                     StructuredEntry::Episode(episode_entry(&episode, &candidate, replacement));
                 let session = episode.session_id.as_ref().map(|id| id.to_string());
@@ -202,10 +199,7 @@ pub(crate) fn select(
         }
     }
 
-    Ok(Selection {
-        entries: primary,
-        considered,
-    })
+    Ok(Selection { entries: primary })
 }
 
 /// The always-include identity pre-pass (05 §4): every live core block in the
@@ -251,11 +245,14 @@ pub(crate) fn fact_lexical_ranking(
     k: usize,
     deadline: Option<Instant>,
 ) -> Result<SignalRanking, RetrievalError> {
-    // The deadline bounds only the unscoped full-index BM25 fallback; the scoped
-    // `text_score_nodes` runs over a bounded current-support member set (fast).
+    // The deadline bounds both scoped and unscoped BM25: the scoped `text_score_nodes`
+    // runs over the (small, fast) current-support member set, but it carries the same
+    // budget as the unscoped fallback so no fact lexical path is left uninterruptible.
     let hits = match current {
         Some([]) => Vec::new(),
-        Some(members) => store.text_score_nodes(SearchKind::Fact, &query.text, members, k)?,
+        Some(members) => {
+            store.text_score_nodes(SearchKind::Fact, &query.text, members, k, deadline)?
+        }
         None => store.text_search_within(SearchKind::Fact, &query.text, k, deadline)?,
     };
     Ok(ranking_from_hits(Signal::Lexical, hits))

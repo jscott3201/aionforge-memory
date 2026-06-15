@@ -182,6 +182,62 @@ pub(crate) fn graph_ranking_for(
     ))
 }
 
+/// Rank a kind's text index against the query with native BM25, SCOPED to an explicit
+/// candidate node list (03 §1 lexical, §6 namespace scoping).
+///
+/// The namespace-scoped episode counterpart of [`lexical_ranking`]: it BM25-scores only
+/// the supplied `nodes` (the reader's visible-namespace episodes) instead of the whole
+/// label index, so the fan-out `k` is spent on episodes the reader may see rather than
+/// the cross-namespace top-k. An empty list short-circuits to an empty ranking (the
+/// reader has no episode in scope), avoiding an empty-candidate engine call.
+///
+/// `deadline` bounds the scan: the scoped list can span an entire busy namespace, so —
+/// unlike the current-support-bounded fact lexical path — this scan needs the same
+/// cancellation budget the unscoped [`lexical_ranking`] carries (03 §6, §8).
+///
+/// # Errors
+/// Returns [`RetrievalError`] if the scoped BM25 search fails.
+pub(crate) fn lexical_ranking_in_nodes(
+    store: &Store,
+    kind: SearchKind,
+    query: &str,
+    nodes: &[NodeId],
+    k: usize,
+    deadline: Option<Instant>,
+) -> Result<SignalRanking, RetrievalError> {
+    if nodes.is_empty() {
+        return Ok(ranking_from_hits(Signal::Lexical, Vec::new()));
+    }
+    let hits = store.text_score_nodes(kind, query, nodes, k, deadline)?;
+    Ok(ranking_from_hits(Signal::Lexical, hits))
+}
+
+/// Rank a kind by dense similarity to the query, SCOPED to an explicit candidate node
+/// list via exact (full-precision) vector scoring (03 §1 dense, §6 namespace scoping).
+///
+/// The namespace-scoped episode counterpart of [`dense_ranking_for`]: it exact-scores
+/// only the supplied `nodes` (the reader's visible-namespace episodes) rather than running
+/// an ANN pass over the whole index, so the fan-out is spent on in-scope episodes and the
+/// score is exact by construction (no ANN approximation to rerank). An empty list
+/// short-circuits to an empty ranking.
+///
+/// # Errors
+/// Returns [`RetrievalError`] if the scoped vector scoring fails.
+pub(crate) fn dense_ranking_in_nodes(
+    store: &Store,
+    kind: SearchKind,
+    embedding: &Embedding,
+    nodes: &[NodeId],
+    k: usize,
+    deadline: Option<Instant>,
+) -> Result<SignalRanking, RetrievalError> {
+    if nodes.is_empty() {
+        return Ok(ranking_from_hits(Signal::Dense, Vec::new()));
+    }
+    let hits = store.vector_rerank_within(kind, embedding, nodes, k, deadline)?;
+    Ok(ranking_from_hits(Signal::Dense, hits))
+}
+
 /// Run approximate vector search and, when `exact_rerank` is set, refine the retrieved
 /// set with full-precision scoring (the HNSW-then-Flat-oracle path, 03 §1, §4).
 fn dense_hits(

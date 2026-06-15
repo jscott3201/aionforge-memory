@@ -37,8 +37,9 @@
 //! api_key_env = "AIONFORGE_API_KEY"
 //!
 //! [retrieval]
-//! default_k = 12
+//! default_k = 200
 //! fusion_constant = 60
+//! recall_deadline_ms = 5000
 //!
 //! [security]
 //! signed_writes = true

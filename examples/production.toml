@@ -15,9 +15,13 @@ api_key_env = "AIONFORGE_EMBEDDER_API_KEY"
 timeout_ms = 30000
 
 [retrieval]
-default_k = 12
+# Per-signal candidate fan-out (the recall ceiling), not the returned-result count.
+default_k = 200
 fusion_constant = 60
 default_mode = "hybrid"
+# Wall-clock budget for a recall whose caller sets no deadline; bounds the
+# namespace-scoped episode scans on a busy store. 0 disables (unbounded).
+recall_deadline_ms = 5000
 
 [security]
 signed_writes = true

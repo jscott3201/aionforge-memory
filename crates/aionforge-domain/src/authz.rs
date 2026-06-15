@@ -175,6 +175,27 @@ impl VisibleSet {
         self
     }
 
+    /// The concrete namespaces this set admits, as an explicit list — the enumerable
+    /// inverse of [`VisibleSet::contains`]. A recall uses it to SCOPE candidate generation
+    /// to the visible namespaces (so the per-signal fan-out is spent on memories the reader
+    /// may actually see) instead of scanning every namespace and authorizing only
+    /// afterward. Always includes `global` and the principal's own private namespace, plus
+    /// its team namespaces, and `system` when this set was built for an admin reveal
+    /// ([`VisibleSet::with_system`]). The order is stable (global, private, teams, system),
+    /// and the membership is exactly what `contains` returns `true` for, so scoping to this
+    /// list never drops a candidate the post-hoc filter would have admitted.
+    #[must_use]
+    pub fn namespaces(&self) -> Vec<Namespace> {
+        let mut out = Vec::with_capacity(2 + self.teams.len() + usize::from(self.system));
+        out.push(Namespace::Global);
+        out.push(self.private.clone());
+        out.extend(self.teams.iter().cloned());
+        if self.system {
+            out.push(Namespace::System);
+        }
+        out
+    }
+
     /// Whether `candidate` is readable by this principal. `global` is always visible; `system` is
     /// never agent-visible (substrate-internal) unless this set was built for an admin reveal;
     /// otherwise the candidate must be the principal's own private namespace or one of its team
@@ -424,6 +445,38 @@ mod tests {
         assert!(
             !visible.contains(&Namespace::System),
             "system never agent-visible"
+        );
+    }
+
+    #[test]
+    fn namespaces_lists_exactly_what_contains_admits() {
+        let alice = alice();
+        let visible = DefaultAuthorizer.visible_namespaces(&alice);
+        let listed = visible.namespaces();
+        // The list covers global, own private, and member teams — and nothing else.
+        assert!(listed.contains(&Namespace::Global), "global listed");
+        assert!(listed.contains(&alice.private()), "own private listed");
+        assert!(
+            listed.contains(&Namespace::Team("squad".to_string())),
+            "member team listed"
+        );
+        assert!(
+            !listed.contains(&Namespace::System),
+            "system not listed without an admin reveal"
+        );
+        // Parity: every listed namespace is admitted by `contains`, and the list is the
+        // full enumerable visible set (scoping to it cannot drop an admitted candidate).
+        for ns in &listed {
+            assert!(
+                visible.contains(ns),
+                "listed namespace {ns} must be contained"
+            );
+        }
+        // The admin-reveal set additionally lists system.
+        let revealed = visible.with_system().namespaces();
+        assert!(
+            revealed.contains(&Namespace::System),
+            "an admin-reveal set lists the system namespace"
         );
     }
 

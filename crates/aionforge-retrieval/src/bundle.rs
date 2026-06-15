@@ -275,6 +275,10 @@ impl RecallBundle {
     #[must_use]
     pub fn render_compact(&self, verbose: bool) -> String {
         let explanation = &self.explanation;
+        // The recall-attrition gap: candidates fusion ranked but that authorization, temporal
+        // filtering, supersession, or the diversity cap dropped before the returned bundle. With
+        // the honest `candidates_considered` (the full fused pool, 03 §6) this is a real signal —
+        // a large gap means the reader's results were heavily filtered, not that recall was thin.
         let more = explanation
             .candidates_considered
             .saturating_sub(explanation.returned);
