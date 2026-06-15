@@ -424,7 +424,7 @@ mod tests {
         // And recovery is idempotent: a second open creates nothing more — the catalog is
         // already complete.
         drop(recovered);
-        let rerecovered = Store::recover(&dir, config).expect("re-recover");
+        let rerecovered = Store::recover(&dir, config, &now()).expect("re-recover");
         let created = rerecovered
             .ensure_catalog_indexes(config.embedding_dimension)
             .expect("ensure on a fully-indexed recovered store");

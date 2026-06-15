@@ -12,6 +12,7 @@ use aionforge_consolidate::{
     ConsolidationConfig, Consolidator, NoopPass, STAGE_DETECTION, STAGE_SUMMARIZATION, StageProfile,
 };
 use aionforge_domain::nodes::episodic::ConsolidationState;
+use aionforge_domain::time::Timestamp;
 use aionforge_store::{BoundQuery, QueryResult, Store, Value};
 
 use common::*;
@@ -82,7 +83,7 @@ async fn consolidation_resumes_after_restart_without_reprocessing() {
     }
 
     // Recover from the WAL alone and resume.
-    let store = Arc::new(Store::recover(&dir, store_config()).expect("recover"));
+    let store = Arc::new(Store::recover(&dir, store_config(), &Timestamp::now()).expect("recover"));
     let cursor = store
         .load_consolidation_cursor()
         .expect("load")
@@ -446,7 +447,7 @@ async fn an_interrupted_in_progress_episode_recovers_across_a_restart() {
     };
 
     // Recover from the WAL alone: the in_progress marker is durable.
-    let store = Arc::new(Store::recover(&dir, store_config()).expect("recover"));
+    let store = Arc::new(Store::recover(&dir, store_config(), &Timestamp::now()).expect("recover"));
     assert_eq!(
         store.consolidation_lag().expect("lag").episodes_pending,
         1,
@@ -516,7 +517,7 @@ async fn transient_failure_attempts_persist_across_restart_and_escalate() {
     }
 
     // Recover from the WAL alone: the two prior failure audits are durable.
-    let store = Arc::new(Store::recover(&dir, store_config()).expect("recover"));
+    let store = Arc::new(Store::recover(&dir, store_config(), &Timestamp::now()).expect("recover"));
     let mut consolidator = Consolidator::with_clock(
         store.clone(),
         ConsolidationConfig {

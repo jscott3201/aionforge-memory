@@ -256,7 +256,7 @@ fn the_wal_round_trips_pin_state() {
         drop(store);
     }
 
-    let recovered = Store::recover(&dir, config).expect("recover");
+    let recovered = Store::recover(&dir, config, &now()).expect("recover");
     assert!(
         node_and_pin(&recovered, &pinned.identity.id).1,
         "a pinned memory stays pinned across recovery"

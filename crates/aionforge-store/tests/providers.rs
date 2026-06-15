@@ -18,6 +18,7 @@ use std::collections::BTreeSet;
 
 use aionforge_domain::ids::Id;
 use aionforge_domain::nodes::semantic::FactStatus;
+use aionforge_domain::time::Timestamp;
 use aionforge_domain::value::ObjectValue;
 use aionforge_store::{CandidateSet, NodeId, Store, StoreConfig};
 
@@ -416,7 +417,7 @@ fn current_support_membership_rebuilds_at_node_identity_after_recovery() {
         "no candidate-state snapshot is persisted; found {snap_files:?}"
     );
 
-    let recovered = Store::recover(&dir, config).expect("recover");
+    let recovered = Store::recover(&dir, config, &Timestamp::now()).expect("recover");
     assert_eq!(
         current_fact_ids(&recovered),
         BTreeSet::from([kept_id.clone()]),

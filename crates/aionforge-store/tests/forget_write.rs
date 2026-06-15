@@ -400,7 +400,7 @@ fn the_wal_round_trips_forget_state() {
         drop(store);
     }
 
-    let recovered = Store::recover(&dir, config).expect("recover");
+    let recovered = Store::recover(&dir, config, &now()).expect("recover");
     assert!(
         candidate_node(&recovered, &kept.identity.id).is_none(),
         "a forgotten memory stays forgotten across recovery"
