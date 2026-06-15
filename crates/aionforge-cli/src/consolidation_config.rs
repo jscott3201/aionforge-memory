@@ -20,8 +20,8 @@
 use std::time::Duration;
 
 use aionforge::{
-    ConsolidationConfig as EngineConsolidationConfig, DetectionConfig, InductionConfig, PassConfig,
-    ResolutionConfig, SummarizationConfig,
+    ConsolidationConfig as EngineConsolidationConfig, DetectionConfig, ExtractionConfig,
+    InductionConfig, PassConfig, ResolutionConfig, SummarizationConfig,
 };
 use aionforge_config::Config;
 
@@ -39,6 +39,10 @@ pub(crate) fn consolidation_settings(config: &Config) -> (EngineConsolidationCon
         lag_ceiling: Duration::from_secs(c.lag_ceiling_secs),
     };
     let pass = PassConfig {
+        extraction: ExtractionConfig {
+            min_confidence: c.extraction.min_confidence,
+            derived_trust_factor: c.extraction.derived_trust_factor,
+        },
         resolution: ResolutionConfig {
             candidate_k: c.resolution.candidate_k,
             merge_threshold: c.resolution.merge_threshold,
@@ -92,6 +96,15 @@ mod tests {
         assert_eq!(scheduler, default_scheduler);
 
         let default_pass = PassConfig::default();
+        // Extraction.
+        assert_eq!(
+            pass.extraction.min_confidence,
+            default_pass.extraction.min_confidence
+        );
+        assert_eq!(
+            pass.extraction.derived_trust_factor,
+            default_pass.extraction.derived_trust_factor
+        );
         // Resolution.
         assert_eq!(
             pass.resolution.candidate_k,
@@ -170,6 +183,8 @@ mod tests {
         config.consolidation.apply_timeout_secs = 90;
         config.consolidation.summarization.min_facts = 2;
         config.consolidation.summarization.confidence_floor = 0.5;
+        config.consolidation.extraction.min_confidence = 0.85;
+        config.consolidation.extraction.derived_trust_factor = 0.7;
         config.consolidation.induction.enabled = true;
         config.consolidation.induction.name_prefix = "skill/".to_string();
         config.validate().expect("the overridden block validates");
@@ -180,6 +195,14 @@ mod tests {
         assert_eq!(scheduler.apply_timeout, Duration::from_secs(90));
         assert_eq!(pass.summarization.min_facts, 2);
         assert_eq!(pass.summarization.confidence_floor, 0.5);
+        assert_eq!(
+            pass.extraction.min_confidence, 0.85,
+            "the host carried the extraction confidence floor"
+        );
+        assert_eq!(
+            pass.extraction.derived_trust_factor, 0.7,
+            "the host carried the derived-trust discount"
+        );
         assert!(
             pass.induction.enabled,
             "the host carried induction.enabled=true"

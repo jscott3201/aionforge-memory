@@ -200,11 +200,48 @@ impl Default for InductionConfig {
     }
 }
 
-/// The tuning the consolidation passes need: entity resolution, supersession detection,
-/// summarization, and skill induction. Bundled so the facade and the passes take one config,
-/// not a widening list.
+/// How the fact-extraction pass screens candidate triples for **precision**
+/// (write-and-consolidation §2).
+///
+/// Two deterministic knobs the rule extractor and the derivation step read:
+/// - `min_confidence` — the floor below which a rule never fires. The shipped typed rules
+///   carry confidences `0.9`/`0.85`/`0.85`/`0.8`, so the default `0.8` keeps every one of
+///   them firing (the floor is a strict `<`, so the `0.8` `uses` rule is kept); raising it
+///   dials out the lower-confidence rules without a recompile.
+/// - `derived_trust_factor` — the `(0, 1]` multiplier applied to a derived fact's inherited
+///   episode trust, so a fact ranks strictly **below** the episode it was drawn from (a
+///   derivation is weaker evidence than its source). Default `0.9`.
+///
+/// Carries floats, so it derives `PartialEq`, not `Eq`. The subject-plausibility gate
+/// ([`is_plausible_subject`](crate::is_plausible_subject)) and the connective/pronoun word
+/// lists are compile-time constants, not knobs here — they are correctness, not tuning.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExtractionConfig {
+    /// The confidence floor: a rule whose confidence is `< min_confidence` never fires.
+    /// In `[0, 1]`; default `0.8` (at-or-below every shipped typed rule, so recall is
+    /// preserved).
+    pub min_confidence: f64,
+    /// The multiplier applied to a derived fact's inherited episode trust, so the fact ranks
+    /// strictly below its source episode. In `(0, 1]`; default `0.9`.
+    pub derived_trust_factor: f64,
+}
+
+impl Default for ExtractionConfig {
+    fn default() -> Self {
+        Self {
+            min_confidence: 0.8,
+            derived_trust_factor: 0.9,
+        }
+    }
+}
+
+/// The tuning the consolidation passes need: extraction precision, entity resolution,
+/// supersession detection, summarization, and skill induction. Bundled so the facade and the
+/// passes take one config, not a widening list.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct PassConfig {
+    /// Fact-extraction precision tuning (confidence floor, derived-trust discount).
+    pub extraction: ExtractionConfig,
     /// Entity-resolution tuning.
     pub resolution: ResolutionConfig,
     /// Supersession/contradiction detection tuning.

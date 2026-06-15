@@ -66,8 +66,8 @@ pub use config::{
     ReliabilityConfig, RetrievalConfig, SecurityConfig, endpoint_transport_is_allowed,
 };
 pub use consolidation::{
-    ConsolidationConfig, DetectionSettings, InductionSettings, ResolutionSettings,
-    SummarizationSettings,
+    ConsolidationConfig, DetectionSettings, ExtractionSettings, InductionSettings,
+    ResolutionSettings, SummarizationSettings,
 };
 pub use core_block::{CoreBlockConfig, CoreEditRuleConfig};
 pub use deployment::DeploymentConfig;

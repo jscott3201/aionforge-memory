@@ -286,6 +286,7 @@ fn functional_pass() -> (RuleExtractor, PassConfig) {
         detection,
         summarization: SummarizationConfig::default(),
         induction: InductionConfig::default(),
+        ..PassConfig::default()
     };
     (extractor, pass_config)
 }
@@ -524,6 +525,7 @@ fn run_contradiction(up_trust: f64, down_trust: f64, up_first: bool) -> (Vec<Obj
             detection,
             summarization: SummarizationConfig::default(),
             induction: InductionConfig::default(),
+            ..PassConfig::default()
         };
 
         let (first, first_trust, second, second_trust) = if up_first {
