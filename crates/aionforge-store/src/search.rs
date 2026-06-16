@@ -231,6 +231,44 @@ impl Store {
         extract_hits(self.execute_within(&query, deadline)?, "distance")
     }
 
+    /// ANN vector search scoped to the reader's visible namespaces, by pushing a
+    /// `namespace IN $namespaces` predicate into the ANN traversal (03 §1, §6; selene-db 1.3
+    /// `filter_property`/`filter_values`). The namespace-filtered counterpart of
+    /// [`Self::vector_search_ann_within`]: the engine admits only namespace-matching nodes
+    /// during the HNSW/IVF traversal and reranks the survivors with exact cosine, so the
+    /// fan-out lands on visible nodes without first materializing the scope node-set. An empty
+    /// `namespaces` short-circuits to an empty result (the reader has no visible scope), the
+    /// way the node-list path short-circuited on an empty candidate list.
+    ///
+    /// `ef_search` is left at the engine default (`NULL`); the trailing
+    /// `filter_property`/`filter_values` carry the namespace predicate. `deadline` bounds the
+    /// traversal the same way [`Self::vector_search_ann_within`] does.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if a namespace fails to encode, or the query vector, the binds,
+    /// execution, or the deadline fails.
+    pub fn vector_search_ann_in_namespaces(
+        &self,
+        kind: SearchKind,
+        query: &Embedding,
+        namespaces: &[Namespace],
+        k: usize,
+        deadline: Option<Instant>,
+    ) -> Result<Vec<SearchHit>, StoreError> {
+        if namespaces.is_empty() {
+            return Ok(Vec::new());
+        }
+        let (label, prop) = (kind.label(), kind.vector_property());
+        let source = format!(
+            "CALL selene.vector_search_nodes_ann('{label}', '{prop}', $query, $k, 'cosine', NULL, 'namespace', $ns) YIELD node_id, distance"
+        ); // gql-ident-ok
+        let query = BoundQuery::new(source)
+            .bind("query", embedding_value(query)?)?
+            .bind("k", k_value(k))?
+            .bind("ns", namespace_filter_values(namespaces)?)?;
+        extract_hits(self.execute_within(&query, deadline)?, "distance")
+    }
+
     /// Exact, full-precision vector search — the oracle for the ANN path (03 §1).
     ///
     /// # Errors
@@ -437,6 +475,44 @@ impl Store {
         extract_hits(self.execute_within(&query, deadline)?, "score")
     }
 
+    /// BM25-search a kind's text index scoped to the reader's visible namespaces, by pushing a
+    /// `namespace IN $namespaces` predicate into the BM25 scan (03 §2, §6; selene-db 1.3
+    /// `filter_property`/`filter_values`). The namespace-filtered counterpart of
+    /// [`Self::text_search_within`]: the engine admits only namespace-matching nodes inside the
+    /// posting walk and returns the top `k`, so the fan-out is spent on visible nodes without
+    /// first materializing the scope node-set — and the BM25 score is exact either way (the
+    /// predicate narrows which nodes are scored, not how). An empty `namespaces` short-circuits
+    /// to an empty result (no visible scope).
+    ///
+    /// `deadline` bounds the scan the same way [`Self::text_search_within`] does.
+    ///
+    /// # Errors
+    /// Returns [`StoreError::Search`] if `kind` maintains no text index, or another
+    /// [`StoreError`] if a namespace fails to encode, or the binds, execution, or the deadline
+    /// fails.
+    pub fn text_search_in_namespaces(
+        &self,
+        kind: SearchKind,
+        query: &str,
+        namespaces: &[Namespace],
+        k: usize,
+        deadline: Option<Instant>,
+    ) -> Result<Vec<SearchHit>, StoreError> {
+        if namespaces.is_empty() {
+            return Ok(Vec::new());
+        }
+        let label = kind.label();
+        let prop = text_property(kind)?;
+        let source = format!(
+            "CALL selene.text_search_nodes('{label}', '{prop}', $query, $k, 'namespace', $ns) YIELD node_id, score"
+        ); // gql-ident-ok
+        let query = BoundQuery::new(source)
+            .bind_str("query", query)?
+            .bind("k", k_value(k))?
+            .bind("ns", namespace_filter_values(namespaces)?)?;
+        extract_hits(self.execute_within(&query, deadline)?, "score")
+    }
+
     /// BM25-score an explicit candidate set over the text index (03 §2 scoped lexical).
     ///
     /// `deadline` bounds the scan the same way [`Self::text_search_within`] bounds the
@@ -523,6 +599,17 @@ pub(crate) fn k_value(k: usize) -> Value {
 /// A candidate node list as a bound `LIST<NODE>` parameter value.
 fn node_list_value(nodes: &[NodeId]) -> Value {
     Value::List(nodes.iter().copied().map(Value::NodeRef).collect())
+}
+
+/// The `filter_values` list for a `namespace IN [...]` predicate: each visible namespace as
+/// the same encoded scalar value the `namespace` index stores (§11), so the engine matches it
+/// against the indexed property. Callers pass a non-empty `namespaces`.
+fn namespace_filter_values(namespaces: &[Namespace]) -> Result<Value, StoreError> {
+    let mut values = Vec::with_capacity(namespaces.len());
+    for namespace in namespaces {
+        values.push(namespace_value(namespace)?);
+    }
+    Ok(Value::List(values))
 }
 
 /// Read `(node_id, <score_col>)` rows from a search result into best-first hits.

@@ -16,6 +16,7 @@ use std::time::Instant;
 
 use aionforge_domain::contracts::Embedder;
 use aionforge_domain::embedding::Embedding;
+use aionforge_domain::namespace::Namespace;
 use aionforge_store::{NodeId, SearchHit, SearchKind, Store};
 
 use crate::error::RetrievalError;
@@ -187,59 +188,64 @@ pub(crate) fn graph_ranking_for(
     ))
 }
 
-/// Rank a kind's text index against the query with native BM25, SCOPED to an explicit
-/// candidate node list (03 §1 lexical, §6 namespace scoping).
+/// Rank a kind's text index against the query with native BM25, SCOPED to the reader's
+/// visible namespaces (03 §1 lexical, §6 namespace scoping).
 ///
-/// The namespace-scoped episode counterpart of [`lexical_ranking`]: it BM25-scores only
-/// the supplied `nodes` (the reader's visible-namespace episodes) instead of the whole
-/// label index, so the fan-out `k` is spent on episodes the reader may see rather than
-/// the cross-namespace top-k. An empty list short-circuits to an empty ranking (the
-/// reader has no episode in scope), avoiding an empty-candidate engine call.
+/// The namespace-scoped episode counterpart of [`lexical_ranking`]: it pushes a
+/// `namespace IN namespaces` predicate into the BM25 scan (selene-db 1.3
+/// `filter_property`/`filter_values`) so only the reader's visible-namespace records are
+/// scored, and the top-`k` come straight from the index — no scope node-set is materialized
+/// first. BM25 is exact either way; the predicate narrows which nodes are scored. An empty
+/// `namespaces` short-circuits to an empty ranking (the reader has no scope), avoiding an
+/// empty-filter engine call.
 ///
-/// `deadline` bounds the scan: the scoped list can span an entire busy namespace, so —
+/// `deadline` bounds the scan: the visible scope can span an entire busy namespace, so —
 /// unlike the current-support-bounded fact lexical path — this scan needs the same
 /// cancellation budget the unscoped [`lexical_ranking`] carries (03 §6, §8).
 ///
 /// # Errors
 /// Returns [`RetrievalError`] if the scoped BM25 search fails.
-pub(crate) fn lexical_ranking_in_nodes(
+pub(crate) fn lexical_ranking_in_namespaces(
     store: &Store,
     kind: SearchKind,
     query: &str,
-    nodes: &[NodeId],
+    namespaces: &[Namespace],
     k: usize,
     deadline: Option<Instant>,
 ) -> Result<SignalRanking, RetrievalError> {
-    if nodes.is_empty() {
+    if namespaces.is_empty() {
         return Ok(ranking_from_hits(Signal::Lexical, Vec::new()));
     }
-    let hits = store.text_score_nodes(kind, query, nodes, k, deadline)?;
+    let hits = store.text_search_in_namespaces(kind, query, namespaces, k, deadline)?;
     Ok(ranking_from_hits(Signal::Lexical, hits))
 }
 
-/// Rank a kind by dense similarity to the query, SCOPED to an explicit candidate node
-/// list via exact (full-precision) vector scoring (03 §1 dense, §6 namespace scoping).
+/// Rank a kind by dense similarity to the query, SCOPED to the reader's visible namespaces
+/// via predicate-filtered ANN search (03 §1 dense, §6 namespace scoping).
 ///
-/// The namespace-scoped episode counterpart of [`dense_ranking_for`]: it exact-scores
-/// only the supplied `nodes` (the reader's visible-namespace episodes) rather than running
-/// an ANN pass over the whole index, so the fan-out is spent on in-scope episodes and the
-/// score is exact by construction (no ANN approximation to rerank). An empty list
-/// short-circuits to an empty ranking.
+/// The namespace-scoped episode counterpart of [`dense_ranking_for`]: it pushes a
+/// `namespace IN namespaces` predicate into the ANN traversal (selene-db 1.3
+/// `filter_property`/`filter_values`), so the engine admits only visible-namespace records
+/// during the HNSW/IVF walk and reranks the survivors with exact cosine — the fan-out lands on
+/// in-scope records without first materializing the scope node-set. Unlike the prior
+/// exact-over-the-whole-scope path, this is an ANN search (approximate candidate generation,
+/// exact-cosine rerank), so recall rides the engine's filtered-ANN quality. An empty
+/// `namespaces` short-circuits to an empty ranking.
 ///
 /// # Errors
-/// Returns [`RetrievalError`] if the scoped vector scoring fails.
-pub(crate) fn dense_ranking_in_nodes(
+/// Returns [`RetrievalError`] if the scoped vector search fails.
+pub(crate) fn dense_ranking_in_namespaces(
     store: &Store,
     kind: SearchKind,
     embedding: &Embedding,
-    nodes: &[NodeId],
+    namespaces: &[Namespace],
     k: usize,
     deadline: Option<Instant>,
 ) -> Result<SignalRanking, RetrievalError> {
-    if nodes.is_empty() {
+    if namespaces.is_empty() {
         return Ok(ranking_from_hits(Signal::Dense, Vec::new()));
     }
-    let hits = store.vector_rerank_within(kind, embedding, nodes, k, deadline)?;
+    let hits = store.vector_search_ann_in_namespaces(kind, embedding, namespaces, k, deadline)?;
     Ok(ranking_from_hits(Signal::Dense, hits))
 }
 

@@ -36,7 +36,8 @@ use crate::selection::{
     fact_lexical_ranking, fact_support_ranking, lexical_anchor_ranking, select, trust_rankings,
 };
 use crate::signals::{
-    Signal, dense_ranking_in_nodes, embed_query, graph_ranking_for, lexical_ranking_in_nodes,
+    Signal, dense_ranking_in_namespaces, embed_query, graph_ranking_for,
+    lexical_ranking_in_namespaces,
 };
 use crate::trace;
 
@@ -187,17 +188,15 @@ impl<E: Embedder> HybridRetriever<E> {
                 base
             }
         };
-        // Every episode in a visible namespace, by id — the scope the episode lexical, dense,
-        // and graph signals generate candidates over. The per-signal fan-out then caps how many
-        // of these each signal ranks, spent entirely on episodes the reader may see. The graph
-        // episode signal scopes through `algo.pagerank`'s `result_nodes` (intersect before
-        // truncate), so it no longer leans on the post-fusion filter in `select` to bound it.
-        let episode_scope = self
-            .store
-            .episode_nodes_in_namespaces(&visible.namespaces())?;
-        // Enumerating the visible scope is itself an indexed scan over the namespace; on a
-        // busy store it can be the first place a tight recall budget is spent, so bail here
-        // before fanning the signals over it rather than only at the next stage boundary.
+        // The reader's visible namespaces — the scope the episode lexical, dense, and graph
+        // signals generate candidates within (06 §1, 03 §6). The lexical/dense signals push a
+        // `namespace IN [...]` predicate straight into the BM25/ANN scan (selene-db 1.3), so
+        // they never materialize the scope node-set. The graph signal needs the explicit
+        // episode node-set for `algo.pagerank`'s `result_nodes` (a node-list, not a predicate),
+        // so it materializes the scope lazily — only when it runs (see the graph block below).
+        let visible_namespaces = visible.namespaces();
+        // A tight recall budget can already be spent by here; bail before fanning the signals
+        // rather than only at the next stage boundary.
         bail_if_past(deadline)?;
 
         // 2. Run the signals the profile weights call for, over both episodes and facts.
@@ -248,13 +247,13 @@ impl<E: Embedder> HybridRetriever<E> {
 
         if profile.weights.lexical > 0.0 {
             let _signal_span = trace::signal_span(Signal::Lexical, fanout).entered();
-            // Episodes are scoped to the reader's visible namespaces (06 §1, 03 §6); facts
-            // ride their own current-support scoping below.
-            let episodes = lexical_ranking_in_nodes(
+            // Episodes are scoped to the reader's visible namespaces via a predicate-filtered
+            // BM25 scan (06 §1, 03 §6); facts ride their own current-support scoping below.
+            let episodes = lexical_ranking_in_namespaces(
                 &self.store,
                 SearchKind::Episode,
                 &query.text,
-                &episode_scope,
+                &visible_namespaces,
                 fanout,
                 deadline,
             )?;
@@ -289,14 +288,15 @@ impl<E: Embedder> HybridRetriever<E> {
 
         if let Some(embedding) = &query_embedding {
             let _signal_span = trace::signal_span(Signal::Dense, fanout).entered();
-            // Episodes are scoped to the reader's visible namespaces and exact-scored over
-            // that set (06 §1, 03 §6); the fact dense path keeps its current-support scoping
-            // and high-precision graph-seed composition below.
-            let episodes = dense_ranking_in_nodes(
+            // Episodes are scoped to the reader's visible namespaces via a predicate-filtered
+            // ANN scan (06 §1, 03 §6) — approximate candidate generation, exact-cosine rerank;
+            // the fact dense path keeps its current-support scoping and high-precision
+            // graph-seed composition below.
+            let episodes = dense_ranking_in_namespaces(
                 &self.store,
                 SearchKind::Episode,
                 embedding,
-                &episode_scope,
+                &visible_namespaces,
                 fanout,
                 deadline,
             )?;
@@ -372,9 +372,15 @@ impl<E: Embedder> HybridRetriever<E> {
                 resolve_seed_entities(&self.store, &query.text, query_embedding.as_ref())?
         {
             let _signal_span = trace::signal_span(Signal::Graph, fanout).entered();
-            // Scope the episode graph ranking to the reader's visible namespaces via
-            // `result_nodes`, the same `episode_scope` the lexical/dense episode signals use,
-            // so the graph fan-out is spent on in-scope episodes (03 §6).
+            // The graph signal scopes via `algo.pagerank`'s `result_nodes`, which takes an
+            // explicit node-list (not a predicate), so materialize the visible episode node-set
+            // here — lazily, only when the graph signal runs, rather than for every recall (the
+            // lexical/dense signals scope via the predicate filter instead). The intersect runs
+            // before the top-k truncation, so the graph fan-out is spent on in-scope episodes
+            // (03 §6).
+            let episode_scope = self
+                .store
+                .episode_nodes_in_namespaces(&visible_namespaces)?;
             let episodes = graph_ranking_for(
                 &self.store,
                 SearchKind::Episode,

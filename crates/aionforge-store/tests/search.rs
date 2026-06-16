@@ -86,6 +86,20 @@ fn seed_text(store: &Store, content: &str) -> NodeId {
         .expect("seed text episode")
 }
 
+/// Seed a text+vector episode in a specific namespace; return its node id.
+fn seed_vec_in_ns(
+    store: &Store,
+    content: &str,
+    embedding: Vec<f32>,
+    namespace: Namespace,
+) -> NodeId {
+    let mut ep = episode(content, Some(embedding));
+    ep.identity.namespace = namespace;
+    store
+        .insert_episode(&ep)
+        .expect("seed episode in namespace")
+}
+
 fn emb(v: Vec<f32>) -> Embedding {
     Embedding::new(v).expect("finite embedding")
 }
@@ -419,5 +433,96 @@ fn episode_nodes_in_namespaces_scopes_to_the_requested_namespaces() {
             .expect("empty scope")
             .is_empty(),
         "an empty namespace list yields no candidates"
+    );
+}
+
+/// The predicate-filtered search primitives (selene-db 1.3 `filter_property`/`filter_values`)
+/// admit only nodes in the requested namespaces — the index-scan replacement for the
+/// materialize-the-scope-then-score path (03 §6). Proven for both BM25 and ANN; an empty
+/// namespace list short-circuits to an empty result.
+#[test]
+fn predicate_filtered_search_scopes_to_visible_namespaces() {
+    let store = store();
+    let alice = Namespace::Agent("alice".to_string());
+    let bob = Namespace::Agent("bob".to_string());
+
+    // The same term "graph" and near-identical vectors in two namespaces.
+    let a_node = seed_vec_in_ns(
+        &store,
+        "graph retrieval in alice",
+        vec![1.0, 0.0, 0.0, 0.0],
+        alice.clone(),
+    );
+    let b_node = seed_vec_in_ns(
+        &store,
+        "graph retrieval in bob",
+        vec![0.9, 0.1, 0.0, 0.0],
+        bob.clone(),
+    );
+
+    // BM25 scoped to {alice}: only alice's episode, never bob's — the filter narrows which
+    // nodes are scored, not the BM25 scoring itself.
+    let text_alice = store
+        .text_search_in_namespaces(
+            SearchKind::Episode,
+            "graph",
+            std::slice::from_ref(&alice),
+            10,
+            None,
+        )
+        .expect("text scoped to alice");
+    assert_eq!(
+        text_alice.iter().map(|h| h.node).collect::<Vec<_>>(),
+        vec![a_node],
+        "BM25 filter admits only the visible-namespace episode: {text_alice:?}",
+    );
+
+    // ANN scoped to {bob}: only bob's episode.
+    let query = emb(vec![0.95, 0.05, 0.0, 0.0]);
+    let vec_bob: HashSet<NodeId> = store
+        .vector_search_ann_in_namespaces(
+            SearchKind::Episode,
+            &query,
+            std::slice::from_ref(&bob),
+            10,
+            None,
+        )
+        .expect("vector scoped to bob")
+        .iter()
+        .map(|h| h.node)
+        .collect();
+    assert_eq!(
+        vec_bob,
+        HashSet::from([b_node]),
+        "ANN filter admits only the visible-namespace episode: {vec_bob:?}",
+    );
+
+    // Both namespaces visible: a multi-namespace scope admits both episodes.
+    let both: HashSet<NodeId> = store
+        .text_search_in_namespaces(SearchKind::Episode, "graph", &[alice, bob], 10, None)
+        .expect("text scoped to both")
+        .iter()
+        .map(|h| h.node)
+        .collect();
+    assert_eq!(
+        both,
+        HashSet::from([a_node, b_node]),
+        "both visible episodes are in scope"
+    );
+
+    // Empty scope: nothing visible → empty, for both primitives (no engine call).
+    assert!(
+        store
+            .text_search_in_namespaces(SearchKind::Episode, "graph", &[], 10, None)
+            .expect("empty text scope")
+            .is_empty(),
+        "empty namespaces yields an empty BM25 result",
+    );
+    assert!(
+        store
+            .vector_search_ann_in_namespaces(SearchKind::Episode, &query, &[], 10, None)
+            .expect("empty vector scope")
+            .is_empty(),
+        "empty namespaces yields an empty ANN result",
     );
 }
