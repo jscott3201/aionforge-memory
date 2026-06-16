@@ -174,6 +174,18 @@ fn first_string(store: &Store, query: BoundQuery) -> Option<String> {
     }
 }
 
+/// A scalar property of the single capture `AuditEvent` for `episode_id`.
+fn capture_audit_field(store: &Store, episode_id: Id, field: &str) -> Option<String> {
+    first_string(
+        store,
+        BoundQuery::new(format!(
+            "MATCH (a:AuditEvent)-[:AUDIT]->(e:Episode) WHERE e.id = $id RETURN a.{field} AS v"
+        ))
+        .bind_uuid("id", episode_id)
+        .expect("bind"),
+    )
+}
+
 fn episode_count(store: &Store) -> usize {
     match store
         .execute(&BoundQuery::new("MATCH (e:Episode) RETURN e.id AS id"))
@@ -285,27 +297,21 @@ async fn the_capture_audit_event_lives_in_the_system_namespace() {
         .await
         .expect("capture");
 
-    let audit = first_string(
-        &store,
-        BoundQuery::new(
-            "MATCH (a:AuditEvent)-[:AUDIT]->(e:Episode) \
-             WHERE e.id = $id RETURN a.namespace AS v",
-        )
-        .bind_uuid("id", receipt.episode_id)
-        .expect("bind"),
+    assert_eq!(
+        capture_audit_field(&store, receipt.episode_id, "namespace").as_deref(),
+        Some("system"),
     );
-    assert_eq!(audit.as_deref(), Some("system"));
-
-    let kind = first_string(
-        &store,
-        BoundQuery::new(
-            "MATCH (a:AuditEvent)-[:AUDIT]->(e:Episode) \
-             WHERE e.id = $id RETURN a.kind AS v",
-        )
-        .bind_uuid("id", receipt.episode_id)
-        .expect("bind"),
+    assert_eq!(
+        capture_audit_field(&store, receipt.episode_id, "kind").as_deref(),
+        Some("capture"),
     );
-    assert_eq!(kind.as_deref(), Some("capture"));
+    // The capture audit names the writing agent as its actor — creation attribution is correct at
+    // the source. (Governance forensics in the system namespace, 02 §11: absent from the
+    // agent-facing audit_history; the agent-visible creation record is the provenance writer.)
+    assert_eq!(
+        capture_audit_field(&store, receipt.episode_id, "actor_id").as_deref(),
+        Some(agent.to_string().as_str()),
+    );
 }
 
 #[tokio::test]

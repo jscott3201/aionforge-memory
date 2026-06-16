@@ -242,13 +242,15 @@ async fn ac1_and_ac3_a_forgotten_memory_leaves_default_recall_and_returns() {
     // AC3 first leg: unforget on a never-forgotten memory is a no-op.
     assert_eq!(
         memory
-            .unforget(&episode.identity.id, &now())
+            .unforget(&episode.identity.id, &now(), &Id::generate())
             .expect("unforget"),
         PointUnforget::NotForgotten
     );
 
     assert_eq!(
-        memory.forget(&episode.identity.id, &now()).expect("forget"),
+        memory
+            .forget(&episode.identity.id, &now(), &Id::generate())
+            .expect("forget"),
         PointForget::Forgotten
     );
     // AC1: out of default retrieval, retained for history.
@@ -269,7 +271,7 @@ async fn ac1_and_ac3_a_forgotten_memory_leaves_default_recall_and_returns() {
     // AC3: the round trip restores default retrieval exactly.
     assert_eq!(
         memory
-            .unforget(&episode.identity.id, &now())
+            .unforget(&episode.identity.id, &now(), &Id::generate())
             .expect("unforget"),
         PointUnforget::Restored
     );
@@ -291,7 +293,9 @@ async fn ac1_a_skill_point_forget_works_through_the_procedural_gate() {
     store.save_skill(&skill, None, &[]).expect("save skill");
 
     assert_eq!(
-        memory.forget(&skill.identity.id, &now()).expect("forget"),
+        memory
+            .forget(&skill.identity.id, &now(), &Id::generate())
+            .expect("forget"),
         PointForget::Forgotten,
         "a skill is point-forgettable (the sweep never targets it)"
     );
@@ -305,7 +309,7 @@ async fn ac1_a_skill_point_forget_works_through_the_procedural_gate() {
     );
     assert_eq!(
         memory
-            .unforget(&skill.identity.id, &now())
+            .unforget(&skill.identity.id, &now(), &Id::generate())
             .expect("unforget"),
         PointUnforget::Restored
     );
@@ -329,22 +333,28 @@ async fn ac2_every_transition_is_audited_and_cycle_rows_stay_distinct() {
         .parse()
         .unwrap();
     assert_eq!(
-        memory.forget(&episode.identity.id, &t1).expect("forget"),
+        memory
+            .forget(&episode.identity.id, &t1, &Id::generate())
+            .expect("forget"),
         PointForget::Forgotten
     );
     assert_eq!(
         memory
-            .unforget(&episode.identity.id, &t2)
+            .unforget(&episode.identity.id, &t2, &Id::generate())
             .expect("unforget"),
         PointUnforget::Restored
     );
     assert_eq!(
-        memory.forget(&episode.identity.id, &t3).expect("re-forget"),
+        memory
+            .forget(&episode.identity.id, &t3, &Id::generate())
+            .expect("re-forget"),
         PointForget::Forgotten
     );
     // A same-instant replay of the last forget is a no-op: no spurious fourth row.
     assert_eq!(
-        memory.forget(&episode.identity.id, &t3).expect("replay"),
+        memory
+            .forget(&episode.identity.id, &t3, &Id::generate())
+            .expect("replay"),
         PointForget::AlreadyForgotten
     );
 
@@ -437,15 +447,18 @@ async fn ac4_conservative_protections_hold_and_off_sweeps_nothing() {
         store.insert_fact(f).expect("insert");
     }
     assert_eq!(
-        on.forget(&pinned.identity.id, &now()).expect("call"),
+        on.forget(&pinned.identity.id, &now(), &Id::generate())
+            .expect("call"),
         PointForget::Protected(SpareReason::Pinned)
     );
     assert_eq!(
-        on.forget(&young.identity.id, &now()).expect("call"),
+        on.forget(&young.identity.id, &now(), &Id::generate())
+            .expect("call"),
         PointForget::Protected(SpareReason::TooYoung)
     );
     assert_eq!(
-        on.forget(&important.identity.id, &now()).expect("call"),
+        on.forget(&important.identity.id, &now(), &Id::generate())
+            .expect("call"),
         PointForget::Protected(SpareReason::ImportanceHolds)
     );
     // The graph protections, end to end through the facade: a live protecting
@@ -474,19 +487,23 @@ async fn ac4_conservative_protections_hold_and_off_sweeps_nothing() {
     lineage_edge(&store, &lineage_a.identity.id, &lineage_b.identity.id);
     attest(&store, attested_node);
     assert_eq!(
-        on.forget(&supported.identity.id, &now()).expect("call"),
+        on.forget(&supported.identity.id, &now(), &Id::generate())
+            .expect("call"),
         PointForget::Protected(SpareReason::Referenced)
     );
     assert_eq!(
-        on.forget(&lineage_a.identity.id, &now()).expect("call"),
+        on.forget(&lineage_a.identity.id, &now(), &Id::generate())
+            .expect("call"),
         PointForget::Protected(SpareReason::PromotionLineage)
     );
     assert_eq!(
-        on.forget(&lineage_b.identity.id, &now()).expect("call"),
+        on.forget(&lineage_b.identity.id, &now(), &Id::generate())
+            .expect("call"),
         PointForget::Protected(SpareReason::PromotionLineage)
     );
     assert_eq!(
-        on.forget(&attested.identity.id, &now()).expect("call"),
+        on.forget(&attested.identity.id, &now(), &Id::generate())
+            .expect("call"),
         PointForget::Protected(SpareReason::Attested)
     );
 
@@ -509,7 +526,8 @@ async fn ac4_conservative_protections_hold_and_off_sweeps_nothing() {
     };
     store.insert_entity(&entity).expect("insert entity");
     assert_eq!(
-        on.forget(&entity.identity.id, &now()).expect("call"),
+        on.forget(&entity.identity.id, &now(), &Id::generate())
+            .expect("call"),
         PointForget::Protected(SpareReason::ProtectedKind)
     );
 

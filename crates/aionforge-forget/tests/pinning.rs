@@ -97,11 +97,11 @@ fn pin_round_trips_resolves_every_kind_and_audits_in_the_own_namespace() {
 
     // Unknown id.
     assert_eq!(
-        pin(&store, &Id::generate(), &now()).expect("pin"),
+        pin(&store, &Id::generate(), &now(), &Id::generate()).expect("pin"),
         PointPin::NotFound
     );
     assert_eq!(
-        unpin(&store, &Id::generate(), &now()).expect("unpin"),
+        unpin(&store, &Id::generate(), &now(), &Id::generate()).expect("unpin"),
         PointUnpin::NotFound
     );
 
@@ -120,7 +120,7 @@ fn pin_round_trips_resolves_every_kind_and_audits_in_the_own_namespace() {
     };
     store.insert_entity(&entity).expect("insert entity");
     assert_eq!(
-        pin(&store, &entity.identity.id, &now()).expect("pin"),
+        pin(&store, &entity.identity.id, &now(), &Id::generate()).expect("pin"),
         PointPin::Pinned
     );
     assert!(is_pinned(&store, &entity.identity.id, "Entity"));
@@ -144,11 +144,11 @@ fn pin_round_trips_resolves_every_kind_and_audits_in_the_own_namespace() {
     };
     store.insert_episode(&episode).expect("insert episode");
     assert_eq!(
-        pin(&store, &episode.identity.id, &now()).expect("pin"),
+        pin(&store, &episode.identity.id, &now(), &Id::generate()).expect("pin"),
         PointPin::Pinned
     );
     assert_eq!(
-        pin(&store, &episode.identity.id, &now()).expect("replay"),
+        pin(&store, &episode.identity.id, &now(), &Id::generate()).expect("replay"),
         PointPin::AlreadyPinned
     );
     let rows = store
@@ -174,11 +174,11 @@ fn pin_round_trips_resolves_every_kind_and_audits_in_the_own_namespace() {
 
     // The way back, with its own audit kind.
     assert_eq!(
-        unpin(&store, &episode.identity.id, &now()).expect("unpin"),
+        unpin(&store, &episode.identity.id, &now(), &Id::generate()).expect("unpin"),
         PointUnpin::Unpinned
     );
     assert_eq!(
-        unpin(&store, &episode.identity.id, &now()).expect("replay"),
+        unpin(&store, &episode.identity.id, &now(), &Id::generate()).expect("replay"),
         PointUnpin::NotPinned
     );
     let unpin_rows = store
@@ -204,7 +204,7 @@ fn a_pin_is_a_stay_not_a_vault() {
 
     // Pinned: the all-axes-low fact survives the sweep.
     assert_eq!(
-        pin(&store, &fact.identity.id, &now()).expect("pin"),
+        pin(&store, &fact.identity.id, &now(), &Id::generate()).expect("pin"),
         PointPin::Pinned
     );
     let swept = forgetter.sweep_page(None, 200, &now()).expect("sweep");
@@ -214,7 +214,7 @@ fn a_pin_is_a_stay_not_a_vault() {
     // Unpinned: eligibility re-arms silently, and the next sweep forgets it because
     // every other axis still holds low — the pin was a stay, not a vault.
     assert_eq!(
-        unpin(&store, &fact.identity.id, &now()).expect("unpin"),
+        unpin(&store, &fact.identity.id, &now(), &Id::generate()).expect("unpin"),
         PointUnpin::Unpinned
     );
     let reswept = forgetter.sweep_page(None, 200, &now()).expect("re-sweep");
@@ -235,12 +235,14 @@ fn pinning_a_forgotten_memory_protects_without_restoring() {
     store.insert_fact(&fact).expect("insert");
 
     assert_eq!(
-        forgetter.forget(&fact.identity.id, &now()).expect("forget"),
+        forgetter
+            .forget(&fact.identity.id, &now(), &Id::generate())
+            .expect("forget"),
         PointForget::Forgotten
     );
     // Pin the forgotten memory: protected, but still out of default recall.
     assert_eq!(
-        pin(&store, &fact.identity.id, &now()).expect("pin"),
+        pin(&store, &fact.identity.id, &now(), &Id::generate()).expect("pin"),
         PointPin::Pinned
     );
     let resolved = store
@@ -256,7 +258,7 @@ fn pinning_a_forgotten_memory_protects_without_restoring() {
     // Restore it: still pinned afterwards, and now sweep-proof.
     assert_eq!(
         forgetter
-            .unforget(&fact.identity.id, &now())
+            .unforget(&fact.identity.id, &now(), &Id::generate())
             .expect("unforget"),
         PointUnforget::Restored
     );
@@ -279,15 +281,15 @@ fn a_same_instant_re_pin_cycle_is_three_distinct_audit_rows() {
     // rows. The audit id is generated per applied transition, so a sub-millisecond
     // cycle can never collapse the re-pin into the first pin's row.
     assert_eq!(
-        pin(&store, &fact.identity.id, &t0).expect("pin"),
+        pin(&store, &fact.identity.id, &t0, &Id::generate()).expect("pin"),
         PointPin::Pinned
     );
     assert_eq!(
-        unpin(&store, &fact.identity.id, &t0).expect("unpin"),
+        unpin(&store, &fact.identity.id, &t0, &Id::generate()).expect("unpin"),
         PointUnpin::Unpinned
     );
     assert_eq!(
-        pin(&store, &fact.identity.id, &t0).expect("re-pin"),
+        pin(&store, &fact.identity.id, &t0, &Id::generate()).expect("re-pin"),
         PointPin::Pinned
     );
     assert!(is_pinned(&store, &fact.identity.id, "Fact"));
@@ -310,7 +312,7 @@ fn a_same_instant_re_pin_cycle_is_three_distinct_audit_rows() {
     // A true replay — same state, any instant — still audits nothing: idempotency
     // lives in the state gate, not the id.
     assert_eq!(
-        pin(&store, &fact.identity.id, &t0).expect("replay"),
+        pin(&store, &fact.identity.id, &t0, &Id::generate()).expect("replay"),
         PointPin::AlreadyPinned
     );
     assert_eq!(
@@ -353,7 +355,7 @@ fn skills_and_bad_patterns_pin_like_every_other_kind() {
     };
     let skill_node = store.save_skill(&skill, None, &[]).expect("save skill");
     assert_eq!(
-        pin(&store, &skill.identity.id, &now()).expect("pin"),
+        pin(&store, &skill.identity.id, &now(), &Id::generate()).expect("pin"),
         PointPin::Pinned
     );
     assert!(is_pinned(&store, &skill.identity.id, "Skill"));
@@ -372,7 +374,7 @@ fn skills_and_bad_patterns_pin_like_every_other_kind() {
         .save_bad_pattern(&pattern, skill_node)
         .expect("save bad pattern");
     assert_eq!(
-        pin(&store, &pattern.identity.id, &now()).expect("pin"),
+        pin(&store, &pattern.identity.id, &now(), &Id::generate()).expect("pin"),
         PointPin::Pinned
     );
     assert!(is_pinned(&store, &pattern.identity.id, "BadPattern"));
@@ -399,11 +401,11 @@ fn a_work_item_is_invisible_to_point_pin() {
     // from ALL_MEMORY_LABELS, so it resolves to nothing — NotFound. A work item is already
     // non-decaying by construction, so it has no pin to gain.
     assert_eq!(
-        pin(&store, &item.identity.id, &now()).expect("pin"),
+        pin(&store, &item.identity.id, &now(), &Id::generate()).expect("pin"),
         PointPin::NotFound,
     );
     assert_eq!(
-        unpin(&store, &item.identity.id, &now()).expect("unpin"),
+        unpin(&store, &item.identity.id, &now(), &Id::generate()).expect("unpin"),
         PointUnpin::NotFound,
     );
 }

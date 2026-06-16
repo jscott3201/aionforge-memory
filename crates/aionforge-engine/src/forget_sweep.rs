@@ -29,26 +29,35 @@ impl<E: Embedder> Memory<E> {
     /// that held (05 §2). Audited in the memory's own namespace; reversible via
     /// [`Memory::unforget`] until the retention prune.
     ///
+    /// `actor` is the acting agent recorded on the audit row — a manual point-forget is
+    /// attributed to the agent that asked for it, distinct from the substrate-driven sweep.
+    ///
     /// # Errors
     /// Returns [`EngineError`] if a store read, probe, or write fails.
-    pub fn forget(&self, id: &Id, now: &Timestamp) -> Result<PointForget, EngineError> {
+    pub fn forget(&self, id: &Id, now: &Timestamp, actor: &Id) -> Result<PointForget, EngineError> {
         let Some(forgetter) = &self.forgetter else {
             return Ok(PointForget::Disabled);
         };
-        Ok(forgetter.forget(id, now)?)
+        Ok(forgetter.forget(id, now, actor)?)
     }
 
     /// Reverse a soft-forget by id, restoring the memory into default retrieval (05 §2).
     /// No eligibility gate on the way back — restoring is always safe — but a demotion's
-    /// expiry stays refused (governance owns it).
+    /// expiry stays refused (governance owns it). `actor` is the acting agent recorded on
+    /// the restore audit row (unforget is manual-only — there is no substrate path).
     ///
     /// # Errors
     /// Returns [`EngineError`] if a store read or write fails.
-    pub fn unforget(&self, id: &Id, now: &Timestamp) -> Result<PointUnforget, EngineError> {
+    pub fn unforget(
+        &self,
+        id: &Id,
+        now: &Timestamp,
+        actor: &Id,
+    ) -> Result<PointUnforget, EngineError> {
         let Some(forgetter) = &self.forgetter else {
             return Ok(PointUnforget::Disabled);
         };
-        Ok(forgetter.unforget(id, now)?)
+        Ok(forgetter.unforget(id, now, actor)?)
     }
 
     /// Sweep one page of forgetting candidates: evaluate every unexpired `Episode` and

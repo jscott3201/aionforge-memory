@@ -28,8 +28,8 @@ impl<E: Embedder> Memory<E> {
     ///
     /// # Errors
     /// Returns [`EngineError`] if a store read or write fails.
-    pub fn pin(&self, id: &Id, now: &Timestamp) -> Result<PointPin, EngineError> {
-        Ok(aionforge_forget::pin(&self.store, id, now)?)
+    pub fn pin(&self, id: &Id, now: &Timestamp, actor: &Id) -> Result<PointPin, EngineError> {
+        Ok(aionforge_forget::pin(&self.store, id, now, actor)?)
     }
 
     /// Lift a pin by id (05 §2). A pin is a stay, not a vault: the memory re-enters
@@ -38,7 +38,7 @@ impl<E: Embedder> Memory<E> {
     ///
     /// # Errors
     /// Returns [`EngineError`] if a store read or write fails.
-    pub fn unpin(&self, id: &Id, now: &Timestamp) -> Result<PointUnpin, EngineError> {
-        Ok(aionforge_forget::unpin(&self.store, id, now)?)
+    pub fn unpin(&self, id: &Id, now: &Timestamp, actor: &Id) -> Result<PointUnpin, EngineError> {
+        Ok(aionforge_forget::unpin(&self.store, id, now, actor)?)
     }
 }

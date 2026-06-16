@@ -18,7 +18,9 @@ use aionforge_domain::nodes::semantic::{Entity, Fact, FactStatus};
 use aionforge_domain::nodes::work::{WorkItem, WorkStatus};
 use aionforge_domain::time::Timestamp;
 use aionforge_domain::value::ObjectValue;
-use aionforge_forget::{Forgetter, ForgettingPolicy, PointForget, PointUnforget, SpareReason};
+use aionforge_forget::{
+    Forgetter, ForgettingPolicy, PointForget, PointPin, PointUnforget, SpareReason, pin,
+};
 use aionforge_store::{BoundQuery, Store, StoreConfig, Value};
 
 fn ts(text: &str) -> Timestamp {
@@ -331,7 +333,7 @@ fn the_sweep_forgets_only_all_axes_low_and_spares_every_protection() {
     // and leaves no audit row, because nothing flipped.
     assert_eq!(
         forgetter
-            .forget(&contradicted.identity.id, &now())
+            .forget(&contradicted.identity.id, &now(), &Id::generate())
             .expect("call"),
         PointForget::Protected(SpareReason::StatusOwned)
     );
@@ -387,7 +389,9 @@ fn point_ops_gate_report_and_round_trip() {
 
     // Unknown id.
     assert_eq!(
-        forgetter.forget(&Id::generate(), &now()).expect("forget"),
+        forgetter
+            .forget(&Id::generate(), &now(), &Id::generate())
+            .expect("forget"),
         PointForget::NotFound
     );
 
@@ -405,7 +409,9 @@ fn point_ops_gate_report_and_round_trip() {
     };
     store.insert_entity(&entity).expect("insert entity");
     assert_eq!(
-        forgetter.forget(&entity.identity.id, &now()).expect("call"),
+        forgetter
+            .forget(&entity.identity.id, &now(), &Id::generate())
+            .expect("call"),
         PointForget::Protected(SpareReason::ProtectedKind)
     );
 
@@ -419,7 +425,9 @@ fn point_ops_gate_report_and_round_trip() {
     );
     store.insert_fact(&pinned).expect("insert");
     assert_eq!(
-        forgetter.forget(&pinned.identity.id, &now()).expect("call"),
+        forgetter
+            .forget(&pinned.identity.id, &now(), &Id::generate())
+            .expect("call"),
         PointForget::Protected(SpareReason::Pinned)
     );
 
@@ -427,19 +435,27 @@ fn point_ops_gate_report_and_round_trip() {
     let fact = low_fact();
     store.insert_fact(&fact).expect("insert");
     assert_eq!(
-        forgetter.forget(&fact.identity.id, &now()).expect("call"),
+        forgetter
+            .forget(&fact.identity.id, &now(), &Id::generate())
+            .expect("call"),
         PointForget::Forgotten
     );
     assert_eq!(
-        forgetter.forget(&fact.identity.id, &now()).expect("call"),
+        forgetter
+            .forget(&fact.identity.id, &now(), &Id::generate())
+            .expect("call"),
         PointForget::AlreadyForgotten
     );
     assert_eq!(
-        forgetter.unforget(&fact.identity.id, &now()).expect("call"),
+        forgetter
+            .unforget(&fact.identity.id, &now(), &Id::generate())
+            .expect("call"),
         PointUnforget::Restored
     );
     assert_eq!(
-        forgetter.unforget(&fact.identity.id, &now()).expect("call"),
+        forgetter
+            .unforget(&fact.identity.id, &now(), &Id::generate())
+            .expect("call"),
         PointUnforget::NotForgotten
     );
     assert!(!is_expired(&store, &fact.identity.id));
@@ -496,7 +512,8 @@ fn the_bad_pattern_toggle_admits_the_kind_but_bypasses_no_axis() {
     // Default policy: the kind is protected outright — the toggle is off.
     let off = forgetter(&store);
     assert_eq!(
-        off.forget(&pattern.identity.id, &now()).expect("call"),
+        off.forget(&pattern.identity.id, &now(), &Id::generate())
+            .expect("call"),
         PointForget::Protected(SpareReason::ProtectedKind)
     );
 
@@ -512,7 +529,8 @@ fn the_bad_pattern_toggle_admits_the_kind_but_bypasses_no_axis() {
         },
     );
     assert_eq!(
-        on.forget(&pattern.identity.id, &now()).expect("call"),
+        on.forget(&pattern.identity.id, &now(), &Id::generate())
+            .expect("call"),
         PointForget::Protected(SpareReason::Referenced)
     );
     assert!(!is_expired(&store, &pattern.identity.id));
@@ -530,17 +548,21 @@ fn a_same_instant_forget_cycle_is_three_distinct_audit_rows() {
     // three rows. The audit id is generated per applied transition, so the
     // sub-millisecond cycle can never collapse the re-forget into the first row.
     assert_eq!(
-        forgetter.forget(&fact.identity.id, &t0).expect("forget"),
+        forgetter
+            .forget(&fact.identity.id, &t0, &Id::generate())
+            .expect("forget"),
         PointForget::Forgotten
     );
     assert_eq!(
         forgetter
-            .unforget(&fact.identity.id, &t0)
+            .unforget(&fact.identity.id, &t0, &Id::generate())
             .expect("unforget"),
         PointUnforget::Restored
     );
     assert_eq!(
-        forgetter.forget(&fact.identity.id, &t0).expect("re-forget"),
+        forgetter
+            .forget(&fact.identity.id, &t0, &Id::generate())
+            .expect("re-forget"),
         PointForget::Forgotten
     );
     assert_eq!(
@@ -564,7 +586,9 @@ fn a_same_instant_forget_cycle_is_three_distinct_audit_rows() {
     // A true replay — same state, same instant — still audits nothing: idempotency
     // lives in the state gate, not the id.
     assert_eq!(
-        forgetter.forget(&fact.identity.id, &t0).expect("replay"),
+        forgetter
+            .forget(&fact.identity.id, &t0, &Id::generate())
+            .expect("replay"),
         PointForget::AlreadyForgotten
     );
     assert_eq!(
@@ -596,13 +620,115 @@ fn a_work_item_is_invisible_to_point_forget() {
     // never finds it: NotFound, NOT Protected (Protected is reserved for in-set kinds an axis
     // spares). An active work item can therefore never be forgotten or unforgotten.
     assert_eq!(
-        forgetter.forget(&item.identity.id, &now()).expect("forget"),
+        forgetter
+            .forget(&item.identity.id, &now(), &Id::generate())
+            .expect("forget"),
         PointForget::NotFound,
     );
     assert_eq!(
         forgetter
-            .unforget(&item.identity.id, &now())
+            .unforget(&item.identity.id, &now(), &Id::generate())
             .expect("unforget"),
         PointUnforget::NotFound,
     );
+}
+
+#[test]
+fn manual_lifecycle_attributes_to_the_acting_agent_not_the_substrate() {
+    // The provenance fix (P1): a manual point-op names the agent that asked for it as the audit
+    // actor, while the substrate-driven sweep names the substrate actor. The decisive assertion
+    // is that the two are DISTINCT — a manual row carries the acting agent, a sweep row does not.
+    let store = store();
+    let forgetter = forgetter(&store);
+    let alice = Id::generate();
+
+    // Three forgettable facts: one is pinned, one point-forgotten by alice, one left for the sweep.
+    let pinned = low_fact();
+    let manual = low_fact();
+    let swept = low_fact();
+    for f in [&pinned, &manual, &swept] {
+        store.insert_fact(f).expect("insert");
+    }
+
+    // A manual pin by alice (pin has no eligibility gate, so it always audits) — this also keeps
+    // the pinned fact out of the sweep below.
+    assert_eq!(
+        pin(&store, &pinned.identity.id, &now(), &alice).expect("pin"),
+        PointPin::Pinned,
+    );
+    // A manual point-forget by alice.
+    assert_eq!(
+        forgetter
+            .forget(&manual.identity.id, &now(), &alice)
+            .expect("forget"),
+        PointForget::Forgotten,
+    );
+    // The substrate sweep forgets the remaining fact (the pinned one is spared, the manual one is
+    // already expired and skipped).
+    let report = forgetter.sweep_page(None, 200, &now()).expect("sweep");
+    assert_eq!(
+        report.forgotten, 1,
+        "only the un-pinned, un-forgotten fact is swept"
+    );
+    // A manual unforget by alice exercises the unforget audit's actor path too.
+    assert_eq!(
+        forgetter
+            .unforget(&manual.identity.id, &now(), &alice)
+            .expect("unforget"),
+        PointUnforget::Restored,
+    );
+
+    // The pin audit names alice.
+    let pin_row = store
+        .audit_by_kind(AuditKind::Pin, None, 50)
+        .expect("pin audit")
+        .events
+        .into_iter()
+        .find(|e| e.subject_id == pinned.identity.id)
+        .expect("pin row");
+    assert_eq!(
+        pin_row.actor_id, alice,
+        "a manual pin is attributed to the acting agent"
+    );
+
+    // The unforget audit names alice.
+    let unforget_row = store
+        .audit_by_kind(AuditKind::Unforget, None, 50)
+        .expect("unforget audit")
+        .events
+        .into_iter()
+        .find(|e| e.subject_id == manual.identity.id)
+        .expect("unforget row");
+    assert_eq!(
+        unforget_row.actor_id, alice,
+        "a manual unforget is attributed to the acting agent"
+    );
+
+    // The two forget rows: the manual one is alice; the sweep one is NOT alice (the substrate).
+    let forget_rows = store
+        .audit_by_kind(AuditKind::Forget, None, 50)
+        .expect("forget audit");
+    let by_subject: BTreeMap<_, _> = forget_rows
+        .events
+        .iter()
+        .map(|e| (e.subject_id, e))
+        .collect();
+    let manual_row = by_subject
+        .get(&manual.identity.id)
+        .expect("manual forget row");
+    let swept_row = by_subject
+        .get(&swept.identity.id)
+        .expect("swept forget row");
+    assert_eq!(
+        manual_row.actor_id, alice,
+        "a manual forget is attributed to the acting agent"
+    );
+    assert_eq!(manual_row.payload["reason"], "manual");
+    assert_eq!(
+        swept_row.actor_id,
+        aionforge_forget::substrate_actor(),
+        "the substrate-driven sweep records the substrate actor, never an agent"
+    );
+    assert_ne!(swept_row.actor_id, alice);
+    assert_eq!(swept_row.payload["reason"], "active_forgetting_sweep");
 }

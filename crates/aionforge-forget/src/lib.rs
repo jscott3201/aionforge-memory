@@ -24,6 +24,7 @@ mod forgetter;
 mod pinning;
 mod policy;
 
+pub use audit_addr::substrate_actor;
 pub use baseline::DriftBaseline;
 pub use cooling::CoolingSweepReport;
 pub use detector::{
