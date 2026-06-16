@@ -567,6 +567,7 @@ fn render_work_lines(header: &str, items: &[WorkItem], tool: &'static str) -> St
         out.push_str(&render_memory_line(
             &ResolvedMemory::WorkItem(item.clone()),
             None,
+            None,
             SNIPPET_CHARS,
         ));
     }
