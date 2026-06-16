@@ -565,6 +565,92 @@ fn first_line(out: &str) -> &str {
 }
 
 #[test]
+fn creation_provenance_surfaces_only_under_verbose_or_full() {
+    let memory = memory();
+    let alice = Id::generate();
+    let writer = Id::generate();
+    let id = seed_with_provenance(
+        &memory,
+        "a captured assistant turn",
+        Namespace::Agent(alice.to_string()),
+        writer,
+        "claude",
+        Some("opus-4.8"),
+        0.9,
+    );
+
+    // Default compact read: NO provenance attributes — the default path stays one store hop per
+    // id and "who wrote this" is detail you opt into.
+    let compact = read_memory_tool(&memory, read_params(&[id], alice), None, AuthEnabled(false))
+        .expect("read");
+    assert!(
+        !compact.contains("writer=") && !compact.contains("trust_at_write="),
+        "the default read omits provenance: {compact}"
+    );
+
+    // Verbose: the signed creation provenance is projected — writer agent, model family/version,
+    // the write-time trust snapshot, and the write instant.
+    let mut verbose = read_params(&[id], alice);
+    verbose.verbose = Some(true);
+    let out = read_memory_tool(&memory, verbose, None, AuthEnabled(false)).expect("read");
+    assert!(
+        out.contains(&format!("writer=\"{writer}\"")),
+        "the writer agent id surfaces: {out}"
+    );
+    assert!(out.contains("model_family=\"claude\""), "{out}");
+    assert!(out.contains("model_version=\"opus-4.8\""), "{out}");
+    assert!(
+        out.contains("trust_at_write=\"0.90\""),
+        "the write-time trust snapshot surfaces, distinct from search's rank trust: {out}"
+    );
+    assert!(
+        out.contains("written_at=\""),
+        "the write instant surfaces: {out}"
+    );
+
+    // Spec boundary: the System-namespace capture AuditEvent (governance forensics — the dedup
+    // verdict, redaction count, injection flags) must NEVER leak into an agent-side read. The
+    // seed committed one (payload {"verdict":"new"}) via the capture funnel, so a future refactor
+    // that walked the AUDIT edge instead of HAS_PROVENANCE would surface "verdict" here and trip.
+    assert!(
+        !out.contains("verdict") && !out.contains("injection") && !out.contains("redact"),
+        "the capture audit (governance forensics) never surfaces on a read: {out}"
+    );
+
+    // full=true also surfaces provenance (the other detail mode).
+    let mut full = read_params(&[id], alice);
+    full.full = Some(true);
+    let whole = read_memory_tool(&memory, full, None, AuthEnabled(false)).expect("read");
+    assert!(
+        whole.contains(&format!("writer=\"{writer}\"")),
+        "full also projects provenance: {whole}"
+    );
+}
+
+#[test]
+fn an_episode_without_a_provenance_record_renders_none_even_under_detail() {
+    let memory = memory();
+    let alice = Id::generate();
+    // A bare insert_episode (no capture funnel) has no HAS_PROVENANCE edge.
+    let id = seed(
+        &memory,
+        "a directly-inserted turn",
+        Namespace::Agent(alice.to_string()),
+        Role::Assistant,
+    );
+
+    let mut verbose = read_params(&[id], alice);
+    verbose.verbose = Some(true);
+    let out = read_memory_tool(&memory, verbose, None, AuthEnabled(false)).expect("read");
+    assert!(out.contains("a directly-inserted turn"), "{out}");
+    // No fabricated provenance: absence is honest, never a placeholder writer.
+    assert!(
+        !out.contains("writer="),
+        "an episode with no provenance record renders no provenance attributes: {out}"
+    );
+}
+
+#[test]
 fn the_admin_reveal_lifts_the_system_namespace_gate_only_with_opt_in() {
     let admin = Id::generate();
     let memory = admin_memory(admin);

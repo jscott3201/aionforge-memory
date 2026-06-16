@@ -51,7 +51,7 @@ Start locally with `aionforge serve stdio` or
 Tools:
 - server_status: version/counts/transports/tool posture.
 - search: principal-scoped recall inside <recalled-memory-context>.
-- read_memory: read 1..=16 memories by id; full=true returns untruncated body; include_system opt-in. A team:<name> id resolves only if that team is asserted in-call (as search); else not-found.
+- read_memory: read 1..=16 memories by id; full=true returns untruncated body; include_system opt-in. A team:<name> id resolves only if that team is asserted in-call (as search); else not-found. verbose/full also surface an episode's signed creation provenance (writer_agent_id/model/trust_at_write); derived facts have none.
 - session_manifest: visible session handoff (after/next pagination, audit counts). Filters by the session_id set AT CAPTURE time; a capture with no session_id is invisible to it.
 - capture: write one event for agent_id or principal.agent_id; team target requires asserted teams.
 - batch_capture: capture an array (1..=64) under one shared writer; per-item best-effort, dup counts stored near-duplicates.
