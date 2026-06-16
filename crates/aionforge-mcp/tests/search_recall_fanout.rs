@@ -138,3 +138,47 @@ async fn search_tool_considered_count_reports_the_fused_pool_not_the_returned_co
          ({returned}): {out}"
     );
 }
+
+#[tokio::test]
+async fn search_tool_rejects_explicit_zero_fanout() {
+    let memory = memory();
+    let agent = Id::generate();
+    capture_many_matching(&memory, &agent, 4).await;
+
+    // `fanout = Some(0)` is a caller error, not a second spelling of the default: omitting
+    // `fanout` already maps to the deployment default (the internal `0` sentinel), so an
+    // explicit `0` must be rejected rather than silently absorbed — which would hide the
+    // mistake and make `Some(0)` indistinguishable from `None`. Call `search_tool` directly
+    // (not the `search_telemetry` helper) so the `Err` is inspectable.
+    let err = search_tool(
+        &memory,
+        SearchToolParams {
+            query: "telemetry".to_string(),
+            viewer: Some(format!("agent:{agent}")),
+            principal: None,
+            teams: Vec::new(),
+            limit: Some(3),
+            verbose: None,
+            include_superseded: None,
+            fanout: Some(0),
+        },
+        &now(),
+        None,
+        AuthEnabled(false),
+    )
+    .await
+    .expect_err("explicit fanout=0 must be rejected");
+    assert!(
+        err.starts_with("ERR_INVALID_FANOUT"),
+        "fanout=0 returns a typed validation error: {err}"
+    );
+
+    // Omitting `fanout` still succeeds and uses the deployment default — only the explicit
+    // `0` is rejected, never the absence of the knob.
+    let (_, considered) = summary_counts(&search_telemetry(&memory, &agent, None, Some(3)).await);
+    assert!(
+        considered >= 4,
+        "omitting fanout uses the deployment default and still considers the in-scope pool: \
+         considered={considered}"
+    );
+}

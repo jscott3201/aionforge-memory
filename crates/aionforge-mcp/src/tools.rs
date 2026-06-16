@@ -217,9 +217,11 @@ pub struct SearchToolParams {
     pub include_superseded: Option<bool>,
     /// Candidate fan-out per signal before fusion — the recall knob, decoupled from `limit`.
     /// Raise it to widen recall (cast a wider net) without inflating the returned bundle;
-    /// omit to use the deployment default. Capped server-side.
+    /// omit to use the deployment default. An explicit value must be `>= 1` (a `0` is
+    /// rejected rather than silently treated as the default, since omitting it already
+    /// expresses that intent). Capped server-side.
     #[schemars(
-        description = "Candidates generated per signal before fusion (recall fan-out), decoupled from limit. Higher = wider recall. Optional; capped server-side."
+        description = "Candidates generated per signal before fusion (recall fan-out), decoupled from limit. Higher = wider recall. Optional; omit for the deployment default, an explicit value must be >= 1. Capped server-side."
     )]
     pub fanout: Option<usize>,
 }
@@ -491,9 +493,18 @@ pub async fn search_tool<E: Embedder>(
     let mut query = RecallQuery::new(params.query, principal, limit);
     query.options.now = Some(now.clone());
     query.options.include_superseded = params.include_superseded.unwrap_or(true);
-    // The recall fan-out knob (0 = use the deployment default), capped so one query stays
-    // bounded. Decoupled from `limit`: a wide net for recall, a small returned bundle.
+    // The recall fan-out knob, capped so one query stays bounded. Decoupled from `limit`:
+    // a wide net for recall, a small returned bundle. Omitting `fanout` already means "use
+    // the deployment default" (the internal `0` sentinel), so an explicit `0` is a caller
+    // error rather than a second spelling of the default — reject it instead of silently
+    // absorbing it, which would hide the mistake.
     if let Some(fanout) = params.fanout {
+        if fanout == 0 {
+            return Err(
+                "ERR_INVALID_FANOUT: fanout must be >= 1; omit it to use the deployment default"
+                    .to_string(),
+            );
+        }
         query.options.fanout = fanout.min(MAX_FANOUT);
     }
     let bundle = memory
