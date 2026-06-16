@@ -210,7 +210,7 @@ fn expected_nodes() -> Vec<(&'static str, Vec<Prop>)> {
             ]),
         ),
         (
-            "Session",
+            "MemSession",
             reduced(vec![
                 req("started_at", K::ZonedDateTime),
                 opt("ended_at", K::ZonedDateTime),
@@ -287,7 +287,7 @@ fn expected_nodes() -> Vec<(&'static str, Vec<Prop>)> {
         (
             "ValidityAnchor",
             reduced(vec![
-                req("instant", K::ZonedDateTime),
+                req("anchored_at", K::ZonedDateTime),
                 opt("label", K::String),
             ]),
         ),

@@ -2816,9 +2816,9 @@ dependencies = [
 
 [[package]]
 name = "selene-db-algorithms"
-version = "1.2.0"
+version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c060cde63b1c4c0876cb0cab6d4f30b3a69baa7b73e1004bf491039bdabe2fc9"
+checksum = "5cdc715f06ef556264b5dbd6ceba4990e8b80c356c160f7d270262e2b72bbcc8"
 dependencies = [
  "parking_lot",
  "rayon",
@@ -2832,9 +2832,9 @@ dependencies = [
 
 [[package]]
 name = "selene-db-core"
-version = "1.2.0"
+version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "58b08ddd59238d09bdcbcd08853469566721af8a87fb8314bd9040e8571a6090"
+checksum = "3819a315110bbfc47f28f8efd7897a1fb32dac46b2fa0c30ade70a8d7fc38fba"
 dependencies = [
  "bytes",
  "jiff",
@@ -2853,9 +2853,9 @@ dependencies = [
 
 [[package]]
 name = "selene-db-gql"
-version = "1.2.0"
+version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a82621ea728fa05b4ea60f89ec1eaacce8e48f5516b712bf19c997227790898c"
+checksum = "a3522d345c35872fbab67a7f674259e7a75ee7e8e51dc058942600930caa4a39"
 dependencies = [
  "jiff",
  "lru",
@@ -2863,6 +2863,7 @@ dependencies = [
  "parking_lot",
  "pest",
  "pest_derive",
+ "roaring",
  "rust_decimal",
  "rustc-hash",
  "selene-db-algorithms",
@@ -2880,9 +2881,9 @@ dependencies = [
 
 [[package]]
 name = "selene-db-graph"
-version = "1.2.0"
+version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "37d3e12a6f9fc44d37ca15690843e4f4cec02fda67eab65da6995593fb64d270"
+checksum = "8636fe302d06dff9669ab16e3f0d3d222c0dc10c0f834d1e7980b6fce14c1e17"
 dependencies = [
  "arc-swap",
  "imbl",
@@ -2908,9 +2909,9 @@ dependencies = [
 
 [[package]]
 name = "selene-db-persist"
-version = "1.2.0"
+version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aeb851c2056780c8da870714cd65d0c2d1d9aa9591d9bba1fc17c61c03b20946"
+checksum = "af8e77912864a5c09bf299a854928279117aa0308a0ee384fd25995642f92d0a"
 dependencies = [
  "blake3",
  "miette",

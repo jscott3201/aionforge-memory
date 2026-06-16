@@ -247,8 +247,10 @@ pub(crate) const NODE_TYPES: &[TypeDdl] = &[
         ) STRICT"#,
     },
     TypeDdl {
-        name: "Session",
-        ddl: r#"CREATE NODE TYPE IF NOT EXISTS :Session (
+        // `MemSession`, not `Session`: `SESSION` is a reserved GQL keyword in selene-db 1.3+,
+        // so a `:Session` label fails to parse (see `MemSession` in aionforge-domain).
+        name: "MemSession",
+        ddl: r#"CREATE NODE TYPE IF NOT EXISTS :MemSession (
             id :: UUID NOT NULL UNIQUE IMMUTABLE,
             ingested_at :: ZONED DATETIME NOT NULL IMMUTABLE,
             namespace :: STRING NOT NULL,
@@ -365,7 +367,7 @@ pub(crate) const NODE_TYPES: &[TypeDdl] = &[
             ingested_at :: ZONED DATETIME NOT NULL IMMUTABLE,
             namespace :: STRING NOT NULL,
             expired_at :: ZONED DATETIME,
-            instant :: ZONED DATETIME NOT NULL,
+            anchored_at :: ZONED DATETIME NOT NULL,
             label :: STRING
         ) STRICT"#,
     },
@@ -485,7 +487,7 @@ pub(crate) const EDGE_TYPES: &[TypeDdl] = &[
     TypeDdl {
         name: "IN_SESSION",
         ddl: r#"CREATE EDGE TYPE IF NOT EXISTS :IN_SESSION (
-            FROM :Episode, :Fact TO :Session
+            FROM :Episode, :Fact TO :MemSession
         ) STRICT"#,
     },
     TypeDdl {

@@ -129,20 +129,22 @@ wiremock = "0.6"
 # Object-safe async traits for the consolidation pass seam (M2.T03).
 async-trait = "0.1"
 
-# --- selene-db substrate (published crates.io release, pinned to 1.2.0). ---
-# selene-db 1.2 is published to crates.io under renamed packages (selene-db-core,
+# --- selene-db substrate (published crates.io release, pinned to 1.3.0). ---
+# selene-db 1.3 is published to crates.io under renamed packages (selene-db-core,
 # -graph, -persist, -gql, -algorithms). We consume them through stable local alias
 # keys (selene-core, ...) via Cargo's `package =` rename, so every `use selene_core`
 # in aionforge-store and the store-only-selene gate's pattern stay unchanged above L0.
-# The `1.2.0` requirement pins the released line; Cargo.lock locks the exact build and
-# CI runs `--locked`. `cargo update` moves within 1.2.x. selene-db denies
+# The `1.3.0` requirement pins the released line; Cargo.lock locks the exact build and
+# CI runs `--locked`. `cargo update` moves within 1.3.x. selene-db denies
 # multiple-versions, so the shared transitive tree must agree (see the pins above).
+# 1.3.0 adds scoped retrieval filters (text/vector_search_nodes filter_property/values),
+# algo.pagerank result_nodes restriction, and BM25 candidate-state scoring procedures.
 # For tight co-development against a local checkout, use the commented `[patch]` below.
-selene-core = { package = "selene-db-core", version = "1.2.0" }
-selene-graph = { package = "selene-db-graph", version = "1.2.0" }
-selene-persist = { package = "selene-db-persist", version = "1.2.0" }
-selene-gql = { package = "selene-db-gql", version = "1.2.0" }
-selene-algorithms = { package = "selene-db-algorithms", version = "1.2.0" }
+selene-core = { package = "selene-db-core", version = "1.3.0" }
+selene-graph = { package = "selene-db-graph", version = "1.3.0" }
+selene-persist = { package = "selene-db-persist", version = "1.3.0" }
+selene-gql = { package = "selene-db-gql", version = "1.3.0" }
+selene-algorithms = { package = "selene-db-algorithms", version = "1.3.0" }
 
 # Co-development escape hatch: to build against a local selene-db checkout instead of
 # the published release, uncomment and point these at your sibling checkout. Patch by

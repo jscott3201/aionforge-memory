@@ -68,8 +68,10 @@ impl RecencyWindow {
 pub struct ValidityAnchor {
     /// Shared identity block.
     pub identity: Identity,
-    /// The instant this anchor references (the point facts are anchored to).
-    pub instant: Timestamp,
+    /// The instant this anchor references (the point facts are anchored to). Named
+    /// `anchored_at`, not `instant`: `INSTANT` is a reserved temporal keyword in
+    /// selene-db's GQL grammar (1.3+), so an `instant` property fails to parse.
+    pub anchored_at: Timestamp,
     /// An optional human-facing descriptor for a well-known instant.
     pub label: Option<String>,
 }
