@@ -142,6 +142,10 @@ struct WritableMemory {
     id: Id,
     label: String,
     namespace: Namespace,
+    /// The acting agent id resolved from the request principal — recorded as the audit
+    /// actor on the manual lifecycle ops (pin/unpin/forget/unforget), so the audit trail
+    /// names the agent that asked, not the substrate.
+    actor: Id,
 }
 
 /// Render the current consolidation backlog.
@@ -293,7 +297,7 @@ pub fn forget_tool<E: Embedder>(
         auth_enabled,
     )?;
     let outcome = memory
-        .forget(&target.id, now)
+        .forget(&target.id, now, &target.actor)
         .map_err(|error| format!("ERR_FORGET: {error}"))?;
     Ok(format!(
         "[forget] {} kind={} ns={} outcome={}",
@@ -326,7 +330,7 @@ pub fn unforget_tool<E: Embedder>(
         auth_enabled,
     )?;
     let outcome = memory
-        .unforget(&target.id, now)
+        .unforget(&target.id, now, &target.actor)
         .map_err(|error| format!("ERR_UNFORGET: {error}"))?;
     Ok(format!(
         "[unforget] {} kind={} ns={} outcome={}",
@@ -364,7 +368,7 @@ pub fn pin_tool<E: Embedder>(
         auth_enabled,
     )?;
     let outcome = memory
-        .pin(&target.id, now)
+        .pin(&target.id, now, &target.actor)
         .map_err(|error| format!("ERR_PIN: {error}"))?;
     Ok(format!(
         "[pin] {} kind={} ns={} outcome={}",
@@ -401,7 +405,7 @@ pub fn unpin_tool<E: Embedder>(
         auth_enabled,
     )?;
     let outcome = memory
-        .unpin(&target.id, now)
+        .unpin(&target.id, now, &target.actor)
         .map_err(|error| format!("ERR_UNPIN: {error}"))?;
     Ok(format!(
         "[unpin] {} kind={} ns={} outcome={}",
@@ -520,6 +524,7 @@ fn writable_memory<E: Embedder>(
         id,
         label: candidate.label,
         namespace: candidate.identity.namespace,
+        actor: principal.agent_id,
     })
 }
 

@@ -292,11 +292,15 @@ impl Forgetter {
             next: page.next,
             ..ForgetSweepPage::default()
         };
+        // The sweep is substrate-driven — no agent asked for it — so every row it writes names
+        // the deterministic substrate actor, not an agent. Bound once for the whole page.
+        let substrate = substrate_actor();
         for candidate in &page.candidates {
             report.scanned += 1;
             match self.evaluate(candidate, now)? {
                 ForgetDecision::Forget => {
-                    let audit = self.forget_audit(candidate, now, "active_forgetting_sweep");
+                    let audit =
+                        self.forget_audit(candidate, now, "active_forgetting_sweep", &substrate);
                     match self.store.soft_forget(candidate.node, now, &audit)? {
                         ForgetWrite::Applied => report.forgotten += 1,
                         ForgetWrite::Noop | ForgetWrite::RefusedStatus => report.spared += 1,
@@ -314,7 +318,7 @@ impl Forgetter {
     ///
     /// # Errors
     /// Returns [`StoreError`] if a read, probe, or write fails.
-    pub fn forget(&self, id: &Id, now: &Timestamp) -> Result<PointForget, StoreError> {
+    pub fn forget(&self, id: &Id, now: &Timestamp, actor: &Id) -> Result<PointForget, StoreError> {
         // The point-op outcome (and the protection that held, when spared) is otherwise
         // only in the audit trail; the span surfaces it live. `spare_reason` is the axis
         // label, never the memory's id or content.
@@ -324,12 +328,17 @@ impl Forgetter {
             spare_reason = tracing::field::Empty,
             error = tracing::field::Empty,
         );
-        let result = span.in_scope(|| self.forget_inner(id, now));
+        let result = span.in_scope(|| self.forget_inner(id, now, actor));
         record_point_forget_span(&span, &result);
         result
     }
 
-    fn forget_inner(&self, id: &Id, now: &Timestamp) -> Result<PointForget, StoreError> {
+    fn forget_inner(
+        &self,
+        id: &Id,
+        now: &Timestamp,
+        actor: &Id,
+    ) -> Result<PointForget, StoreError> {
         let Some(candidate) = self.store.memory_by_id(id, &ALL_MEMORY_LABELS)? else {
             return Ok(PointForget::NotFound);
         };
@@ -342,7 +351,7 @@ impl Forgetter {
         match self.evaluate(&candidate, now)? {
             ForgetDecision::Spare(reason) => Ok(PointForget::Protected(reason)),
             ForgetDecision::Forget => {
-                let audit = self.forget_audit(&candidate, now, "manual");
+                let audit = self.forget_audit(&candidate, now, "manual", actor);
                 match self.store.soft_forget(candidate.node, now, &audit)? {
                     ForgetWrite::Applied => Ok(PointForget::Forgotten),
                     ForgetWrite::Noop => Ok(PointForget::AlreadyForgotten),
@@ -360,19 +369,29 @@ impl Forgetter {
     ///
     /// # Errors
     /// Returns [`StoreError`] if a read or write fails.
-    pub fn unforget(&self, id: &Id, now: &Timestamp) -> Result<PointUnforget, StoreError> {
+    pub fn unforget(
+        &self,
+        id: &Id,
+        now: &Timestamp,
+        actor: &Id,
+    ) -> Result<PointUnforget, StoreError> {
         let span = tracing::info_span!(
             "aionforge.forgetting.point_unforget",
             outcome = tracing::field::Empty,
             spare_reason = tracing::field::Empty,
             error = tracing::field::Empty,
         );
-        let result = span.in_scope(|| self.unforget_inner(id, now));
+        let result = span.in_scope(|| self.unforget_inner(id, now, actor));
         record_point_unforget_span(&span, &result);
         result
     }
 
-    fn unforget_inner(&self, id: &Id, now: &Timestamp) -> Result<PointUnforget, StoreError> {
+    fn unforget_inner(
+        &self,
+        id: &Id,
+        now: &Timestamp,
+        actor: &Id,
+    ) -> Result<PointUnforget, StoreError> {
         let Some(candidate) = self.store.memory_by_id(id, &ALL_MEMORY_LABELS)? else {
             return Ok(PointUnforget::NotFound);
         };
@@ -387,7 +406,8 @@ impl Forgetter {
             ),
             kind: AuditKind::Unforget,
             subject_id: *id,
-            actor_id: substrate_actor(),
+            // Unforget is manual-only — the agent that asked for the restore.
+            actor_id: *actor,
             payload: serde_json::json!({
                 "reason": "manual_unforget",
                 "kind": candidate.label,
@@ -409,13 +429,15 @@ impl Forgetter {
     }
 
     /// The forget audit event: one fresh row per applied transition, in the memory's own
-    /// namespace, recording
-    /// the decision basis so the reversible window is explainable.
+    /// namespace, attributed to `actor` — the acting agent on the manual point-forget, the
+    /// substrate actor on the sweep — recording the decision basis so the reversible window
+    /// is explainable.
     fn forget_audit(
         &self,
         candidate: &ForgetCandidate,
         now: &Timestamp,
         reason: &str,
+        actor: &Id,
     ) -> AuditEvent {
         let tier = match tier_for_label(&candidate.label) {
             Some(Tier::Episodic) => "episodic",
@@ -441,7 +463,7 @@ impl Forgetter {
             ),
             kind: AuditKind::Forget,
             subject_id: candidate.identity.id,
-            actor_id: substrate_actor(),
+            actor_id: *actor,
             payload: serde_json::json!({
                 "reason": reason,
                 "kind": candidate.label,

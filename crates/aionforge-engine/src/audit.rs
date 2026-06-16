@@ -11,10 +11,15 @@
 //! Reads are gated by the same [`VisibleSet`](aionforge_domain::authz::VisibleSet) rule
 //! as every other read surface (06 §1,
 //! M4.T01): `global` plus the principal's own private and team namespaces; `system` is
-//! never agent-visible. Governance audits live in the `system` namespace, so an agent
-//! sees its own capture-channel history but not substrate governance forensics — those
-//! remain the host's path through the L0 [`Store`](aionforge_store::Store) readers
-//! (the M4.T06 PR-5h CLI surface). Filtering happens above the keyset pagination, so a
+//! never agent-visible. So an agent sees its own **lifecycle** history — pin/unpin and
+//! forget/unforget rows, each attributed to the acting agent (P1) and written in the
+//! memory's own namespace — but not the `system`-scoped governance forensics: the capture
+//! audit (security signals — dedup, redactions, injection flags — kept in `system` per
+//! 02 §11; creation attribution is carried instead by the memory's provenance writer, which
+//! is not yet projected onto any agent-facing read — a tracked gap) and the substrate sweep
+//! records, which remain the host's path through the L0
+//! [`Store`](aionforge_store::Store) readers (the M4.T06 PR-5h CLI surface). Filtering
+//! happens above the keyset pagination, so a
 //! page is refilled until `limit` visible rows are found or the history is exhausted —
 //! cursors stay valid across mixed-visibility ranges.
 //!

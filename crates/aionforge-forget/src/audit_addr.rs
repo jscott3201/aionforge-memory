@@ -5,19 +5,23 @@
 //! apart: one fresh, time-ordered id per **applied** transition, identities in the
 //! **memory's own namespace** (agent-visible through the scoped audit reads, never
 //! hidden in `System` governance forensics). The actor differs by surface: the
-//! substrate actor below for the sweep-driven and manual lifecycle flips, the real
-//! erasing principal for a purge.
+//! substrate actor below for the **sweep-driven** flip, the **acting agent** for a manual
+//! point-op (pin/unpin/forget/unforget) and for the eraser's purge — destruction or a
+//! deliberate lifecycle change on an agent's say-so is attributed to the agent (P1).
 
 use aionforge_domain::blocks::Identity;
 use aionforge_domain::ids::Id;
 use aionforge_domain::namespace::Namespace;
 use aionforge_domain::time::Timestamp;
 
-/// The deterministic substrate actor recorded on forget/unforget and pin/unpin audits,
-/// sweep-driven and manual alike — those surfaces take no principal. The erasure path
-/// is the one that does, and its purge audit names `principal.agent_id` instead:
-/// destruction on an agent's say-so is attributed to the agent, not the substrate.
-pub(crate) fn substrate_actor() -> Id {
+/// The deterministic substrate actor recorded on the **sweep-driven** forget audit — the
+/// flip no agent asked for. The manual point-ops (pin/unpin/forget/unforget) and the
+/// eraser's purge instead name the acting `principal.agent_id`: a lifecycle change made on
+/// an agent's say-so is attributed to the agent, not the substrate (P1). Exposed so a
+/// reader can recognize a substrate-authored audit row (and so tests can assert the sweep
+/// uses it).
+#[must_use]
+pub fn substrate_actor() -> Id {
     Id::from_content_hash(b"aionforge/forgetter-v1")
 }
 

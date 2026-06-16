@@ -121,12 +121,14 @@ fn the_off_switch_is_inert_everywhere() {
     let report = memory.sweep_forgetting(None, 200, &now()).expect("sweep");
     assert_eq!(report, aionforge_engine::ForgetSweepPage::default());
     assert_eq!(
-        memory.forget(&fact.identity.id, &now()).expect("forget"),
+        memory
+            .forget(&fact.identity.id, &now(), &Id::generate())
+            .expect("forget"),
         PointForget::Disabled
     );
     assert_eq!(
         memory
-            .unforget(&fact.identity.id, &now())
+            .unforget(&fact.identity.id, &now(), &Id::generate())
             .expect("unforget"),
         PointUnforget::Disabled
     );
@@ -239,19 +241,23 @@ fn point_ops_report_protections_and_round_trip() {
     };
     store.insert_fact(&pinned).expect("insert");
     assert_eq!(
-        memory.forget(&pinned.identity.id, &now()).expect("forget"),
+        memory
+            .forget(&pinned.identity.id, &now(), &Id::generate())
+            .expect("forget"),
         PointForget::Protected(SpareReason::Pinned)
     );
 
     let fact = low_fact(Namespace::Global);
     store.insert_fact(&fact).expect("insert");
     assert_eq!(
-        memory.forget(&fact.identity.id, &now()).expect("forget"),
+        memory
+            .forget(&fact.identity.id, &now(), &Id::generate())
+            .expect("forget"),
         PointForget::Forgotten
     );
     assert_eq!(
         memory
-            .unforget(&fact.identity.id, &now())
+            .unforget(&fact.identity.id, &now(), &Id::generate())
             .expect("unforget"),
         PointUnforget::Restored
     );

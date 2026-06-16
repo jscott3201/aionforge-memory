@@ -112,17 +112,23 @@ async fn pin_works_under_the_default_configuration_where_forget_is_disabled() {
 
     // The contrast pair: forget answers Disabled, pin works.
     assert_eq!(
-        memory.forget(&episode.identity.id, &now()).expect("forget"),
+        memory
+            .forget(&episode.identity.id, &now(), &Id::generate())
+            .expect("forget"),
         PointForget::Disabled,
         "forgetting is off on this engine"
     );
     assert_eq!(
-        memory.pin(&episode.identity.id, &now()).expect("pin"),
+        memory
+            .pin(&episode.identity.id, &now(), &Id::generate())
+            .expect("pin"),
         PointPin::Pinned,
         "the pin is always available"
     );
     assert_eq!(
-        memory.pin(&episode.identity.id, &now()).expect("replay"),
+        memory
+            .pin(&episode.identity.id, &now(), &Id::generate())
+            .expect("replay"),
         PointPin::AlreadyPinned
     );
 
@@ -135,7 +141,9 @@ async fn pin_works_under_the_default_configuration_where_forget_is_disabled() {
     assert_eq!(pins.records[0].event.payload["reason"], "manual_pin");
 
     assert_eq!(
-        memory.unpin(&episode.identity.id, &now()).expect("unpin"),
+        memory
+            .unpin(&episode.identity.id, &now(), &Id::generate())
+            .expect("unpin"),
         PointUnpin::Unpinned
     );
     let unpins = memory
@@ -145,7 +153,9 @@ async fn pin_works_under_the_default_configuration_where_forget_is_disabled() {
 
     // Unknown id stays an honest NotFound.
     assert_eq!(
-        memory.pin(&Id::generate(), &now()).expect("pin"),
+        memory
+            .pin(&Id::generate(), &now(), &Id::generate())
+            .expect("pin"),
         PointPin::NotFound
     );
 }
@@ -158,7 +168,9 @@ async fn a_facade_pin_holds_against_the_sweep_until_lifted() {
     store.insert_fact(&fact).expect("insert");
 
     assert_eq!(
-        memory.pin(&fact.identity.id, &now()).expect("pin"),
+        memory
+            .pin(&fact.identity.id, &now(), &Id::generate())
+            .expect("pin"),
         PointPin::Pinned
     );
     let swept = memory.sweep_forgetting(None, 200, &now()).expect("sweep");
@@ -166,7 +178,9 @@ async fn a_facade_pin_holds_against_the_sweep_until_lifted() {
     assert_eq!(swept.spared, 1);
 
     assert_eq!(
-        memory.unpin(&fact.identity.id, &now()).expect("unpin"),
+        memory
+            .unpin(&fact.identity.id, &now(), &Id::generate())
+            .expect("unpin"),
         PointUnpin::Unpinned
     );
     let reswept = memory
