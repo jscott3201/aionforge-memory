@@ -434,3 +434,209 @@ async fn the_rendered_view_is_byte_identical_across_runs() {
         "the high-precision path is deterministic (prefix-cache contract)"
     );
 }
+
+// --- Absolute relevance floor (P0a) ----------------------------------------------
+
+/// A store with one entity and two current facts about it: one whose embedding matches a
+/// query at `[1,0,0,0]` (cosine similarity ~1.0) and one orthogonal at `[0,1,0,0]`
+/// (similarity ~0.0). Neither statement shares a token with the test queries, so the dense
+/// signal alone surfaces them — letting an absolute dense floor cleanly separate the two.
+fn floor_store() -> Arc<Store> {
+    let store = store();
+    let (acme, acme_node) = entity(&store, "acme", [1.0, 0.0, 0.0, 0.0]);
+    assert_fact(&store, &acme, acme_node, "near match", [1.0, 0.0, 0.0, 0.0]);
+    assert_fact(&store, &acme, acme_node, "far match", [0.0, 1.0, 0.0, 0.0]);
+    store
+}
+
+/// Recall in History mode (a plain global ANN pass, no entity seeding) with a wide fan-out
+/// and limit so both facts are well inside the considered pool — the only variable under
+/// test is the per-query `min_relevance` floor.
+async fn recall_floored(
+    r: &HybridRetriever<FakeEmbedder>,
+    text: &str,
+    min_relevance: Option<f64>,
+) -> RecallBundle {
+    r.recall(RecallQuery {
+        text: text.to_string(),
+        principal: Principal::agent(Id::generate()),
+        limit: 5,
+        options: RecallOptions {
+            temporal: TemporalMode::History,
+            fanout: 10,
+            min_relevance,
+            ..RecallOptions::default()
+        },
+    })
+    .await
+    .expect("recall")
+}
+
+#[tokio::test]
+async fn min_relevance_floor_drops_facts_below_the_threshold() {
+    let r = retriever(
+        floor_store(),
+        FakeEmbedder::new(&[("acme", [1.0, 0.0, 0.0, 0.0])]),
+    );
+
+    // Floor OFF (the default 0.0): both the near and the orthogonal fact surface, exactly as
+    // before P0a — the default path is unchanged.
+    let open = recall_floored(&r, "acme", None).await;
+    assert!(
+        has_fact(&open, "near match"),
+        "the near fact surfaces with no floor: {}",
+        open.rendered,
+    );
+    assert!(
+        has_fact(&open, "far match"),
+        "the orthogonal fact also surfaces with no floor: {}",
+        open.rendered,
+    );
+
+    // Floor at 0.5: the orthogonal fact (dense similarity ~0.0) is dropped while the near
+    // fact (similarity ~1.0) is kept. This is the absolute relevance proxy at work, not the
+    // relative rank — the far fact was a returned hit, just an honestly-irrelevant one.
+    let floored = recall_floored(&r, "acme", Some(0.5)).await;
+    assert!(
+        has_fact(&floored, "near match"),
+        "the near fact clears the floor: {}",
+        floored.rendered,
+    );
+    assert!(
+        !has_fact(&floored, "far match"),
+        "the orthogonal fact is dropped by the 0.5 floor: {}",
+        floored.rendered,
+    );
+}
+
+#[tokio::test]
+async fn an_active_min_relevance_floor_can_empty_an_off_topic_recall() {
+    // The query vector is orthogonal to every stored fact, so all dense similarities clamp to
+    // ~0.0. Under an active floor every candidate is dropped and the ranked tier is
+    // legitimately empty — the honest "nothing here is relevant" answer P0a is meant to give,
+    // rather than surfacing the best of a thin, irrelevant set.
+    let r = retriever(
+        floor_store(),
+        FakeEmbedder::new(&[("offtopic", [0.0, 0.0, 1.0, 0.0])]),
+    );
+    let bundle = recall_floored(&r, "offtopic", Some(0.5)).await;
+    assert!(
+        !bundle
+            .structured
+            .iter()
+            .any(|e| matches!(e, StructuredEntry::Fact(_))),
+        "an off-topic query under an active floor returns no facts: {}",
+        bundle.rendered,
+    );
+}
+
+#[tokio::test]
+async fn a_per_query_min_relevance_overrides_the_config_default() {
+    // A deployment configures an aggressive default floor of 0.9.
+    let r = HybridRetriever::new(
+        floor_store(),
+        FakeEmbedder::new(&[("acme", [1.0, 0.0, 0.0, 0.0])]),
+        RetrieverConfig {
+            min_relevance: 0.9,
+            ..RetrieverConfig::default()
+        },
+    );
+
+    // No per-query override → the config default applies: the orthogonal fact (sim ~0.0) is
+    // dropped, only the near fact (sim ~1.0 >= 0.9) survives.
+    let default_floor = recall_floored(&r, "acme", None).await;
+    assert!(
+        has_fact(&default_floor, "near match"),
+        "the near fact clears the configured default floor: {}",
+        default_floor.rendered,
+    );
+    assert!(
+        !has_fact(&default_floor, "far match"),
+        "the configured default floor drops the orthogonal fact: {}",
+        default_floor.rendered,
+    );
+
+    // A per-query Some(0.0) overrides the config default and turns the floor OFF — both facts
+    // return, proving the `unwrap_or(config.min_relevance)` fallback wiring.
+    let overridden = recall_floored(&r, "acme", Some(0.0)).await;
+    assert!(
+        has_fact(&overridden, "near match") && has_fact(&overridden, "far match"),
+        "a per-query 0.0 overrides the config floor and restores the orthogonal fact: {}",
+        overridden.rendered,
+    );
+}
+
+#[tokio::test]
+async fn recall_renders_honest_absolute_confidence_values() {
+    // The headline P0a deliverable: an honest absolute confidence VALUE reaches the compact
+    // surface — not just a correct drop/keep. Query [1,0,0,0] over floor_store: the near fact
+    // (embedding == query vector) has cosine similarity ~1.0, the orthogonal far fact ~0.0. This
+    // exercises the whole capture -> select -> entry -> render_compact pipeline on real
+    // retriever output, and pins the engine's distance convention (similarity = 1 - distance).
+    let r = retriever(
+        floor_store(),
+        FakeEmbedder::new(&[("acme", [1.0, 0.0, 0.0, 0.0])]),
+    );
+    let compact = recall_floored(&r, "acme", None).await.render_compact(false);
+    assert!(
+        compact.contains("confidence=\"1.0000\" confidence_band=\"high\""),
+        "the near fact renders an exact high absolute confidence: {compact}",
+    );
+    assert!(
+        compact.contains("confidence=\"0.0000\" confidence_band=\"low\""),
+        "the orthogonal fact renders an exact low absolute confidence: {compact}",
+    );
+}
+
+#[tokio::test]
+async fn an_active_floor_drops_a_lexical_only_hit_through_the_retriever() {
+    // With the embedder down there is no dense signal, so every hit is lexical-only (absent from
+    // the dense map). Through the REAL retriever (not a hand-mutated bundle): a lexical match
+    // surfaces with NO fabricated confidence when the floor is off, and is DROPPED entirely under
+    // an active floor — the floor admits only dense-backed hits. Exercises both the select() drop
+    // and the render omission end-to-end.
+    let store = store();
+    let (acme, acme_node) = entity(&store, "acme", [1.0, 0.0, 0.0, 0.0]);
+    assert_fact(
+        &store,
+        &acme,
+        acme_node,
+        "acme based in berlin",
+        [1.0, 0.0, 0.0, 0.0],
+    );
+    let r = retriever(store, FakeEmbedder::down(&[]));
+
+    // Floor OFF: the lexical hit surfaces, and carries no confidence attribute (no dense
+    // evidence — absence is the honest signal, never a fabricated value).
+    let open = recall(&r, "berlin", TemporalMode::Current, false).await;
+    assert!(
+        has_fact(&open, "acme based in berlin"),
+        "a lexical match surfaces with the embedder down: {}",
+        open.rendered,
+    );
+    assert!(
+        !open.render_compact(false).contains("confidence="),
+        "a lexical-only hit gets no fabricated confidence: {}",
+        open.render_compact(false),
+    );
+
+    // Floor ON (0.5): the lexical-only hit has no dense similarity, so it is dropped.
+    let floored = r
+        .recall(RecallQuery {
+            text: "berlin".to_string(),
+            principal: Principal::agent(Id::generate()),
+            limit: 5,
+            options: RecallOptions {
+                temporal: TemporalMode::Current,
+                min_relevance: Some(0.5),
+                ..RecallOptions::default()
+            },
+        })
+        .await
+        .expect("recall");
+    assert!(
+        !has_fact(&floored, "acme based in berlin"),
+        "an active floor drops a lexical-only hit: {}",
+        floored.rendered,
+    );
+}

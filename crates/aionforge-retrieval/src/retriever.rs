@@ -13,7 +13,7 @@
 //! importance, and recency re-rank the surfaced set, the latter two only when the
 //! caller supplies a clock (05 §2).
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -88,6 +88,15 @@ pub struct RetrieverConfig {
     /// when some deadline exists — so a deployment default here is what bounds a recall over a
     /// large team namespace. An explicit per-query deadline always takes precedence (03 §6).
     pub default_recall_budget: Option<Duration>,
+    /// An OPT-IN absolute relevance floor in `[0, 1]` on the dense cosine similarity (P0a).
+    /// `0.0` (the default) is OFF: no clamped similarity is below `0.0`, so the floor never
+    /// fires and the default recall path is byte-identical. When positive, a hit whose dense
+    /// similarity is below the floor — or which has no dense score at all (lexical/BM25-only)
+    /// — is dropped from the bundle, so an unrelated query may legitimately return empty. A
+    /// per-query [`RecallOptions::min_relevance`](crate::RecallOptions) overrides this. A soft knob: an out-of-range
+    /// value is inert (a floor `> 1` empties recall, a floor `< 0` never fires), matching the
+    /// `cooling_factor` posture — the user-facing config validates the range loudly instead.
+    pub min_relevance: f64,
 }
 
 impl Default for RetrieverConfig {
@@ -104,8 +113,27 @@ impl Default for RetrieverConfig {
             // milliseconds, so 5s never trips a normal query but bounds the scoped scans on a
             // busy store. The host overrides this from `[retrieval] recall_deadline_ms`.
             default_recall_budget: Some(Duration::from_secs(5)),
+            // OFF by default: the floor never fires (no clamped similarity is below 0.0), so the
+            // default recall path is byte-identical. The host overrides this from
+            // `[retrieval] min_relevance`.
+            min_relevance: 0.0,
         }
     }
+}
+
+/// The honest absolute relevance for a dense hit: a cosine `distance` (lower = nearer) mapped to
+/// similarity `(1.0 - distance)` clamped to `[0, 1]`. The clamp keeps it in range whether the
+/// engine returns `1 - cos` (`[0, 2]`) or an already-normalized distance.
+///
+/// Returns `None` for a non-finite distance — a degenerate/zero-norm embedding the engine could
+/// not score. `f64::clamp` does NOT sanitize a `NaN` (`(1.0 - NaN).clamp(0,1)` is still `NaN`),
+/// and a `NaN` similarity would slip past the floor (`NaN < floor` is `false`, so it would be
+/// admitted as if relevant) and render `confidence="NaN"`. `None` is the honest "no dense
+/// evidence" outcome — treated as a lexical-only hit (no confidence rendered, dropped under an
+/// active floor) — matching the `is_finite` posture in `aionforge_domain`'s drift guard.
+fn dense_similarity_from_distance(distance: f64) -> Option<f64> {
+    let similarity = (1.0 - distance).clamp(0.0, 1.0);
+    similarity.is_finite().then_some(similarity)
 }
 
 /// A hybrid retriever over a shared store and an embedder.
@@ -210,6 +238,16 @@ impl<E: Embedder> HybridRetriever<E> {
         let mut rankings: Vec<WeightedRanking> = Vec::new();
         let mut signals_run: Vec<Signal> = Vec::new();
         let mut fact_nodes: HashSet<NodeId> = HashSet::new();
+        // The honest, absolute per-hit relevance proxy: dense cosine similarity keyed by node
+        // (P0a). Populated ONLY from the two true `Signal::Dense` rankings below — never the
+        // support/graph/trust signals, which produce rank-derived or non-cosine scores. The raw
+        // `RankedCandidate.score` for a dense hit is cosine DISTANCE (lower = nearer), so
+        // similarity = (1.0 - distance).clamp(0.0, 1.0). Built once here while the dense rankings
+        // still carry the raw distance, before the fuse() seam discards it. A node is unique
+        // within one kind's ranking and the episode/fact node-id spaces are disjoint, so the fill
+        // is order-independent (no nondeterminism). Empty when the embedder is down → every hit
+        // is then lexical-only and carries no confidence.
+        let mut dense_similarity: HashMap<NodeId, f64> = HashMap::new();
         let mut embedder_available = true;
 
         // Embed the query a single time, if any dense weight asks for it. A `None`
@@ -323,6 +361,15 @@ impl<E: Embedder> HybridRetriever<E> {
                 deadline,
             )?;
             fact_nodes.extend(facts.candidates.iter().map(|c| c.node));
+            // Capture the honest absolute similarity for every dense hit (both kinds) while the
+            // RankedCandidate.score still carries the raw cosine distance — before fusion drops it
+            // at the fuse() seam (P0a). A non-finite distance leaves the node absent (treated as
+            // lexical-only: no confidence rendered, dropped under an active floor).
+            for candidate in episodes.candidates.iter().chain(facts.candidates.iter()) {
+                if let Some(similarity) = dense_similarity_from_distance(candidate.score) {
+                    dense_similarity.insert(candidate.node, similarity);
+                }
+            }
             rankings.push(WeightedRanking::new(profile.weights.dense, episodes));
             rankings.push(WeightedRanking::new(profile.weights.dense, facts));
             signals_run.push(Signal::Dense);
@@ -504,6 +551,13 @@ impl<E: Embedder> HybridRetriever<E> {
         // gets all of it, honestly, rather than a silent truncation of a redline.
         let core = core_block_entries(&self.store, &visible)?;
         let ranked_budget = query.limit.saturating_sub(core.len());
+        // The per-query floor wins; otherwise the deployment default applies — the same
+        // unwrap_or fallback as the fanout knob. `0.0` (the default) is OFF and select skips the
+        // lookup entirely, so the recall path stays byte-identical (P0a).
+        let min_relevance = query
+            .options
+            .min_relevance
+            .unwrap_or(self.config.min_relevance);
         let selection = select(
             &self.store,
             &query,
@@ -511,6 +565,8 @@ impl<E: Embedder> HybridRetriever<E> {
             surface_system,
             fused,
             &fact_nodes,
+            &dense_similarity,
+            min_relevance,
             ranked_budget,
         )?;
 
@@ -564,5 +620,24 @@ impl<E: Embedder> Retriever for HybridRetriever<E> {
         query: Self::Query,
     ) -> impl Future<Output = Result<Self::Bundle, Self::Error>> + Send {
         self.run(query)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::dense_similarity_from_distance;
+
+    #[test]
+    fn dense_similarity_maps_distance_and_rejects_a_nan() {
+        // distance 0 (a hit at the query) => similarity 1.0; an orthogonal distance 1 => 0.0.
+        assert_eq!(dense_similarity_from_distance(0.0), Some(1.0));
+        assert_eq!(dense_similarity_from_distance(1.0), Some(0.0));
+        // An out-of-[0,1] distance (e.g. a 1-cos convention in [0, 2], or float drift below 0)
+        // is clamped rather than escaping the band.
+        assert_eq!(dense_similarity_from_distance(2.0), Some(0.0));
+        assert_eq!(dense_similarity_from_distance(-0.25), Some(1.0));
+        // The load-bearing guard: a non-finite distance is "no dense evidence" (None), NOT a
+        // NaN similarity that would slip past the floor and render confidence="NaN".
+        assert_eq!(dense_similarity_from_distance(f64::NAN), None);
     }
 }

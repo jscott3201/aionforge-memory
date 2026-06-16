@@ -224,6 +224,13 @@ pub struct SearchToolParams {
         description = "Candidates generated per signal before fusion (recall fan-out), decoupled from limit. Higher = wider recall. Optional; omit for the deployment default, an explicit value must be >= 1. Capped server-side."
     )]
     pub fanout: Option<usize>,
+    /// Absolute relevance floor in `[0, 1]` on dense cosine similarity. Below-floor hits are
+    /// dropped, so an off-topic query may return empty. Omit for the deployment default. (A
+    /// missing `Option` field deserializes to `None`, matching the sibling `fanout` knob.)
+    #[schemars(
+        description = "Absolute relevance floor in [0,1] on dense cosine similarity; below-floor hits are dropped and an off-topic query may return empty. Omit for the deployment default (0=off)."
+    )]
+    pub min_relevance: Option<f64>,
 }
 
 /// Run the `capture` tool: stamp the event with `now`, capture it, and return a
@@ -506,6 +513,20 @@ pub async fn search_tool<E: Embedder>(
             );
         }
         query.options.fanout = fanout.min(MAX_FANOUT);
+    }
+    // The per-query absolute relevance floor on dense cosine similarity. Range-checked like the
+    // fanout knob: an out-of-range value (e.g. 2.0, or a negative) is a caller error rather than
+    // silently clamped, since omitting it already expresses "use the deployment default". A valid
+    // in-range floor drops below-floor hits, so an off-topic query may legitimately return empty
+    // (P0a).
+    if let Some(min_relevance) = params.min_relevance {
+        if !(0.0..=1.0).contains(&min_relevance) {
+            return Err(
+                "ERR_INVALID_MIN_RELEVANCE: min_relevance must be in [0,1]; omit to use the deployment default"
+                    .to_string(),
+            );
+        }
+        query.options.min_relevance = Some(min_relevance);
     }
     let bundle = memory
         .search(query)
