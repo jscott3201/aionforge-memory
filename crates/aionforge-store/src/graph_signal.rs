@@ -20,11 +20,17 @@
 //! call and dies with the session, so there is no cross-call cache to invalidate as the
 //! graph advances.
 //!
-//! ## Kind filtering and limit
-//! `algo.pagerank` takes a trailing `result_label` and `limit`: the procedure filters the
-//! scored nodes to the requested label and truncates to the top `k` by score before the rows
-//! cross back. So the ranking is exactly the top-`k` nodes of one [`SearchKind`], best-first,
-//! in a single bounded call — no full-graph transfer, no label scan, no Rust-side sort.
+//! ## Kind filtering, namespace scoping, and limit
+//! `algo.pagerank` takes trailing `result_label`, `limit`, and `result_nodes` arguments
+//! (selene-db 1.3): the procedure filters the scored nodes to the requested label, optionally
+//! intersects them with an explicit `result_nodes` set, then truncates to the top `k` by score
+//! — all before the rows cross back. The intersection runs before the truncation, so a
+//! `result_nodes` scope yields the top-`k` of the in-scope ranking, not the in-scope members of
+//! an already-truncated top-`k`. That ordering is what lets the retriever spend the graph
+//! fan-out on the reader's visible-namespace episodes rather than a cross-namespace top-`k` a
+//! post-fusion filter would mostly discard (03 §6 namespace scoping). So the ranking is exactly
+//! the top-`k` nodes of one [`SearchKind`] within an optional node scope, best-first, in a
+//! single bounded call — no full-graph transfer, no label scan, no Rust-side sort.
 
 use std::time::Instant;
 
@@ -78,14 +84,23 @@ impl Store {
         seeds: &[NodeId],
         k: usize,
     ) -> Result<Vec<SearchHit>, StoreError> {
-        self.personalized_pagerank_within(kind, seeds, k, None)
+        self.personalized_pagerank_within(kind, seeds, k, None, None)
     }
 
-    /// [`Store::personalized_pagerank`] bounded by an optional recall deadline.
+    /// [`Store::personalized_pagerank`] scoped to an optional node set and bounded by an
+    /// optional recall deadline.
     ///
-    /// `None` is identical to [`Store::personalized_pagerank`]. A `Some(deadline)` lets
-    /// the retriever abort the projection-build + PageRank `CALL`s mid-statement when
-    /// the recall budget expires — the deadline rides the single shared session.
+    /// `result_nodes` is `Some(scope)` to restrict the ranking to an explicit node set — the
+    /// reader's visible-namespace records of `kind` (03 §6 namespace scoping) — or `None` to
+    /// rank over every projection node (the unscoped fact reach). The scope is intersected
+    /// inside `algo.pagerank` *before* the top-`k` truncation, so the fan-out is spent on
+    /// in-scope nodes rather than a cross-namespace top-`k`. `Some(empty)` is the
+    /// reader-has-no-visible-record case: it short-circuits to an empty ranking rather than
+    /// building a projection only to intersect to nothing — distinct from `None`.
+    ///
+    /// A `Some(deadline)` lets the retriever abort the projection-build + PageRank `CALL`s
+    /// mid-statement when the recall budget expires — the deadline rides the single shared
+    /// session; `None` runs unbounded.
     ///
     /// # Errors
     /// Returns [`StoreError`] if a seed is not in the projection, or the projection
@@ -95,24 +110,33 @@ impl Store {
         kind: SearchKind,
         seeds: &[NodeId],
         k: usize,
+        result_nodes: Option<&[NodeId]>,
         deadline: Option<Instant>,
     ) -> Result<Vec<SearchHit>, StoreError> {
         if seeds.is_empty() || k == 0 {
             return Ok(Vec::new());
         }
+        // An explicit-but-empty scope means "no node of this kind is in scope" (the reader has
+        // no visible record), which `algo.pagerank` would intersect to an empty result anyway.
+        // Short-circuit so a no-scope reader never pays for the projection build. This is the
+        // `Some(empty)` case only — `None` (unscoped) still ranks the whole projection.
+        if matches!(result_nodes, Some(scope) if scope.is_empty()) {
+            return Ok(Vec::new());
+        }
 
         // Build the ephemeral associative projection and PageRank over it in one session
         // (the projection is session-scoped). `result_label` filters the scored nodes to the
-        // requested kind and `limit` truncates to the top `k` by score inside the procedure;
-        // the `score > 0.0` cut below then drops any node outside the seed's connected
-        // component (zero personalized mass).
+        // requested kind, `result_nodes` (when bound non-NULL) intersects them with the
+        // visible-namespace scope, and `limit` truncates to the top `k` by score inside the
+        // procedure (intersection before truncation); the `score > 0.0` cut below then drops
+        // any node outside the seed's connected component (zero personalized mass).
         let build = BoundQuery::new("CALL algo.projection_build($name, $labels, $types, NULL)")
             .bind_str("name", PROJECTION_NAME)?
             .bind("labels", string_list_value(&PROJECTION_NODE_LABELS)?)?
             .bind("types", string_list_value(&PROJECTION_EDGE_TYPES)?)?;
         let rank = BoundQuery::new(
             "CALL algo.pagerank($name, $damping, $max_iter, $tolerance, NULL, \
-             $orientation, $seeds, $result_label, $limit) YIELD node_id, score",
+             $orientation, $seeds, $result_label, $limit, $result_nodes) YIELD node_id, score",
         )
         .bind_str("name", PROJECTION_NAME)?
         .bind("damping", Value::Float(DAMPING))?
@@ -121,7 +145,8 @@ impl Store {
         .bind_str("orientation", ORIENTATION_UNDIRECTED)?
         .bind("seeds", personalization_value(seeds))?
         .bind_str("result_label", kind.label())?
-        .bind("limit", k_value(k))?;
+        .bind("limit", k_value(k))?
+        .bind("result_nodes", result_nodes_value(result_nodes))?;
 
         // PageRank filtered to `kind` and returned the top `k` best-first. Drop any node with
         // zero personalized mass (outside the seed's connected component): selene-db 1.3
@@ -134,6 +159,17 @@ impl Store {
         )?;
         hits.retain(|hit| hit.score > 0.0);
         Ok(hits)
+    }
+}
+
+/// The `result_nodes` argument `algo.pagerank` restricts its scored rows to: a `LIST<NODE>`
+/// the procedure intersects with the kind-filtered ranking *before* truncating to `limit`, so
+/// the yield is the top-`k` of the in-scope nodes. `None` binds `NULL` — the unscoped ranking
+/// over every projection node of the kind.
+fn result_nodes_value(nodes: Option<&[NodeId]>) -> Value {
+    match nodes {
+        Some(nodes) => Value::List(nodes.iter().copied().map(Value::NodeRef).collect()),
+        None => Value::Null,
     }
 }
 

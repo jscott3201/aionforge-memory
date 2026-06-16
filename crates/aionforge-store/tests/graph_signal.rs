@@ -167,6 +167,76 @@ fn undirected_pagerank_spreads_entity_seed_and_filters_by_kind() {
 }
 
 #[test]
+fn result_nodes_scopes_the_ranking_to_the_visible_set() {
+    let store = store();
+
+    // One entity with two facts ABOUT it; the seed reaches both (undirected spreading).
+    let ent = entity("aionforge");
+    let e_node = store.insert_entity(&ent).expect("insert entity");
+    let f1 = store
+        .assert_fact(
+            &fact(
+                ent.identity.id,
+                "is",
+                ObjectValue::Text("a memory substrate".to_string()),
+                "aionforge is a memory substrate",
+            ),
+            e_node,
+            &open_window("2026-06-06T09:30:00-05:00[America/Chicago]"),
+        )
+        .expect("assert fact 1");
+    let f2 = store
+        .assert_fact(
+            &fact(
+                ent.identity.id,
+                "uses",
+                ObjectValue::Text("selene".to_string()),
+                "aionforge uses selene",
+            ),
+            e_node,
+            &open_window("2026-06-06T09:31:00-05:00[America/Chicago]"),
+        )
+        .expect("assert fact 2");
+
+    // `None`: unscoped — both facts rank (the baseline this scopes down from).
+    let unscoped = store
+        .personalized_pagerank_within(SearchKind::Fact, &[e_node], 10, None, None)
+        .expect("unscoped");
+    assert_eq!(
+        nodes_of(&unscoped),
+        sorted(vec![f1, f2]),
+        "None ranks every in-projection fact the seed reaches",
+    );
+
+    // `Some(scope)`: the ranking is restricted to the scope, even with `k` large enough for
+    // both facts — so f2 is dropped purely because it is out of scope, not truncated away.
+    // (The selene layer proves the intersection runs *before* the top-k truncation:
+    // `pagerank_result_nodes_intersects_before_limit`.)
+    let scoped = store
+        .personalized_pagerank_within(SearchKind::Fact, &[e_node], 10, Some(&[f1]), None)
+        .expect("scoped to f1");
+    assert_eq!(
+        nodes_of(&scoped),
+        vec![f1],
+        "result_nodes restricts the ranking to the in-scope fact",
+    );
+    assert!(
+        scoped.iter().all(|hit| hit.score > 0.0),
+        "the in-scope fact keeps its positive personalized mass: {scoped:?}",
+    );
+
+    // `Some(empty)`: nothing is in scope (the reader has no visible record) — an empty
+    // ranking, distinct from `None`'s unscoped ranking.
+    let empty_scope = store
+        .personalized_pagerank_within(SearchKind::Fact, &[e_node], 10, Some(&[]), None)
+        .expect("empty scope");
+    assert!(
+        empty_scope.is_empty(),
+        "Some(empty) yields an empty ranking, not the unscoped one: {empty_scope:?}",
+    );
+}
+
+#[test]
 fn mass_spreads_across_support_chains_and_skips_disconnected_facts() {
     let store = store();
 
