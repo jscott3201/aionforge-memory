@@ -77,8 +77,11 @@ pub struct CaptureToolParams {
         description = "Producing role: user, assistant, tool, system, or event (default user)."
     )]
     pub role: Option<String>,
-    /// The owning session id (a UUID), if any.
-    #[schemars(description = "The owning session id (a UUID), if any.")]
+    /// The owning session id (a UUID), if any. Set it to make this capture reconstructable via
+    /// session_manifest; a sessionless capture is invisible to it.
+    #[schemars(
+        description = "The owning session id (a UUID), if any. Set it to make this capture visible to session_manifest; sessionless captures are not."
+    )]
     pub session_id: Option<String>,
     /// Writer trust in [0, 1] (default 0.5).
     #[schemars(description = "Writer trust in [0, 1] (default 0.5).")]
@@ -124,8 +127,11 @@ pub struct BatchCaptureItem {
         description = "Event time as RFC3339 (e.g. 2026-06-07T12:00:00Z); defaults to capture time."
     )]
     pub captured_at: Option<String>,
-    /// The owning session id (a UUID), if any.
-    #[schemars(description = "The owning session id (a UUID), if any.")]
+    /// The owning session id (a UUID), if any. Set it to make this item reconstructable via
+    /// session_manifest; a sessionless capture is invisible to it.
+    #[schemars(
+        description = "The owning session id (a UUID), if any. Set it to make this capture visible to session_manifest; sessionless captures are not."
+    )]
     pub session_id: Option<String>,
     /// The id of a live memory this item replaces; consolidation evidence, not an immediate
     /// action. Must be the shared writer's own memory.

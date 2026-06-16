@@ -300,7 +300,7 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
     }
 
     #[tool(
-        description = "List visible captured memories for a session as a handoff manifest.",
+        description = "List a session's visible captures as a handoff manifest; sessionless ones are excluded.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -335,7 +335,7 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
     }
 
     #[tool(
-        description = "Run bounded deterministic consolidation; mutates derived memory, so approval-gate it.",
+        description = "Run bounded deterministic consolidation (manual; derives facts only on run); approval-gate it.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
