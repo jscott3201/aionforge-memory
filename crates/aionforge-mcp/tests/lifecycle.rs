@@ -450,8 +450,12 @@ async fn verbose_consolidate_receipt_carries_the_per_stage_profile() -> TestResu
     assert!(run.contains("consolidated=1"), "{run}");
     // The existing token a downstream test pins on must survive.
     assert!(run.contains("rule_set=deterministic_defaults"), "{run}");
-    // The per-stage profile is appended (counts only), with all three extraction stages.
+    // The per-stage profile is appended (counts only), with every stage.
     assert!(run.contains(" stages="), "stages line present: {run}");
+    // The extraction stage makes the raw rule-extractor yield explicit: `considered=<episodes>`
+    // and `derived=<facts>`, so "the extractor ran but found no SVO triple" is a visible signal
+    // rather than an all-zero profile that reads as "nothing happened" (P0b clarity).
+    assert!(run.contains("extraction:enabled=true,considered="), "{run}");
     assert!(
         run.contains("resolution:enabled=true,considered="),
         "resolution profiled with counts: {run}"

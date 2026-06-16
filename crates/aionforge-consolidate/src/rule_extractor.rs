@@ -132,6 +132,15 @@ impl RuleExtractor {
     /// dependent fragments and bare pronouns into junk facts. The subject (and entity-object)
     /// of every match is now screened by [`is_plausible_subject`], and a rule whose confidence
     /// falls below [`ExtractionConfig::min_confidence`] is skipped entirely.
+    ///
+    /// By design this deterministic ruleset fires ONLY on those four explicit subject-verb-object
+    /// markers. An episode of narrative decision/design prose — the shape of most real agent
+    /// captures — carries no matching triple and derives **zero** facts; the consolidation profile
+    /// reports that honestly as `extraction:considered=N,derived=0` (P0b), distinct from a disabled
+    /// stage. That is content shape, not a gating bug (a clean SVO episode still derives its fact —
+    /// see the `svo_derives_a_fact_but_narrative_prose_does_not` control test). Extracting facts
+    /// from rich prose is a model-backed-extractor job (M4), not a looser deterministic gate —
+    /// loosening is exactly what the `is_a` removal tightened away.
     #[must_use]
     pub fn with_default_rules() -> Self {
         Self::with_default_rules_and_config(ExtractionConfig::default())

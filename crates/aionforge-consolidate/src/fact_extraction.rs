@@ -35,7 +35,8 @@ use crate::config::{DetectionConfig, ExtractionConfig, PassConfig, Summarization
 use crate::detect::{CurrentFact, detect};
 use crate::pass::{ConsolidationPass, PassContext, PassError, PassOutput, PassRun};
 use crate::profile::{
-    PassProfile, STAGE_DETECTION, STAGE_RESOLUTION, STAGE_SUMMARIZATION, StageProfile,
+    PassProfile, STAGE_DETECTION, STAGE_EXTRACTION, STAGE_RESOLUTION, STAGE_SUMMARIZATION,
+    StageProfile,
 };
 use crate::resolve::{CorefTable, Resolution, resolve_surface};
 use crate::summarize::{build_clusters, check_detail_retention, note_id};
@@ -512,6 +513,10 @@ where
         // Resolution always ran (it has no config gate); detection/summarization carry their
         // config gate so the receipt can tell a disabled stage from one that saw no input.
         let profile = PassProfile::from_stages(vec![
+            // The raw rule-extraction yield for this one episode: `considered=1` (the episode
+            // examined), `derived` the facts the SVO ruleset pulled. Makes "the extractor ran
+            // and found N facts" an explicit, content-free signal upstream of resolution.
+            StageProfile::enabled(STAGE_EXTRACTION, 1, extracted.len() as u64, 0, 0, 0),
             StageProfile::enabled(
                 STAGE_RESOLUTION,
                 resolution_candidates,
@@ -547,11 +552,15 @@ where
 }
 
 impl<X, E, S> FactExtractionPass<X, E, S> {
-    /// The all-zero stage profile for an episode that extracted nothing: resolution always
-    /// ran (it has no config gate), and detection/summarization are reported enabled-or-not
-    /// per their config so the receipt can tell a disabled stage from one that saw no input.
+    /// The stage profile for an episode the extractor examined but pulled nothing from: the
+    /// extraction stage reports `considered=1,derived=0` (so the receipt shows the episode WAS
+    /// scanned and yielded no SVO triple — narrative prose, the common case — never a silent
+    /// gap), resolution always ran (it has no config gate) but had no surfaces, and
+    /// detection/summarization are reported enabled-or-not per their config so the receipt can
+    /// tell a disabled stage from one that saw no input.
     fn empty_profile(&self) -> PassProfile {
         PassProfile::from_stages(vec![
+            StageProfile::enabled(STAGE_EXTRACTION, 1, 0, 0, 0, 0),
             StageProfile::enabled(STAGE_RESOLUTION, 0, 0, 0, 0, 0),
             self.detection_stage(0, 0, 0),
             self.summarization_stage(&SummarizationRun::default()),

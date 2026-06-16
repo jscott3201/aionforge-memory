@@ -52,8 +52,8 @@ pub use link_evolution::{
 };
 pub use pass::{ConsolidationPass, NoopPass, PassContext, PassError, PassOutput, PassRun};
 pub use profile::{
-    ConsolidationProfile, PassProfile, STAGE_DETECTION, STAGE_INDUCTION, STAGE_ORDER,
-    STAGE_RESOLUTION, STAGE_SUMMARIZATION, StageProfile,
+    ConsolidationProfile, PassProfile, STAGE_DETECTION, STAGE_EXTRACTION, STAGE_INDUCTION,
+    STAGE_ORDER, STAGE_RESOLUTION, STAGE_SUMMARIZATION, StageProfile,
 };
 pub use rule_extractor::{
     MAX_SUBJECT_CHARS, MAX_SUBJECT_TOKENS, ObjectRule, Rule, RuleExtractor, SUBJECT_BARE_PRONOUNS,

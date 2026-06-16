@@ -23,18 +23,27 @@
 
 /// The canonical stage names, in their fixed display/merge order.
 ///
-/// The order is the consolidation data-flow order — resolution feeds detection feeds
-/// summarization; induction is independent — and it is the order [`ConsolidationProfile`]
-/// renders and merges in, so a profile is deterministic regardless of pass registration
-/// order. Every stage a pass reports must be one of these names; an unknown name is summed
-/// into its own slot (so a future stage cannot silently vanish) but ordered after the known
-/// stages.
-pub const STAGE_ORDER: [&str; 4] = [
+/// The order is the consolidation data-flow order — extraction feeds resolution feeds
+/// detection feeds summarization; induction is independent — and it is the order
+/// [`ConsolidationProfile`] renders and merges in, so a profile is deterministic regardless of
+/// pass registration order. Every stage a pass reports must be one of these names; an unknown
+/// name is summed into its own slot (so a future stage cannot silently vanish) but ordered
+/// after the known stages.
+pub const STAGE_ORDER: [&str; 5] = [
+    STAGE_EXTRACTION,
     STAGE_RESOLUTION,
     STAGE_DETECTION,
     STAGE_SUMMARIZATION,
     STAGE_INDUCTION,
 ];
+
+/// The rule-extraction stage: episodes scanned by the deterministic subject-verb-object
+/// ruleset, and the raw facts it pulled. `candidates_considered` counts the episodes the
+/// extractor examined; `derived` counts the facts produced. A `considered=N,derived=0` line is
+/// the honest signal that the extractor ran over N episodes but found no matching SVO triple
+/// (narrative decision/design prose — the common real-capture case), distinct from a disabled
+/// stage, and the reason the downstream resolution/detection stages then see no input.
+pub const STAGE_EXTRACTION: &str = "extraction";
 
 /// The entity-resolution stage: surface forms resolved to canonical entities.
 pub const STAGE_RESOLUTION: &str = "resolution";
@@ -60,8 +69,12 @@ pub struct StageProfile {
     /// Whether the stage ran at all this tick. A disabled stage is reported with a `false`
     /// gate and zero counts, so "disabled" is distinguishable from "ran, saw nothing".
     pub enabled: bool,
-    /// How many candidates the stage examined (surfaces, facts, clusters, or the single
-    /// induction candidate). Zero with `enabled == true` means the stage ran but had no input.
+    /// How many candidates the stage examined (resolution surfaces, detection facts,
+    /// summarization clusters, the single induction candidate — or, for extraction, the
+    /// episodes scanned, since the extractor cannot count candidate triples without extracting).
+    /// The noun is stage-specific, so a `derived/considered` ratio is only meaningful within a
+    /// stage, not across the rendered line. Zero with `enabled == true` means the stage ran but
+    /// had no input.
     pub candidates_considered: u64,
     /// How many outputs the stage produced (entities, supersessions, notes, induced skills).
     pub derived: u64,
