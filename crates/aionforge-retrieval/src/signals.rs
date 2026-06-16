@@ -157,15 +157,19 @@ pub(crate) fn dense_ranking_for(
 }
 
 /// Rank a kind by associative proximity to seed entities, via native Personalized
-/// PageRank (03 §1 graph). Mass restarts on the `seeds` (the entities the query names)
-/// and spreads across the associative graph — `MENTIONS`/`ABOUT`/`SUPPORTS` — so the
-/// returned nodes are the `kind` instances closest to those entities. Best-first by
-/// PageRank score; rank fusion reads only the position, so the score scale never has to
-/// be reconciled with the cosine/BM25 signals.
+/// PageRank (03 §1 graph), optionally SCOPED to an explicit candidate node set. Mass
+/// restarts on the `seeds` (the entities the query names) and spreads across the associative
+/// graph — `MENTIONS`/`ABOUT`/`SUPPORTS` — so the returned nodes are the `kind` instances
+/// closest to those entities. Best-first by PageRank score; rank fusion reads only the
+/// position, so the score scale never has to be reconciled with the cosine/BM25 signals.
 ///
-/// This is the unscoped half the retriever uses for episodes; the fact side is
-/// current-scoped by the retriever before fusion (a PageRank reach is not bounded to the
-/// current-support set the way the lexical/dense fact searches are).
+/// `result_nodes` is `Some(scope)` to restrict the ranking to the reader's visible-namespace
+/// records of `kind` (the episode side, 03 §6 namespace scoping): the scope intersects inside
+/// the procedure before the top-`k` truncation, so the graph fan-out lands on in-scope
+/// episodes instead of a cross-namespace top-`k` that `select` would mostly discard. `None`
+/// ranks over the whole projection (the fact side, which the retriever current-scopes after
+/// fusion — a PageRank reach is not bounded to the current-support set the way the
+/// lexical/dense fact searches are).
 ///
 /// # Errors
 /// Returns [`RetrievalError`] if the PageRank call fails.
@@ -174,11 +178,12 @@ pub(crate) fn graph_ranking_for(
     kind: SearchKind,
     seeds: &[NodeId],
     k: usize,
+    result_nodes: Option<&[NodeId]>,
     deadline: Option<Instant>,
 ) -> Result<SignalRanking, RetrievalError> {
     Ok(ranking_from_hits(
         Signal::Graph,
-        store.personalized_pagerank_within(kind, seeds, k, deadline)?,
+        store.personalized_pagerank_within(kind, seeds, k, result_nodes, deadline)?,
     ))
 }
 

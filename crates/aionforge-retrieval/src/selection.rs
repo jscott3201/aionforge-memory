@@ -373,7 +373,10 @@ pub(crate) fn fact_graph_ranking(
     k: usize,
     deadline: Option<Instant>,
 ) -> Result<SignalRanking, RetrievalError> {
-    let hits = store.personalized_pagerank_within(SearchKind::Fact, seeds, k, deadline)?;
+    // Facts rank over the whole projection (`result_nodes` = `None`): the graph fact reach is
+    // bounded to the live support set by the `current` intersection below, not by a visible-
+    // namespace node scope the way the episode side is.
+    let hits = store.personalized_pagerank_within(SearchKind::Fact, seeds, k, None, deadline)?;
     let hits = match current {
         Some(members) => {
             let set: HashSet<NodeId> = members.iter().copied().collect();

@@ -187,11 +187,11 @@ impl<E: Embedder> HybridRetriever<E> {
                 base
             }
         };
-        // Every episode in a visible namespace, by id — the scope the episode lexical/dense
-        // signals generate candidates over. The per-signal fan-out then caps how many of
-        // these each signal ranks, spent entirely on episodes the reader may see. (The graph
-        // episode signal is not yet scoped — a tracked follow-up — but its post-fusion filter
-        // still bounds it to the visible set.)
+        // Every episode in a visible namespace, by id — the scope the episode lexical, dense,
+        // and graph signals generate candidates over. The per-signal fan-out then caps how many
+        // of these each signal ranks, spent entirely on episodes the reader may see. The graph
+        // episode signal scopes through `algo.pagerank`'s `result_nodes` (intersect before
+        // truncate), so it no longer leans on the post-fusion filter in `select` to bound it.
         let episode_scope = self
             .store
             .episode_nodes_in_namespaces(&visible.namespaces())?;
@@ -372,8 +372,17 @@ impl<E: Embedder> HybridRetriever<E> {
                 resolve_seed_entities(&self.store, &query.text, query_embedding.as_ref())?
         {
             let _signal_span = trace::signal_span(Signal::Graph, fanout).entered();
-            let episodes =
-                graph_ranking_for(&self.store, SearchKind::Episode, &seeds, fanout, deadline)?;
+            // Scope the episode graph ranking to the reader's visible namespaces via
+            // `result_nodes`, the same `episode_scope` the lexical/dense episode signals use,
+            // so the graph fan-out is spent on in-scope episodes (03 §6).
+            let episodes = graph_ranking_for(
+                &self.store,
+                SearchKind::Episode,
+                &seeds,
+                fanout,
+                Some(&episode_scope),
+                deadline,
+            )?;
             let facts = fact_graph_ranking(
                 &self.store,
                 &seeds,
