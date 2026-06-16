@@ -58,7 +58,9 @@ pub use aionforge_domain::contracts::{Capture, Embedder, ProceduralMemory, Retri
 pub use aionforge_domain::embedding::{EmbedderModel, Embedding};
 pub use aionforge_domain::ids::{ContentHash, Id, SerializationId};
 pub use aionforge_domain::namespace::Namespace;
-pub use aionforge_domain::nodes::agent::{Agent, AgentStatus, Session, TrustCategory, TrustScores};
+pub use aionforge_domain::nodes::agent::{
+    Agent, AgentStatus, MemSession, TrustCategory, TrustScores,
+};
 pub use aionforge_domain::nodes::associative::Note;
 pub use aionforge_domain::nodes::core::{BlockKind, CoreBlock};
 pub use aionforge_domain::nodes::episodic::{ConsolidationState, Episode, Origin, Redaction, Role};

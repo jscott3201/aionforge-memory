@@ -81,8 +81,12 @@ impl Agent {
 /// Episodes and facts link to it via `IN_SESSION` for session-scoped retrieval and
 /// session-diversity. Carries [`Timestamp`] and open JSON, so it derives
 /// `PartialEq` only.
+///
+/// Named `MemSession`, not `Session`, because `SESSION` is a reserved keyword in
+/// selene-db's GQL grammar (1.3+) — a `:Session` label fails to parse in DDL/`MATCH`.
+/// The label string ([`MemSession::LABEL`]) is `"MemSession"` for the same reason.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Session {
+pub struct MemSession {
     /// Shared identity block (reduced: no stats).
     pub identity: Identity,
     /// When the session began.
@@ -95,7 +99,8 @@ pub struct Session {
     pub metadata: serde_json::Value,
 }
 
-impl Session {
-    /// The selene-db node label for this kind.
-    pub const LABEL: &str = "Session";
+impl MemSession {
+    /// The selene-db node label for this kind. `"MemSession"` rather than `"Session"`:
+    /// `SESSION` is a reserved GQL keyword in selene-db 1.3+, so `:Session` will not parse.
+    pub const LABEL: &str = "MemSession";
 }

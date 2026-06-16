@@ -129,7 +129,7 @@ pub(crate) const SCALAR_INDEXES: &[(&str, &str, TypedIndexKind)] = &[
     ("CoreBlock", "block_kind", TypedIndexKind::String),
     ("Agent", "id", TypedIndexKind::Uuid),
     ("Agent", "status", TypedIndexKind::String),
-    ("Session", "owner_agent_id", TypedIndexKind::Uuid),
+    ("MemSession", "owner_agent_id", TypedIndexKind::Uuid),
     ("ProvenanceRecord", "subject_id", TypedIndexKind::Uuid),
     ("ProvenanceRecord", "writer_agent_id", TypedIndexKind::Uuid),
     ("AuditEvent", "id", TypedIndexKind::Uuid),

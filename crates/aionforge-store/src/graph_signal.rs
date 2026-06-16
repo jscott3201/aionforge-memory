@@ -104,16 +104,15 @@ impl Store {
         // Build the ephemeral associative projection and PageRank over it in one session
         // (the projection is session-scoped). `result_label` filters the scored nodes to the
         // requested kind and `limit` truncates to the top `k` by score inside the procedure;
-        // the `WHERE score > 0.0` yield-filter then drops any node outside the seed's
-        // connected component (zero personalized mass).
+        // the `score > 0.0` cut below then drops any node outside the seed's connected
+        // component (zero personalized mass).
         let build = BoundQuery::new("CALL algo.projection_build($name, $labels, $types, NULL)")
             .bind_str("name", PROJECTION_NAME)?
             .bind("labels", string_list_value(&PROJECTION_NODE_LABELS)?)?
             .bind("types", string_list_value(&PROJECTION_EDGE_TYPES)?)?;
         let rank = BoundQuery::new(
             "CALL algo.pagerank($name, $damping, $max_iter, $tolerance, NULL, \
-             $orientation, $seeds, $result_label, $limit) YIELD node_id, score \
-             WHERE score > 0.0",
+             $orientation, $seeds, $result_label, $limit) YIELD node_id, score",
         )
         .bind_str("name", PROJECTION_NAME)?
         .bind("damping", Value::Float(DAMPING))?
@@ -124,12 +123,17 @@ impl Store {
         .bind_str("result_label", kind.label())?
         .bind("limit", k_value(k))?;
 
-        // PageRank already filtered to `kind` and returned the top `k` best-first, so the
-        // yielded rows are the ranking — no Rust-side label intersection, sort, or truncate.
-        extract_hits(
+        // PageRank filtered to `kind` and returned the top `k` best-first. Drop any node with
+        // zero personalized mass (outside the seed's connected component): selene-db 1.3
+        // removed the inline `CALL ... YIELD ... WHERE` shortcut, so this `score > 0.0` cut is
+        // applied here instead of in the query. Rows arrive best-first and a zero-mass node can
+        // only sort last, so the retained prefix is still the ranking — a filter, not a re-sort.
+        let mut hits = extract_hits(
             self.execute_session_within(&[build, rank], deadline)?,
             "score",
-        )
+        )?;
+        hits.retain(|hit| hit.score > 0.0);
+        Ok(hits)
     }
 }
 
