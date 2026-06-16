@@ -21,6 +21,8 @@ use aionforge_domain::edges::About;
 use aionforge_domain::embedding::{EmbedderModel, Embedding};
 use aionforge_domain::ids::Id;
 use aionforge_domain::namespace::Namespace;
+use aionforge_domain::nodes::core::{BlockKind, CoreBlock};
+use aionforge_domain::nodes::forensic::{AuditEvent, AuditKind};
 use aionforge_domain::nodes::semantic::{Entity, Fact, FactStatus};
 use aionforge_domain::time::{BiTemporal, Timestamp};
 use aionforge_domain::value::ObjectValue;
@@ -449,6 +451,47 @@ fn floor_store() -> Arc<Store> {
     store
 }
 
+/// Seed one LIVE core block (identity pre-pass material, 05 §4) under `Namespace::Global`,
+/// which is in every reader's visible set — `recall_floored` mints a fresh agent principal per
+/// call, so an agent-scoped block would not be visible. The block has no embedding: the pre-pass
+/// includes it by identity, not by relevance, so the `min_relevance` floor never applies to it.
+fn seed_core_block(store: &Store, content: &str, kind: BlockKind) -> Id {
+    let id = Id::generate();
+    let block = CoreBlock {
+        identity: Identity {
+            id,
+            ingested_at: ts(T0),
+            namespace: Namespace::Global,
+            expired_at: None,
+        },
+        stats: stats(),
+        content: content.to_string(),
+        block_kind: kind,
+        sensitivity: None,
+        drift_baseline: None,
+        embedding: None,
+        embedder_model: None,
+    };
+    let audit = AuditEvent {
+        identity: Identity {
+            id: Id::generate(),
+            ingested_at: ts(T0),
+            namespace: Namespace::Global,
+            expired_at: None,
+        },
+        kind: AuditKind::CoreEdit,
+        subject_id: id,
+        actor_id: Id::generate(),
+        payload: serde_json::json!({"outcome": "created"}),
+        signature: String::new(),
+        occurred_at: ts(T0),
+    };
+    store
+        .create_core_block(&block, &audit)
+        .expect("create core block");
+    id
+}
+
 /// Recall in History mode (a plain global ANN pass, no entity seeding) with a wide fan-out
 /// and limit so both facts are well inside the considered pool — the only variable under
 /// test is the per-query `min_relevance` floor.
@@ -526,6 +569,51 @@ async fn an_active_min_relevance_floor_can_empty_an_off_topic_recall() {
             .iter()
             .any(|e| matches!(e, StructuredEntry::Fact(_))),
         "an off-topic query under an active floor returns no facts: {}",
+        bundle.rendered,
+    );
+}
+
+#[tokio::test]
+async fn a_floor_that_empties_the_ranked_tier_still_surfaces_core_blocks() {
+    // The companion to the empty-recall case above, and a refactor guard for the layering that
+    // makes it safe: the floor only filters the fused ranked pool inside select(), while core /
+    // identity blocks are assembled separately and prepended (retriever.rs:
+    // `structured = core; structured.extend(selection.entries)`). So an off-topic query under an
+    // active floor empties the RANKED tier yet must still surface every live core block. A future
+    // refactor that moved the floor upstream of core assembly would silently drop identity blocks;
+    // this test fails loudly instead.
+    let store = floor_store();
+    seed_core_block(&store, "always honor the redline", BlockKind::Redline);
+    let r = retriever(
+        store,
+        FakeEmbedder::new(&[("offtopic", [0.0, 0.0, 1.0, 0.0])]),
+    );
+    let bundle = recall_floored(&r, "offtopic", Some(0.5)).await;
+
+    // The ranked tier is empty — the orthogonal query clamps every fact to ~0.0, below the floor.
+    assert!(
+        !bundle
+            .structured
+            .iter()
+            .any(|e| matches!(e, StructuredEntry::Fact(_))),
+        "the off-topic floor empties the ranked tier: {}",
+        bundle.rendered,
+    );
+    // ...but the identity prefix survives: the floor cannot reach a core block.
+    assert!(
+        bundle
+            .structured
+            .iter()
+            .any(|e| matches!(e, StructuredEntry::CoreBlock(_))),
+        "a core block survives a floor that empties the ranked tier: {}",
+        bundle.rendered,
+    );
+    assert!(
+        bundle
+            .rendered
+            .contains("kind=\"core\" block_kind=\"redline\"")
+            && bundle.rendered.contains("always honor the redline"),
+        "the surviving core block renders in the bundle: {}",
         bundle.rendered,
     );
 }
