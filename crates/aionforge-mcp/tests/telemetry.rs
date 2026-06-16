@@ -107,6 +107,7 @@ fn search_params(query: &str, agent: Id) -> SearchToolParams {
         verbose: None,
         include_superseded: None,
         fanout: None,
+        min_relevance: None,
     }
 }
 

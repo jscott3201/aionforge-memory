@@ -126,6 +126,14 @@ pub struct RecallOptions {
     /// episode view that hides replaced raw captures while keeping derived fact history
     /// governed by [`TemporalMode`].
     pub include_superseded: bool,
+    /// An OPT-IN absolute relevance floor in `[0, 1]` on the dense cosine similarity: a hit
+    /// whose similarity is below the floor — or which has no dense score at all (a
+    /// lexical/BM25-only hit) — is dropped, so an unrelated query may legitimately return
+    /// empty (P0a). `None` (the default) falls back to the retriever's configured
+    /// `min_relevance`, mirroring the `fanout == 0` sentinel; the config default is `0.0`
+    /// (off), which leaves recall byte-identical. The floor is defined only against the
+    /// dense proxy — the one absolute relevance signal in the pipeline.
+    pub min_relevance: Option<f64>,
 }
 
 impl Default for RecallOptions {
@@ -141,6 +149,7 @@ impl Default for RecallOptions {
             now: None,
             include_system: false,
             include_superseded: true,
+            min_relevance: None,
         }
     }
 }

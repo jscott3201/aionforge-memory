@@ -162,7 +162,9 @@ impl Default for EmbedderConfig {
 }
 
 /// Retrieval defaults.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+// No `Eq`: `min_relevance` is an `f64` (the absolute relevance floor), which only implements
+// `PartialEq` — matching the other float-bearing config structs in this file.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RetrievalConfig {
     /// Default per-signal candidate fan-out when a query does not set its own (the host
@@ -186,6 +188,15 @@ pub struct RetrievalConfig {
     /// default ensures a pathological scope (a large team namespace) aborts the recall rather
     /// than running it open-ended (03 §6, §8).
     pub recall_deadline_ms: u64,
+    /// An OPT-IN absolute relevance floor in `[0.0, 1.0]` on the dense cosine similarity (the
+    /// host maps this to `RetrieverConfig::min_relevance`). `0.0` (the default) is OFF: the
+    /// floor never fires and recall is byte-identical. When positive, a hit whose dense
+    /// similarity falls below the floor — or which has no dense score at all (a
+    /// lexical/BM25-only hit) — is dropped, so an all-below-floor query may legitimately
+    /// return an empty bundle (the honest off-topic answer). A per-query MCP `min_relevance`
+    /// overrides this. Validated to `[0.0, 1.0]` so a typo (e.g. `50` meaning 50%) fails
+    /// loudly rather than silently emptying recall.
+    pub min_relevance: f64,
 }
 
 impl Default for RetrievalConfig {
@@ -202,6 +213,9 @@ impl Default for RetrievalConfig {
             // trips a healthy query, but it bounds the scoped scans on a busy store so a recall
             // cannot run open-ended. Set 0 to disable.
             recall_deadline_ms: 5_000,
+            // OFF by default: the absolute relevance floor never fires, so recall is
+            // byte-identical to a pre-P0a one. Raise it in [0.0, 1.0] to drop off-topic hits.
+            min_relevance: 0.0,
         }
     }
 }
@@ -560,6 +574,16 @@ impl Config {
             return Err(ConfigError::invalid(
                 "retrieval.fusion_constant",
                 "must be greater than zero",
+            ));
+        }
+        // The absolute relevance floor is a fraction of the dense cosine similarity in [0, 1];
+        // a value outside that range is almost certainly a typo (e.g. 50 meaning 50%) that would
+        // silently empty every recall, so it is rejected loudly. The `!(…)` form also rejects a
+        // NaN, which fails every ordered comparison.
+        if !(0.0..=1.0).contains(&self.retrieval.min_relevance) {
+            return Err(ConfigError::invalid(
+                "retrieval.min_relevance",
+                "must be in the range [0.0, 1.0]",
             ));
         }
         // The skew window is validated unconditionally: signed writes and promotion gate

@@ -77,6 +77,7 @@ async fn search_telemetry(
             verbose: None,
             include_superseded: None,
             fanout,
+            min_relevance: None,
         },
         &now(),
         None,
@@ -161,6 +162,7 @@ async fn search_tool_rejects_explicit_zero_fanout() {
             verbose: None,
             include_superseded: None,
             fanout: Some(0),
+            min_relevance: None,
         },
         &now(),
         None,
@@ -180,5 +182,62 @@ async fn search_tool_rejects_explicit_zero_fanout() {
         considered >= 4,
         "omitting fanout uses the deployment default and still considers the in-scope pool: \
          considered={considered}"
+    );
+}
+
+/// Build search params for "telemetry" as `agent` with an explicit `min_relevance`.
+fn search_params_with_floor(agent: &Id, min_relevance: Option<f64>) -> SearchToolParams {
+    SearchToolParams {
+        query: "telemetry".to_string(),
+        viewer: Some(format!("agent:{agent}")),
+        principal: None,
+        teams: Vec::new(),
+        limit: Some(3),
+        verbose: None,
+        include_superseded: None,
+        fanout: None,
+        min_relevance,
+    }
+}
+
+#[tokio::test]
+async fn search_rejects_out_of_range_min_relevance() {
+    let memory = memory();
+    let agent = Id::generate();
+    capture_many_matching(&memory, &agent, 4).await;
+
+    // An out-of-range floor is a caller error, not a silently-clamped value: omitting
+    // `min_relevance` already maps to the deployment default, so `2.0` (or a negative) must be
+    // rejected with a typed error rather than quietly emptying every recall (P0a). Mirrors the
+    // fanout==0 rejection.
+    let err = search_tool(
+        &memory,
+        search_params_with_floor(&agent, Some(2.0)),
+        &now(),
+        None,
+        AuthEnabled(false),
+    )
+    .await
+    .expect_err("an out-of-range min_relevance must be rejected");
+    assert!(
+        err.starts_with("ERR_INVALID_MIN_RELEVANCE"),
+        "min_relevance=2.0 returns a typed validation error: {err}"
+    );
+
+    // An in-range floor of 0.0 (off) succeeds and behaves like omitting it: the fake embedder
+    // ties every dense score, so a 0.0 floor never drops a hit and the in-scope pool is intact.
+    let out = search_tool(
+        &memory,
+        search_params_with_floor(&agent, Some(0.0)),
+        &now(),
+        None,
+        AuthEnabled(false),
+    )
+    .await
+    .expect("an in-range floor of 0.0 is accepted");
+    let (_, considered) = summary_counts(&out);
+    assert!(
+        considered >= 4,
+        "a 0.0 floor leaves recall byte-identical to the default: considered={considered}"
     );
 }

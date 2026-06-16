@@ -166,6 +166,47 @@ fn an_embedder_timeout_must_be_within_bounds() {
 }
 
 #[test]
+fn a_min_relevance_outside_the_unit_interval_is_rejected() {
+    // The absolute relevance floor is a fraction of the dense cosine similarity in [0, 1]; an
+    // out-of-range value is almost certainly a typo (e.g. 50 meaning 50%) that would silently
+    // empty every recall, so it must fail loudly rather than degrade recall in production.
+    let mut config = Config::default();
+    config.retrieval.min_relevance = 1.5;
+    assert!(
+        matches!(config.validate(), Err(ConfigError::Invalid { key, .. }) if key == "retrieval.min_relevance"),
+        "a floor above 1.0 is rejected"
+    );
+
+    let mut config = Config::default();
+    config.retrieval.min_relevance = -0.1;
+    assert!(
+        matches!(config.validate(), Err(ConfigError::Invalid { key, .. }) if key == "retrieval.min_relevance"),
+        "a negative floor is rejected"
+    );
+
+    // A NaN is rejected too — `!(0.0..=1.0).contains(&NaN)` is true, so the `!(…)` guard catches
+    // it (every ordered comparison against NaN is false). The validate() comment claims this.
+    let mut config = Config::default();
+    config.retrieval.min_relevance = f64::NAN;
+    assert!(
+        matches!(config.validate(), Err(ConfigError::Invalid { key, .. }) if key == "retrieval.min_relevance"),
+        "a NaN floor is rejected"
+    );
+
+    // The unit-interval endpoints are both valid, and the default is 0.0 (the floor is off).
+    for value in [0.0, 1.0] {
+        let mut config = Config::default();
+        config.retrieval.min_relevance = value;
+        config.validate().expect("an in-range floor validates");
+    }
+    assert_eq!(
+        Config::default().retrieval.min_relevance,
+        0.0,
+        "the default floor is off"
+    );
+}
+
+#[test]
 fn an_enabled_embedder_requires_an_endpoint_and_model() {
     let mut config = Config::default();
     config.embedder.enabled = true;

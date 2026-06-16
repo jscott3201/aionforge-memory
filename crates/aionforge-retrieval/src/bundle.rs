@@ -69,6 +69,12 @@ pub struct EpisodeEntry {
     pub trust: f64,
     /// The fused RRF score.
     pub score: f64,
+    /// The absolute dense cosine similarity `(1.0 - distance).clamp(0.0, 1.0)` for this
+    /// hit — an honest, per-(query, memory) relevance proxy that does not depend on the
+    /// per-response maximum (unlike the relative `score`/`score_band`). `None` for a
+    /// lexical/BM25-only hit the dense pass never ranked: absence is the honest "no dense
+    /// evidence" signal, never a fabricated confidence (P0a).
+    pub dense_similarity: Option<f64>,
     /// The per-signal contributions that ranked it.
     pub contributions: Vec<Contribution>,
     /// The episode content.
@@ -96,6 +102,12 @@ pub struct FactEntry {
     pub trust: f64,
     /// The fused RRF score.
     pub score: f64,
+    /// The absolute dense cosine similarity `(1.0 - distance).clamp(0.0, 1.0)` for this
+    /// hit — an honest, per-(query, memory) relevance proxy independent of the
+    /// per-response maximum. `None` for a lexical/BM25-only hit the dense pass never
+    /// ranked: absence is the honest "no dense evidence" signal, never a fabricated
+    /// confidence (P0a).
+    pub dense_similarity: Option<f64>,
     /// The per-signal contributions that ranked it.
     pub contributions: Vec<Contribution>,
     /// The canonical natural-language rendering — the searchable, rendered text.
@@ -185,6 +197,19 @@ impl StructuredEntry {
             StructuredEntry::Episode(e) => e.score,
             StructuredEntry::Fact(f) => f.score,
             StructuredEntry::CoreBlock(_) => 0.0,
+        }
+    }
+
+    /// The absolute dense cosine similarity for the entry — the honest, per-(query,
+    /// memory) relevance proxy `(1.0 - distance).clamp(0.0, 1.0)`. `None` for a
+    /// lexical/BM25-only hit (no dense score) and for a core block (never ranked), so the
+    /// compact view can omit the confidence attrs rather than fabricate one (P0a).
+    #[must_use]
+    pub fn dense_similarity(&self) -> Option<f64> {
+        match self {
+            StructuredEntry::Episode(e) => e.dense_similarity,
+            StructuredEntry::Fact(f) => f.dense_similarity,
+            StructuredEntry::CoreBlock(_) => None,
         }
     }
 
@@ -357,6 +382,18 @@ impl RecallBundle {
                     score_band(entry.score(), max_ranked_score),
                 )),
             }
+            // The absolute confidence rides immediately after the RELATIVE score band, so a
+            // reader sees both the rank-relative band AND the honest per-(query, memory) dense
+            // similarity together (P0a). Omitted entirely for a lexical/BM25-only hit (no dense
+            // score) and for a core block — absence is the honest "no dense evidence" signal,
+            // never a fabricated confidence. Pure function of stored f64s at fixed precision, so
+            // the rendered bytes stay deterministic.
+            if let Some(similarity) = entry.dense_similarity() {
+                out.push_str(&format!(
+                    " confidence=\"{similarity:.4}\" confidence_band=\"{}\"",
+                    confidence_band(similarity),
+                ));
+            }
             if verbose {
                 let via = entry
                     .contributions()
@@ -458,6 +495,34 @@ fn score_band(score: f64, max_score: f64) -> &'static str {
     if ratio >= 0.85 {
         "high"
     } else if ratio >= 0.50 {
+        "medium"
+    } else {
+        "low"
+    }
+}
+
+/// The dense-cosine-similarity floor for a `high` absolute-confidence band. Calibrated
+/// for the gemini/normalized-cosine regime (3072-d L2-normalized): on-topic matches
+/// cluster ~0.6-0.85, so a conservative `>= 0.62` keeps `high` meaning genuinely
+/// on-topic. A coarse band, not a tuned cutoff — isolated as a named const so retuning to
+/// an empirically measured separation is a one-line change (P0a).
+const CONFIDENCE_HIGH: f64 = 0.62;
+
+/// The dense-cosine-similarity floor for a `medium` absolute-confidence band. Loosely
+/// related content clusters ~0.45-0.6; below `0.45` is off-topic (clamped toward 0) and
+/// reads as `low`. See [`CONFIDENCE_HIGH`] for the calibration rationale.
+const CONFIDENCE_MEDIUM: f64 = 0.45;
+
+/// The coarse ABSOLUTE confidence band for a dense cosine `similarity` in `[0, 1]`.
+///
+/// Unlike [`score_band`], which is relative to this response's top-ranked hit, this maps
+/// the raw per-(query, memory) cosine similarity to a fixed band that is stable across
+/// queries — so an off-topic hit reads `low` even when it is the best in a thin result
+/// (the P0a honesty fix).
+fn confidence_band(similarity: f64) -> &'static str {
+    if similarity >= CONFIDENCE_HIGH {
+        "high"
+    } else if similarity >= CONFIDENCE_MEDIUM {
         "medium"
     } else {
         "low"
@@ -602,6 +667,7 @@ mod tests {
             superseded_by: None,
             trust: 0.8,
             score: 1.0,
+            dense_similarity: Some(0.78),
             contributions: vec![
                 Contribution {
                     signal: Signal::Lexical,
@@ -679,6 +745,70 @@ mod tests {
         assert_eq!(score_band(0.49, 1.0), "low");
         assert_eq!(score_band(0.0, 1.0), "low");
         assert_eq!(score_band(1.0, 0.0), "low");
+    }
+
+    #[test]
+    fn confidence_band_thresholds_are_absolute() {
+        // The counterpart to `score_bands_are_relative_to_the_top_ranked_hit`: these cutoffs
+        // are a fixed function of the raw dense cosine similarity, independent of any
+        // per-response maximum — proving the two bands are distinct mechanisms (P0a).
+        assert_eq!(confidence_band(0.62), "high");
+        assert_eq!(
+            confidence_band(0.61),
+            "medium",
+            "just below the high cutoff"
+        );
+        assert_eq!(confidence_band(0.45), "medium");
+        assert_eq!(confidence_band(0.44), "low");
+        assert_eq!(confidence_band(0.0), "low");
+        assert_eq!(confidence_band(1.0), "high");
+        // Defensive: a non-finite similarity never reaches here (the retriever drops a
+        // non-finite distance to None), but if one did, every `>=` is false so it reads as the
+        // least-confident band rather than panicking or mislabeling.
+        assert_eq!(confidence_band(f64::NAN), "low");
+    }
+
+    #[test]
+    fn compact_emits_absolute_confidence_alongside_relative_band() {
+        // The fixture episode carries dense_similarity = Some(0.78) and is the sole (top)
+        // ranked hit, so its relative band is `high`. The absolute confidence must render
+        // ALONGSIDE the relative band — they coexist on the same memory line (P0a).
+        let bundle = compact_test_bundle();
+        let rendered = bundle.render_compact(false);
+        assert!(
+            rendered.contains("score_band=\"high\""),
+            "the relative band is preserved: {rendered}"
+        );
+        assert!(
+            rendered.contains("confidence=\"0.7800\" confidence_band=\"high\""),
+            "the absolute dense confidence renders next to the relative band: {rendered}"
+        );
+    }
+
+    #[test]
+    fn compact_omits_confidence_for_lexical_only_hit() {
+        // A lexical/BM25-only hit (no dense score) must NOT be fabricated a confidence: the
+        // confidence attrs are omitted entirely, while the relative score_band still renders
+        // so the line is never bare (P0a honesty contract).
+        let mut bundle = compact_test_bundle();
+        let StructuredEntry::Episode(entry) = &mut bundle.structured[0] else {
+            panic!("fixture episode");
+        };
+        entry.dense_similarity = None;
+
+        let rendered = bundle.render_compact(false);
+        assert!(
+            !rendered.contains("confidence="),
+            "a lexical-only hit gets no fabricated confidence: {rendered}"
+        );
+        assert!(
+            !rendered.contains("confidence_band="),
+            "a lexical-only hit gets no fabricated confidence band: {rendered}"
+        );
+        assert!(
+            rendered.contains("score_band="),
+            "the relative band still renders so the line is never bare: {rendered}"
+        );
     }
 
     #[test]

@@ -117,6 +117,7 @@ pub(crate) fn effective_fanout(query: &RecallQuery, config: &RetrieverConfig) ->
 /// resolved as an episode. The session-diversity cap is an episode notion — it
 /// demotes a conversation that dominates the bundle — so facts, which have no
 /// session, always go straight to the primary set in fused order.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn select(
     store: &Store,
     query: &RecallQuery,
@@ -124,6 +125,8 @@ pub(crate) fn select(
     surface_system: bool,
     fused: Vec<FusedCandidate>,
     fact_nodes: &HashSet<NodeId>,
+    dense_similarity: &HashMap<NodeId, f64>,
+    min_relevance: f64,
     limit: usize,
 ) -> Result<Selection, RetrievalError> {
     if limit == 0 {
@@ -139,6 +142,22 @@ pub(crate) fn select(
     let mut episode_ids = Vec::new();
 
     for candidate in fused {
+        // The opt-in absolute relevance floor (P0a): when active, a candidate must have an
+        // honest dense similarity at or above the floor to be admitted. A lexical/BM25-only hit
+        // (absent from the dense map) has no absolute relevance proxy, so it is dropped under an
+        // active floor — the floor is defined only against the dense signal. `min_relevance == 0.0`
+        // (the default) skips the lookup entirely, so the default path is byte-identical and an
+        // unrelated query can now legitimately return empty (the bundle's considered/returned gap
+        // then explains the attrition honestly).
+        if min_relevance > 0.0
+            && dense_similarity
+                .get(&candidate.node)
+                .copied()
+                .unwrap_or(0.0)
+                < min_relevance
+        {
+            continue;
+        }
         if fact_nodes.contains(&candidate.node) {
             resolved.push(ResolvedCandidate::Fact(candidate));
             continue;
@@ -164,7 +183,9 @@ pub(crate) fn select(
         }
         match candidate {
             ResolvedCandidate::Fact(candidate) => {
-                let Some(entry) = resolve_fact(store, query, visible, &candidate)? else {
+                let similarity = dense_similarity.get(&candidate.node).copied();
+                let Some(entry) = resolve_fact(store, query, visible, &candidate, similarity)?
+                else {
                     continue;
                 };
                 primary.push(entry);
@@ -175,8 +196,13 @@ pub(crate) fn select(
                 if !query.options.include_superseded && replacement.is_some() {
                     continue;
                 }
-                let entry =
-                    StructuredEntry::Episode(episode_entry(&episode, &candidate, replacement));
+                let similarity = dense_similarity.get(&candidate.node).copied();
+                let entry = StructuredEntry::Episode(episode_entry(
+                    &episode,
+                    &candidate,
+                    replacement,
+                    similarity,
+                ));
                 let session = episode.session_id.as_ref().map(|id| id.to_string());
                 let seen = per_session.entry(session).or_insert(0);
                 if cap == 0 || *seen < cap {
@@ -466,6 +492,7 @@ fn episode_entry(
     episode: &Episode,
     candidate: &FusedCandidate,
     superseded_by: Option<aionforge_domain::ids::Id>,
+    dense_similarity: Option<f64>,
 ) -> EpisodeEntry {
     EpisodeEntry {
         id: episode.identity.id,
@@ -481,6 +508,7 @@ fn episode_entry(
         superseded_by,
         trust: episode.stats.trust,
         score: candidate.score,
+        dense_similarity,
         contributions: candidate.contributions.clone(),
         content: episode.content.clone(),
     }
@@ -507,7 +535,12 @@ fn core_block_entry(block: &CoreBlock) -> CoreBlockEntry {
     }
 }
 
-fn fact_entry(fact: &Fact, about: &About, candidate: &FusedCandidate) -> FactEntry {
+fn fact_entry(
+    fact: &Fact,
+    about: &About,
+    candidate: &FusedCandidate,
+    dense_similarity: Option<f64>,
+) -> FactEntry {
     FactEntry {
         id: fact.identity.id,
         serialization_id: fact_serialization_id(fact),
@@ -518,6 +551,7 @@ fn fact_entry(fact: &Fact, about: &About, candidate: &FusedCandidate) -> FactEnt
         status: fact.status,
         trust: fact.stats.trust,
         score: candidate.score,
+        dense_similarity,
         contributions: candidate.contributions.clone(),
         statement: fact.statement.clone(),
         ingested_at: about.temporal.ingested_at.clone(),
@@ -535,6 +569,7 @@ fn resolve_fact(
     query: &RecallQuery,
     visible: &VisibleSet,
     candidate: &FusedCandidate,
+    dense_similarity: Option<f64>,
 ) -> Result<Option<StructuredEntry>, RetrievalError> {
     let Some(fact) = store.fact_by_node_id(candidate.node)? else {
         return Ok(None);
@@ -561,6 +596,9 @@ fn resolve_fact(
         return Ok(None);
     }
     Ok(Some(StructuredEntry::Fact(fact_entry(
-        &fact, &about, candidate,
+        &fact,
+        &about,
+        candidate,
+        dense_similarity,
     ))))
 }

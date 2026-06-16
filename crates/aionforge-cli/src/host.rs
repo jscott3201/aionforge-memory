@@ -226,6 +226,9 @@ fn retriever_config(config: &Config) -> RetrieverConfig {
         // any positive value becomes the wall-clock ceiling for a deadline-less query.
         default_recall_budget: (config.retrieval.recall_deadline_ms > 0)
             .then(|| Duration::from_millis(config.retrieval.recall_deadline_ms)),
+        // The opt-in absolute dense-cosine relevance floor; 0.0 (the default) is off, leaving
+        // recall byte-identical (P0a). The user-facing range is validated in config.
+        min_relevance: config.retrieval.min_relevance,
         ..RetrieverConfig::default()
     }
 }
