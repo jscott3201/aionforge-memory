@@ -246,6 +246,13 @@ async fn recall(r: &HybridRetriever<FakeEmbedder>, class: QueryClass) -> RecallB
         options: RecallOptions {
             mode_override: Some(class),
             fanout: 20,
+            // Isolate the trust re-rank from the factual class's default dense floor
+            // (router `FACTUAL_FLOOR`). These hermetic facts share one NEAR vector, and the
+            // last-created climber can fall outside the dense ANN's returned candidate set —
+            // so it is surfaced by the trust re-rank yet carries no dense score, exactly the
+            // non-dense hit the floor drops by design. Floor rejection is covered by
+            // min_relevance_floor.rs; here we pin the trust ordering itself.
+            min_relevance: Some(0.0),
             ..RecallOptions::default()
         },
     })

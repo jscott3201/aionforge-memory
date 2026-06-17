@@ -272,6 +272,12 @@ async fn recall(
             sensitive,
             // A tight fan-out so the far target fact would fall outside a plain ANN pass.
             fanout: 3,
+            // Floor off: these tests isolate the high-precision / entity-set-algebra path,
+            // which deliberately surfaces relevant facts that sit FAR from the query in
+            // vector space (low dense similarity). The factual class's default floor would
+            // drop them; floor behavior is covered by the floor-specific tests below and in
+            // min_relevance_floor.rs.
+            min_relevance: Some(0.0),
             ..RecallOptions::default()
         },
     })
@@ -522,9 +528,10 @@ async fn min_relevance_floor_drops_facts_below_the_threshold() {
         FakeEmbedder::new(&[("acme", [1.0, 0.0, 0.0, 0.0])]),
     );
 
-    // Floor OFF (the default 0.0): both the near and the orthogonal fact surface, exactly as
-    // before P0a — the default path is unchanged.
-    let open = recall_floored(&r, "acme", None).await;
+    // Floor explicitly OFF (0.0): both the near and the orthogonal fact surface. (The
+    // factual class now floors by default, so "off" is requested explicitly here; this
+    // test pins the floor's drop/keep mechanics, not the per-class default.)
+    let open = recall_floored(&r, "acme", Some(0.0)).await;
     assert!(
         has_fact(&open, "near match"),
         "the near fact surfaces with no floor: {}",
@@ -665,7 +672,11 @@ async fn recall_renders_honest_absolute_confidence_values() {
         floor_store(),
         FakeEmbedder::new(&[("acme", [1.0, 0.0, 0.0, 0.0])]),
     );
-    let compact = recall_floored(&r, "acme", None).await.render_compact(false);
+    // Floor explicitly off so both the high- and low-confidence facts render (the factual
+    // class now floors by default); this pins the rendered confidence VALUES, not the floor.
+    let compact = recall_floored(&r, "acme", Some(0.0))
+        .await
+        .render_compact(false);
     assert!(
         compact.contains("confidence=\"1.0000\" confidence_band=\"high\""),
         "the near fact renders an exact high absolute confidence: {compact}",

@@ -243,21 +243,20 @@ fn fact_signals(bundle: &RecallBundle, statement: &str) -> Option<Vec<Signal>> {
 }
 
 #[tokio::test]
-async fn the_default_floor_off_admits_a_high_trust_off_topic_hit() {
-    // P4 reproduced: with the floor OFF (the default), the dense-off-topic but
-    // high-trust fact is not just present — it outranks a genuinely on-topic hit,
-    // purely because trust is weighted as heavily as dense and fusion is by rank.
-    let bundle = recall(&retriever(), None).await;
+async fn disabling_the_floor_reproduces_the_p4_off_topic_admission() {
+    // The P4 baseline, shown by explicitly disabling the floor (min_relevance 0.0): the
+    // dense-off-topic but high-trust fact is not just present — it outranks a genuinely
+    // on-topic hit, purely because trust is weighted as heavily as dense and fusion is by
+    // rank. This is the failure the factual-class floor now rejects by default.
+    let bundle = recall(&retriever(), Some(0.0)).await;
 
-    let off = fact_rank(&bundle, OFF_TOPIC).expect("off-topic fact surfaced under the default");
+    let off = fact_rank(&bundle, OFF_TOPIC).expect("off-topic fact surfaced with the floor off");
     let weakest = fact_rank(&bundle, WEAKEST_ON_TOPIC).expect("weakest on-topic fact surfaced");
     assert!(
         off < weakest,
-        "the high-trust off-topic hit outranks an on-topic hit (off #{off}, on #{weakest}) — \
-         this is the P4 failure the floor exists to reject",
+        "with the floor off, the high-trust off-topic hit outranks an on-topic hit \
+         (off #{off}, on #{weakest}) — the P4 failure",
     );
-
-    // It climbed on trust: the off-topic hit carries a Trust contribution.
     assert!(
         fact_signals(&bundle, OFF_TOPIC).is_some_and(|s| s.contains(&Signal::Trust)),
         "the off-topic hit competes via a Trust contribution",
@@ -265,15 +264,16 @@ async fn the_default_floor_off_admits_a_high_trust_off_topic_hit() {
 }
 
 #[tokio::test]
-async fn an_active_floor_rejects_the_off_topic_hit_but_keeps_on_topic() {
-    // The fix: an absolute dense floor of 0.5. The off-topic fact's dense similarity is
-    // 0 (orthogonal to the query), so it is dropped; every on-topic fact clears the floor
-    // and survives. The floor is an admission gate in select(), so fusion stays rank-only.
-    let bundle = recall(&retriever(), Some(0.5)).await;
+async fn the_factual_class_floor_rejects_the_off_topic_hit_by_default() {
+    // The fix, exercised through the per-class default (no per-query override): the
+    // single-hop-factual class floors at 0.60, so the off-topic fact — dense similarity 0,
+    // orthogonal to the query — is dropped, while every on-topic fact clears the floor and
+    // survives. The floor is an admission gate in select(), so fusion stays rank-only.
+    let bundle = recall(&retriever(), None).await;
 
     assert!(
         fact_rank(&bundle, OFF_TOPIC).is_none(),
-        "an active floor rejects the dense-off-topic hit",
+        "the factual-class default floor rejects the dense-off-topic hit",
     );
     for (statement, _) in ON_TOPIC {
         assert!(

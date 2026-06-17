@@ -213,6 +213,12 @@ async fn episode_contents(memory: &Memory<FakeEmbedder>, include_expired: bool) 
             options: RecallOptions {
                 temporal: TemporalMode::Current,
                 include_expired,
+                // Isolate forget/unforget semantics from the factual class's default dense
+                // floor. The `FakeEmbedder` maps the query to a one-hot vector and episodes
+                // to an all-ones vector, so their cosine similarity (~0.29) sits below the
+                // factual floor — degenerate test geometry, not real recall. This acceptance
+                // test pins what forgetting removes and restores, not relevance gating.
+                min_relevance: Some(0.0),
                 ..RecallOptions::default()
             },
         })

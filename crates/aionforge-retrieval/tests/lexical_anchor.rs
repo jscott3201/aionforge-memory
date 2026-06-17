@@ -211,6 +211,11 @@ async fn recall() -> RecallBundle {
             options: RecallOptions {
                 fanout: 10,
                 now: Some(ts(T3)),
+                // Disable the factual class's dense floor: this test pins that a strong
+                // *lexical* (low/no dense) hit anchors above dense noise — exactly the
+                // lexical-only hits the floor drops by design. Floor behavior is covered
+                // by min_relevance_floor.rs; here we isolate the anchor.
+                min_relevance: Some(0.0),
                 ..RecallOptions::default()
             },
         })

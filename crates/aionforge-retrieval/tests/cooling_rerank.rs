@@ -203,6 +203,11 @@ async fn recall(r: &HybridRetriever<FakeEmbedder>, now: Option<&str>) -> RecallB
             mode_override: Some(QueryClass::SingleHopFactual),
             fanout: 20,
             now: now.map(ts),
+            // Disable the factual class's dense floor: these tests isolate the cooling
+            // re-rank's SINK behavior, and a cooled fact loses its dense score inside its
+            // window, so the floor would drop it (a no-dense hit) rather than let cooling
+            // merely sink it. Floor rejection is covered by min_relevance_floor.rs.
+            min_relevance: Some(0.0),
             ..RecallOptions::default()
         },
     })

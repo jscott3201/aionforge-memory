@@ -555,16 +555,24 @@ impl<E: Embedder> HybridRetriever<E> {
         let core = core_block_entries(&self.store, &visible)?;
         let ranked_budget = query.limit.saturating_sub(core.len());
         // Floor precedence (most specific wins): an explicit per-query floor, else the
-        // routed class's per-class default (P0 — `0.0`/OFF for every class today), else
-        // the deployment-wide default. With all class floors `0.0` this collapses to the
-        // prior `unwrap_or(self.config.min_relevance)`, so the recall path stays
-        // byte-identical; `0.0` is OFF and select skips the lookup entirely (P0a).
-        let class_floor = if profile.min_relevance > 0.0 {
-            profile.min_relevance
+        // routed class's per-class default (e.g. the factual class), else the
+        // deployment-wide default.
+        //
+        // The default floor is SKIPPED when the embedder is unavailable: it gates on dense
+        // similarity, so with no dense signal it would drop every (now lexical-only) hit
+        // and empty the recall — the opposite of the intended graceful degradation to
+        // lexical recall during an outage (03 §8.1). An explicit per-query floor is the
+        // caller's deliberate choice and is still honored.
+        let default_floor = if embedder_available {
+            if profile.min_relevance > 0.0 {
+                profile.min_relevance
+            } else {
+                self.config.min_relevance
+            }
         } else {
-            self.config.min_relevance
+            0.0
         };
-        let min_relevance = query.options.min_relevance.unwrap_or(class_floor);
+        let min_relevance = query.options.min_relevance.unwrap_or(default_floor);
         let selection = select(
             &self.store,
             &query,

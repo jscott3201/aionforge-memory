@@ -97,13 +97,15 @@ pub struct RetrievalProfile {
     pub quote_phrase: bool,
     /// Whether to default the candidate kinds to facts (the factual class, 03 §3).
     pub restrict_to_fact_kinds: bool,
-    /// The per-class default absolute dense-relevance floor in `[0, 1]` (P0 plumbing).
+    /// The per-class default absolute dense-relevance floor in `[0, 1]`.
     ///
-    /// `0.0` is OFF — the floor never fires and recall is byte-identical — and is the
-    /// value for *every* class today: the mechanism ships off, pending the
-    /// off-topic-rejection benchmark that will set responsible per-class values. The
-    /// dense-weight-zero classes (e.g. `Quote`) stay exempt at `0.0`, since a dense
-    /// floor is meaningless where the dense signal itself is off. A per-query
+    /// A hit whose dense cosine similarity is below the floor — or which has no dense
+    /// score at all (a lexical-only hit) — is dropped, so an off-topic query can
+    /// legitimately return empty. `0.0` is OFF (the floor never fires). The factual class
+    /// floors at `0.60` (the `FACTUAL_FLOOR` const — an off-topic-rejection win measured on
+    /// the eval harness); the other classes are still OFF pending their own calibration. The
+    /// dense-weight-zero classes (e.g. `Quote`) stay exempt at `0.0`, since a dense floor
+    /// is meaningless where the dense signal itself is off. A per-query
     /// `RecallOptions::min_relevance` overrides this, which in turn overrides the
     /// deployment-wide `RetrieverConfig::min_relevance`.
     pub min_relevance: f64,
@@ -115,10 +117,22 @@ const MODERATE: f64 = 0.6;
 const LIGHT: f64 = 0.3;
 const OFF: f64 = 0.0;
 
-/// The per-class dense-relevance floor, OFF for every class today (P0 plumbing). The
-/// mechanism is wired but disabled; the off-topic-rejection benchmark sets the real
-/// per-class values later. Named so a future non-zero value reads as a deliberate flip.
+/// The per-class dense-relevance floor for a class that has not been calibrated yet — OFF
+/// (the floor never fires). Named so a non-zero value reads as a deliberate flip.
 const FLOOR_OFF: f64 = 0.0;
+
+/// The single-hop-factual dense-relevance floor: off-topic queries on the factual class
+/// return empty rather than surfacing a confident-but-unrelated hit.
+///
+/// `0.60` is the center of the clean separation window measured on the `aionforge-eval`
+/// off-topic-rejection harness against the production gemini-3072 embedder: across an
+/// everyday corpus and a harder project/domain-adjacent corpus, off-topic queries peaked
+/// at ~0.55 dense similarity while on-topic gold bottomed at ~0.64, and a floor at the
+/// midpoint rejected 100% of off-topic queries at zero false-rejection (recall@5 held at
+/// 1.0). The midpoint maximizes the margin on both sides, so it is robust to embedder
+/// drift. Re-measure with `cargo test -p aionforge-eval --test floor_sweep -- --ignored`
+/// after any embedder or dimension change (the value is gemini-cosine-calibrated).
+const FACTUAL_FLOOR: f64 = 0.60;
 
 /// The default retrieval profile for a class (03 §3 mode-weight profiles).
 #[must_use]
@@ -128,7 +142,7 @@ pub fn profile_for(class: QueryClass) -> RetrievalProfile {
         // light recency.
         QueryClass::SingleHopFactual => RetrievalProfile {
             class,
-            min_relevance: FLOOR_OFF,
+            min_relevance: FACTUAL_FLOOR,
             weights: SignalWeights {
                 lexical: HEAVY,
                 lexical_anchor: HEAVY,
