@@ -72,10 +72,10 @@ use crate::error::ConfigError;
 /// Deterministic consolidation posture (write-and-consolidation §2-§3): the background-loop
 /// switch, the scheduler's pacing/bounds, and the four pass-level tunings.
 ///
-/// All-defaults is today's behavior exactly — the [`Default`] impl mirrors the engine's
-/// `aionforge_consolidate` defaults knob for knob, so an absent `[consolidation]` block
-/// changes nothing. Plain primitives only; the host maps these into the engine's
-/// `ConsolidationConfig`/`PassConfig` (see the module docs).
+/// All-defaults is today's behavior exactly: the serve-only `enabled` switch is off, and the
+/// scheduler/pass primitives mirror the engine's `aionforge_consolidate` defaults knob for knob.
+/// Plain primitives only; the host maps these into the engine's `ConsolidationConfig`/`PassConfig`
+/// (see the module docs).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ConsolidationConfig {
@@ -110,7 +110,8 @@ pub struct ConsolidationConfig {
 
 impl Default for ConsolidationConfig {
     fn default() -> Self {
-        // Mirrors `aionforge_consolidate::ConsolidationConfig::default()` exactly.
+        // `enabled` is serve-only; the rest mirrors
+        // `aionforge_consolidate::ConsolidationConfig::default()` exactly.
         Self {
             enabled: false,
             tick_interval_secs: 5,

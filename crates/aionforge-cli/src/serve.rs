@@ -49,23 +49,25 @@ pub(crate) async fn run(options: &HostOptions, args: ServeArgs) -> Result<(), Cl
     // The OAuth resource-server posture is DEFAULT-OFF: `config.auth.enabled` is `false` unless a
     // deployment opts in, so the stdio and HTTP transports below reproduce today's behavior exactly.
     let result = match args.transport {
-        ServeTransport::Stdio => {
-            let startup = check_startup_embedder(memory.as_ref()).await?;
-            report_startup_embedder(&startup);
-            // stdio carries no HTTP request, so no Tower validator can run over it; the flag is
-            // threaded only for posture parity (an enabled stdio server has no producer yet).
-            // Auth-on over stdio therefore rejects EVERY identity-bearing tool with
-            // ERR_PRINCIPAL_REQUIRED (fail-closed, never a bypass). Warn LOUDLY at startup so the
-            // operator sees the root cause as a single visible signal, not a stream of per-tool 403s.
-            report_stdio_auth_unsupported(config.auth.enabled);
-            serve_stdio_with_consolidation(
-                memory,
-                config.auth.enabled,
-                config.consolidation.enabled,
-            )
-            .await
-            .map_err(|error| CliError::Serve(error.to_string()))
-        }
+        ServeTransport::Stdio => match check_startup_embedder(memory.as_ref()).await {
+            Ok(startup) => {
+                report_startup_embedder(&startup);
+                // stdio carries no HTTP request, so no Tower validator can run over it; the flag is
+                // threaded only for posture parity (an enabled stdio server has no producer yet).
+                // Auth-on over stdio therefore rejects EVERY identity-bearing tool with
+                // ERR_PRINCIPAL_REQUIRED (fail-closed, never a bypass). Warn LOUDLY at startup so the
+                // operator sees the root cause as a single visible signal, not a stream of per-tool 403s.
+                report_stdio_auth_unsupported(config.auth.enabled);
+                serve_stdio_with_consolidation(
+                    memory,
+                    config.auth.enabled,
+                    config.consolidation.enabled,
+                )
+                .await
+                .map_err(|error| CliError::Serve(error.to_string()))
+            }
+            Err(error) => Err(error),
+        },
         ServeTransport::Http => serve_http(memory, args, &config).await,
     };
     // Stop the heartbeat deterministically before exit, then log the final cumulative summary.
