@@ -1,10 +1,13 @@
-//! Native Personalized PageRank as an associative retrieval signal (03 §1 graph, M3.T01).
+//! Native PageRank as an associative retrieval signal (03 §1 graph, M3.T01) — both the
+//! query-seeded and the seedless-global passes over the same associative projection.
 //!
-//! Seeds PageRank on the entities a query mentions and reads back the facts and episodes
-//! that sit closest to them in the associative graph — `Episode -MENTIONS-> Entity`,
-//! `Fact -ABOUT-> Entity`, and `Fact|Episode -SUPPORTS-> Fact`. Retrieval (L1) gates this
-//! to the classes that benefit (multi-hop, entity) and fuses the per-kind ranking with the
-//! others.
+//! [`Store::personalized_pagerank_within`] seeds PageRank on the entities a query mentions
+//! and reads back the facts and episodes that sit closest to them in the associative graph —
+//! `Episode -MENTIONS-> Entity`, `Fact -ABOUT-> Entity`, and `Fact|Episode -SUPPORTS-> Fact`.
+//! Retrieval (L1) gates this to the classes that benefit (multi-hop, entity) and fuses the
+//! per-kind ranking with the others. [`Store::graph_authority`] runs the same projection
+//! *seedless* (uniform teleport) for a query-independent global authority prior; the two share
+//! one private `pagerank_within` core and differ only in the bound personalization.
 //!
 //! ## Why undirected
 //! The associative schema points records *at* entities, so under natural directed PageRank
@@ -113,7 +116,79 @@ impl Store {
         result_nodes: Option<&[NodeId]>,
         deadline: Option<Instant>,
     ) -> Result<Vec<SearchHit>, StoreError> {
-        if seeds.is_empty() || k == 0 {
+        if seeds.is_empty() {
+            // A graph signal needs a personalization root; no seeds means no associative prior,
+            // not a uniform PageRank fallback (that is [`Store::graph_authority`]'s job).
+            return Ok(Vec::new());
+        }
+        self.pagerank_within(
+            kind,
+            personalization_value(seeds),
+            k,
+            result_nodes,
+            deadline,
+        )
+    }
+
+    /// Globally rank a kind by undirected PageRank *authority* — a seedless, query-independent
+    /// structural prior (R1, the global-authority fusion signal).
+    ///
+    /// Where [`Store::personalized_pagerank_within`] restarts mass on a query's entities (so its
+    /// ranking answers "what is near *these* nodes"), this teleports uniformly: every projection
+    /// node gets a standing score for how well-connected it is in the *whole* associative graph.
+    /// It is the topological complement to the non-structural decayed-importance signal — a
+    /// memory wired into many supported facts and mentioned entities carries more standing
+    /// authority than an isolated one, regardless of the query.
+    ///
+    /// Seedless is the only difference from the personalized path: it binds `personalization`
+    /// (`$seeds`) to `NULL`, which `algo.pagerank` resolves to uniform teleport (classic global
+    /// PageRank). The `undirected` orientation is load-bearing here for the same reason as the
+    /// personalized signal — the schema points records *at* entities, so a natural-orientation
+    /// global PageRank would pool all authority at the entity sinks and starve the facts and
+    /// episodes this ranking returns. `result_label`/`limit`/`result_nodes` push the kind filter,
+    /// top-`k`, and visible-namespace scope into the procedure exactly as the personalized path
+    /// does, so a global authority pass is still one bounded call, not a full-graph transfer.
+    ///
+    /// Unlike the personalized signal, an empty result is not the seedless case (there are no
+    /// seeds) — it is the empty-store / `k == 0` / empty-scope case. Because uniform teleport
+    /// gives every projection node a positive floor, the `score > 0.0` cut in the shared core is
+    /// effectively a no-op here (no node has zero global mass); it stays for parity with the
+    /// personalized path, where it drops out-of-component nodes.
+    ///
+    /// This recomputes the identical ranking on every recall (the input is the whole graph, not
+    /// the query), so it pairs with a generation-keyed result cache — a separate store-side
+    /// follow-up — to avoid repeating the pass; without the cache it costs one `algo.pagerank`
+    /// per recall, the same order as the existing graph signal.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the projection build, the PageRank call, a bind, execution, or
+    /// the deadline fails.
+    pub fn graph_authority(
+        &self,
+        kind: SearchKind,
+        k: usize,
+        result_nodes: Option<&[NodeId]>,
+        deadline: Option<Instant>,
+    ) -> Result<Vec<SearchHit>, StoreError> {
+        // NULL personalization => uniform teleport => classic global (seedless) PageRank, per the
+        // `algo.pagerank` contract (`personalization` is nullable, default "NULL (uniform
+        // teleport)"). Everything else is the shared associative-projection PageRank core.
+        self.pagerank_within(kind, Value::Null, k, result_nodes, deadline)
+    }
+
+    /// The shared associative-projection PageRank core behind the personalized graph signal and
+    /// the global authority prior. `personalization` is the bound `$seeds` value — a `[node,
+    /// weight]` list for the personalized path, or `NULL` for the seedless/global path — and is
+    /// the *only* axis the two callers differ on.
+    fn pagerank_within(
+        &self,
+        kind: SearchKind,
+        personalization: Value,
+        k: usize,
+        result_nodes: Option<&[NodeId]>,
+        deadline: Option<Instant>,
+    ) -> Result<Vec<SearchHit>, StoreError> {
+        if k == 0 {
             return Ok(Vec::new());
         }
         // An explicit-but-empty scope means "no node of this kind is in scope" (the reader has
@@ -129,7 +204,8 @@ impl Store {
         // requested kind, `result_nodes` (when bound non-NULL) intersects them with the
         // visible-namespace scope, and `limit` truncates to the top `k` by score inside the
         // procedure (intersection before truncation); the `score > 0.0` cut below then drops
-        // any node outside the seed's connected component (zero personalized mass).
+        // any node with zero mass (outside a seed's connected component, in the personalized
+        // case — a no-op under uniform teleport).
         let build = BoundQuery::new("CALL algo.projection_build($name, $labels, $types, NULL)")
             .bind_str("name", PROJECTION_NAME)?
             .bind("labels", string_list_value(&PROJECTION_NODE_LABELS)?)?
@@ -143,16 +219,16 @@ impl Store {
         .bind("max_iter", Value::Int(MAX_ITERATIONS))?
         .bind("tolerance", Value::Float(TOLERANCE))?
         .bind_str("orientation", ORIENTATION_UNDIRECTED)?
-        .bind("seeds", personalization_value(seeds))?
+        .bind("seeds", personalization)?
         .bind_str("result_label", kind.label())?
         .bind("limit", k_value(k))?
         .bind("result_nodes", result_nodes_value(result_nodes))?;
 
         // PageRank filtered to `kind` and returned the top `k` best-first. Drop any node with
-        // zero personalized mass (outside the seed's connected component): selene-db 1.3
-        // removed the inline `CALL ... YIELD ... WHERE` shortcut, so this `score > 0.0` cut is
-        // applied here instead of in the query. Rows arrive best-first and a zero-mass node can
-        // only sort last, so the retained prefix is still the ranking — a filter, not a re-sort.
+        // zero mass: selene-db 1.3 removed the inline `CALL ... YIELD ... WHERE` shortcut, so
+        // this `score > 0.0` cut is applied here instead of in the query. Rows arrive best-first
+        // and a zero-mass node can only sort last, so the retained prefix is still the ranking —
+        // a filter, not a re-sort.
         let mut hits = extract_hits(
             self.execute_session_within(&[build, rank], deadline)?,
             "score",

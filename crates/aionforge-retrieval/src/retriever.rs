@@ -32,11 +32,12 @@ use crate::query::{RecallQuery, TemporalMode};
 use crate::rerank;
 use crate::router::{looks_like_source_anchor, profile_for, route};
 use crate::selection::{
-    bail_if_past, core_block_entries, effective_fanout, fact_dense_ranking, fact_graph_ranking,
-    fact_lexical_ranking, fact_support_ranking, lexical_anchor_ranking, select, trust_rankings,
+    bail_if_past, core_block_entries, effective_fanout, fact_authority_ranking, fact_dense_ranking,
+    fact_graph_ranking, fact_lexical_ranking, fact_support_ranking, lexical_anchor_ranking, select,
+    trust_rankings,
 };
 use crate::signals::{
-    Signal, dense_ranking_in_namespaces, embed_query, graph_ranking_for,
+    Signal, authority_ranking_for, dense_ranking_in_namespaces, embed_query, graph_ranking_for,
     lexical_ranking_in_namespaces,
 };
 use crate::trace;
@@ -447,6 +448,38 @@ impl<E: Embedder> HybridRetriever<E> {
             rankings.push(WeightedRanking::new(profile.weights.graph, episodes));
             rankings.push(WeightedRanking::new(profile.weights.graph, facts));
             signals_run.push(Signal::Graph);
+        }
+        bail_if_past(deadline)?;
+
+        // The global authority prior (R1): a query-INDEPENDENT, seedless undirected PageRank over
+        // the associative projection — a standing structural score for how well-connected each
+        // memory is, the topological complement to the non-structural decayed importance signal.
+        // Unlike the graph signal it needs no seed, so it is gated only on a non-zero per-class
+        // weight (`graph_expansion` is irrelevant — authority can serve the dense classes too).
+        // Every profile stages this weight at `0.0` for now (prove-before-flip, store memory
+        // `019ed336`; BEAM is episode-only and cannot measure authority lift), so this block is
+        // inert — no PageRank pass runs — until the activation follow-up flips a weight on.
+        if profile.weights.authority > 0.0 {
+            let _signal_span = trace::signal_span(Signal::Authority, fanout).entered();
+            // Like the graph signal, the episode side scopes via `algo.pagerank`'s `result_nodes`
+            // (the visible-namespace episode set, materialized lazily here only when the signal
+            // runs), while the fact side ranks the whole projection and is current-scoped.
+            let episode_scope = self
+                .store
+                .episode_nodes_in_namespaces(&visible_namespaces)?;
+            let episodes = authority_ranking_for(
+                &self.store,
+                SearchKind::Episode,
+                fanout,
+                Some(&episode_scope),
+                deadline,
+            )?;
+            let facts =
+                fact_authority_ranking(&self.store, current_facts.as_deref(), fanout, deadline)?;
+            fact_nodes.extend(facts.candidates.iter().map(|c| c.node));
+            rankings.push(WeightedRanking::new(profile.weights.authority, episodes));
+            rankings.push(WeightedRanking::new(profile.weights.authority, facts));
+            signals_run.push(Signal::Authority);
         }
         bail_if_past(deadline)?;
 

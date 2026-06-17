@@ -45,6 +45,11 @@ pub enum Signal {
     Support,
     /// Associative graph expansion.
     Graph,
+    /// Global graph-authority prior (R1): a query-INDEPENDENT, seedless undirected PageRank
+    /// over the associative projection. Where [`Signal::Graph`] restarts mass on the query's
+    /// entities, this gives every memory a standing score for how well-connected it is in the
+    /// whole graph — the structural complement to the non-structural decayed [`Signal::Importance`].
+    Authority,
     /// Recency ranking over ingestion time.
     Recency,
     /// Effective-importance ranking over the decayed write-time importance (05 §2,
@@ -185,6 +190,34 @@ pub(crate) fn graph_ranking_for(
     Ok(ranking_from_hits(
         Signal::Graph,
         store.personalized_pagerank_within(kind, seeds, k, result_nodes, deadline)?,
+    ))
+}
+
+/// Rank a kind by global graph authority — a query-INDEPENDENT, seedless undirected PageRank
+/// over the associative projection (03 §1 authority, R1), optionally SCOPED to an explicit
+/// candidate node set.
+///
+/// The seedless complement to [`graph_ranking_for`]: instead of restarting mass on the query's
+/// entities, it teleports uniformly, so the ranking is the kind's most globally well-connected
+/// nodes — a standing structural prior, the same for every query. `result_nodes` carries the
+/// reader's visible-namespace scope exactly as the graph signal does (the episode side, 03 §6),
+/// intersected inside the procedure before the top-`k` truncation; `None` ranks the whole
+/// projection (the fact side, which the retriever current-scopes after fusion). Best-first by
+/// PageRank score; rank fusion reads only position, so the score scale is never reconciled with
+/// the cosine/BM25 signals.
+///
+/// # Errors
+/// Returns [`RetrievalError`] if the PageRank call fails.
+pub(crate) fn authority_ranking_for(
+    store: &Store,
+    kind: SearchKind,
+    k: usize,
+    result_nodes: Option<&[NodeId]>,
+    deadline: Option<Instant>,
+) -> Result<SignalRanking, RetrievalError> {
+    Ok(ranking_from_hits(
+        Signal::Authority,
+        store.graph_authority(kind, k, result_nodes, deadline)?,
     ))
 }
 
