@@ -1,6 +1,15 @@
 {"id":"q-0001","query":"how often should I turn my compost pile","source":"aionforge-eval-synthetic","expected":[{"id":"m-0001","grade":3},{"id":"m-0002","grade":1}]}
 {"id":"q-0002","query":"my bicycle skips when I change gears, how do I fix it","source":"aionforge-eval-synthetic","expected":[{"id":"m-0004","grade":3},{"id":"m-0005","grade":1}]}
 {"id":"q-0003","query":"how do I feed my sourdough starter to keep it alive","source":"aionforge-eval-synthetic","expected":[{"id":"m-0007","grade":3},{"id":"m-0008","grade":1}]}
-{"id":"q-0101","query":"what is the best strategy for kubernetes pod autoscaling","source":"aionforge-eval-synthetic","expected_empty":true}
-{"id":"q-0102","query":"summarize the main causes of the french revolution","source":"aionforge-eval-synthetic","expected_empty":true}
-{"id":"q-0103","query":"how do I configure oauth2 token refresh in a web application","source":"aionforge-eval-synthetic","expected_empty":true}
+{"id":"q-0201","query":"how does the retrieval layer combine its different ranking signals","source":"aionforge-eval-project-sanitized","expected":[{"id":"m-0201","grade":3},{"id":"m-0203","grade":1}]}
+{"id":"q-0202","query":"how do we stop irrelevant off-topic results from showing up in recall","source":"aionforge-eval-project-sanitized","expected":[{"id":"m-0202","grade":3}]}
+{"id":"q-0203","query":"what happens when the underlying graph database changes version","source":"aionforge-eval-project-sanitized","expected":[{"id":"m-0204","grade":3}]}
+{"id":"q-0204","query":"how are durable facts created from raw conversations","source":"aionforge-eval-project-sanitized","expected":[{"id":"m-0207","grade":3},{"id":"m-0205","grade":1}]}
+{"id":"q-0205","query":"how does the system handle outdated or replaced memories","source":"aionforge-eval-project-sanitized","expected":[{"id":"m-0210","grade":3}]}
+{"id":"q-0206","query":"what does forgetting decay and what is protected from it","source":"aionforge-eval-project-sanitized","expected":[{"id":"m-0208","grade":3}]}
+{"id":"q-0101","query":"summarize the main causes of the french revolution","source":"aionforge-eval-synthetic","expected_empty":true}
+{"id":"q-0102","query":"what is the best oil for seasoning a cast iron skillet","source":"aionforge-eval-synthetic","expected_empty":true}
+{"id":"q-0301","query":"how do I set up a kubernetes ingress controller with tls termination","source":"aionforge-eval-adjacent","expected_empty":true}
+{"id":"q-0302","query":"what is the worst-case time complexity of the quicksort algorithm","source":"aionforge-eval-adjacent","expected_empty":true}
+{"id":"q-0303","query":"how do I train a convolutional neural network for image classification","source":"aionforge-eval-adjacent","expected_empty":true}
+{"id":"q-0304","query":"what is the difference between the tcp and udp network protocols","source":"aionforge-eval-adjacent","expected_empty":true}
