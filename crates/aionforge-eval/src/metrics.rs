@@ -142,6 +142,38 @@ pub fn false_rejection_rate(positives: &[(&RecallBundle, HashSet<Id>)]) -> f64 {
     dropped as f64 / positives.len() as f64
 }
 
+/// The highest dense similarity among a bundle's ranked hits, or `None` if it returned
+/// no dense-scored hit.
+///
+/// For an off-topic (negative) query this is the *off-topic ceiling* — how close the
+/// embedder let an unrelated memory get to the query. A good floor sits above it. Core
+/// blocks and lexical-only hits (no dense score) are ignored.
+#[must_use]
+pub fn max_dense_similarity(bundle: &RecallBundle) -> Option<f64> {
+    bundle
+        .structured
+        .iter()
+        .filter_map(StructuredEntry::dense_similarity)
+        .fold(None, |acc, sim| Some(acc.map_or(sim, |a: f64| a.max(sim))))
+}
+
+/// The lowest dense similarity among the ranked hits whose id is in `gold`, or `None` if
+/// no gold hit was returned with a dense score.
+///
+/// For a positive query this is the *on-topic floor* — how low the genuinely relevant
+/// memories scored. A good floor sits below it. The window between the off-topic ceiling
+/// ([`max_dense_similarity`] over negatives) and this on-topic floor (over positives) is
+/// the range in which a `min_relevance` floor cleanly separates them.
+#[must_use]
+pub fn min_gold_dense_similarity(bundle: &RecallBundle, gold: &HashSet<Id>) -> Option<f64> {
+    bundle
+        .structured
+        .iter()
+        .filter(|entry| gold.contains(entry.id()))
+        .filter_map(StructuredEntry::dense_similarity)
+        .fold(None, |acc, sim| Some(acc.map_or(sim, |a: f64| a.min(sim))))
+}
+
 /// A running aggregate of single-answer ranking quality over a query set, generalized
 /// from the retrieval crate's fixed-corpus precision check.
 ///
@@ -216,6 +248,10 @@ mod tests {
     }
 
     fn episode(id: Id) -> StructuredEntry {
+        episode_sim(id, Some(0.8))
+    }
+
+    fn episode_sim(id: Id, dense_similarity: Option<f64>) -> StructuredEntry {
         StructuredEntry::Episode(EpisodeEntry {
             id,
             serialization_id: SerializationId::derive("episode", id.to_string().as_bytes()),
@@ -227,7 +263,7 @@ mod tests {
             superseded_by: None,
             trust: 0.5,
             score: 1.0,
-            dense_similarity: Some(0.8),
+            dense_similarity,
             contributions: Vec::new(),
             content: format!("memory {id}"),
         })
@@ -339,6 +375,49 @@ mod tests {
             (false_rejection_rate(&refs) - 0.5).abs() < 1e-12,
             "one of two positives lost its gold"
         );
+    }
+
+    #[test]
+    fn separation_metrics_bracket_the_clean_floor_window() {
+        let a = Id::generate();
+        let b = Id::generate();
+        // Off-topic bundle: hits at 0.30 and 0.41 -> ceiling 0.41.
+        let off = RecallBundle {
+            structured: vec![episode_sim(a, Some(0.30)), episode_sim(b, Some(0.41))],
+            rendered: String::new(),
+            explanation: explanation(),
+        };
+        assert!((max_dense_similarity(&off).expect("some") - 0.41).abs() < 1e-12);
+
+        // Positive bundle: gold a at 0.63, gold b at 0.71 -> on-topic floor 0.63. A
+        // lexical-only non-gold hit (None) is ignored.
+        let pos = RecallBundle {
+            structured: vec![
+                episode_sim(a, Some(0.63)),
+                episode_sim(b, Some(0.71)),
+                episode_sim(Id::generate(), None),
+            ],
+            rendered: String::new(),
+            explanation: explanation(),
+        };
+        let gold: HashSet<Id> = [a, b].into_iter().collect();
+        assert!((min_gold_dense_similarity(&pos, &gold).expect("some") - 0.63).abs() < 1e-12);
+
+        // The window (0.41, 0.63) is where a floor separates off-topic from on-topic.
+        assert!(
+            max_dense_similarity(&off).unwrap() < min_gold_dense_similarity(&pos, &gold).unwrap()
+        );
+    }
+
+    #[test]
+    fn separation_metrics_are_none_without_dense_hits() {
+        let empty = RecallBundle {
+            structured: Vec::new(),
+            rendered: String::new(),
+            explanation: explanation(),
+        };
+        assert!(max_dense_similarity(&empty).is_none());
+        assert!(min_gold_dense_similarity(&empty, &HashSet::new()).is_none());
     }
 
     #[test]
