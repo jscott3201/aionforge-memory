@@ -67,6 +67,18 @@ enum ResolvedCandidate {
     },
 }
 
+impl ResolvedCandidate {
+    /// The store node id this candidate resolved from — its key for the community-diversity
+    /// lookup, regardless of kind.
+    fn node(&self) -> NodeId {
+        match self {
+            ResolvedCandidate::Fact(candidate) | ResolvedCandidate::Episode { candidate, .. } => {
+                candidate.node
+            }
+        }
+    }
+}
+
 /// Build the factual lexical-anchor ranking from the highest lexical hits.
 ///
 /// The anchor is intentionally not a new search: it reuses the already-computed BM25
@@ -131,13 +143,16 @@ pub(crate) fn effective_fanout(query: &RecallQuery, config: &RetrieverConfig) ->
     base.max(query.limit).max(1)
 }
 
-/// Resolve fused candidates to authorized entries, applying the session-diversity
-/// cap and filling from the spill only when the bundle is under-filled (03 §6).
+/// Resolve fused candidates to authorized entries, applying the session- and community-
+/// diversity caps and filling from the spill only when the bundle is under-filled (03 §6).
 ///
-/// A candidate is a fact iff a fact search produced it (`fact_nodes`), else it is
-/// resolved as an episode. The session-diversity cap is an episode notion — it
-/// demotes a conversation that dominates the bundle — so facts, which have no
-/// session, always go straight to the primary set in fused order.
+/// A candidate is a fact iff a fact search produced it (`fact_nodes`), else it is resolved as an
+/// episode. The session-diversity cap is an episode notion — it demotes a conversation that
+/// dominates the bundle — so facts, which have no session, are never subject to it. The
+/// community-diversity cap (R2) is structural — it demotes an associative cluster that dominates
+/// the bundle — so it applies to facts and episodes alike; it is OFF unless
+/// `community_diversity_cap > 0`, in which case the Louvain labels are computed once here. An
+/// entry is admitted only if it is under both active caps; otherwise it spills.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn select(
     store: &Store,
@@ -150,6 +165,7 @@ pub(crate) fn select(
     min_relevance: f64,
     floor_exempt: &[Signal],
     limit: usize,
+    deadline: Option<Instant>,
 ) -> Result<Selection, RetrievalError> {
     if limit == 0 {
         return Ok(Selection {
@@ -157,6 +173,7 @@ pub(crate) fn select(
         });
     }
     let cap = query.options.session_diversity_cap;
+    let community_cap = query.options.community_diversity_cap;
     let mut primary: Vec<StructuredEntry> = Vec::new();
     let mut spill: Vec<StructuredEntry> = Vec::new();
     let mut per_session: HashMap<Option<String>, usize> = HashMap::new();
@@ -206,19 +223,35 @@ pub(crate) fn select(
 
     let superseded_by = store.live_episode_superseded_by_many(episode_ids.iter())?;
 
+    // The community-diversity labels (R2), computed once over the resolved candidate nodes — but
+    // only when the cap is active. `community_cap == 0` (the default) skips the Louvain pass
+    // entirely, so the labels are empty, the per-community gate below is inert, and selection is
+    // byte-identical and zero-cost. (Louvain has no GQL pushdown, so the store labels the whole
+    // projection and filters to these nodes — see `Store::community_labels`.)
+    let community: HashMap<NodeId, NodeId> = if community_cap > 0 {
+        let nodes: Vec<NodeId> = resolved.iter().map(ResolvedCandidate::node).collect();
+        store.community_labels(&nodes, deadline)?
+    } else {
+        HashMap::new()
+    };
+    let mut per_community: HashMap<NodeId, usize> = HashMap::new();
+
     for candidate in resolved {
         if primary.len() >= limit {
             break;
         }
-        match candidate {
+        let node = candidate.node();
+        // Resolve to an entry; `session` is `Some(bucket)` for an episode (the session-diversity
+        // cap applies, `bucket` is its session id or `None` for a sessionless episode) and `None`
+        // for a fact (no session notion, so the session cap never applies to it).
+        let (entry, session): (StructuredEntry, Option<Option<String>>) = match candidate {
             ResolvedCandidate::Fact(candidate) => {
                 let similarity = dense_similarity.get(&candidate.node).copied();
                 let Some(entry) = resolve_fact(store, query, visible, &candidate, similarity)?
                 else {
                     continue;
                 };
-                primary.push(entry);
-                continue;
+                (entry, None)
             }
             ResolvedCandidate::Episode { candidate, episode } => {
                 let replacement = superseded_by.get(&episode.identity.id).copied();
@@ -232,15 +265,39 @@ pub(crate) fn select(
                     replacement,
                     similarity,
                 ));
-                let session = episode.session_id.as_ref().map(|id| id.to_string());
-                let seen = per_session.entry(session).or_insert(0);
-                if cap == 0 || *seen < cap {
-                    *seen += 1;
-                    primary.push(entry);
-                } else {
-                    spill.push(entry);
-                }
+                (
+                    entry,
+                    Some(episode.session_id.as_ref().map(|id| id.to_string())),
+                )
             }
+        };
+
+        // Diversity admission: the entry joins the primary bundle only if it is under BOTH the
+        // session cap (episodes) and the community cap (any labeled node). The per-bucket counters
+        // advance only on admission, so a spilled entry never consumes a slot. Either cap at 0 (or
+        // a node with no community label) makes that gate always-pass, so a spill is driven only
+        // by a genuinely over-represented session or community.
+        let community_key = community.get(&node).copied();
+        let under_session = match &session {
+            Some(bucket) => cap == 0 || per_session.get(bucket).copied().unwrap_or(0) < cap,
+            None => true,
+        };
+        let under_community = match community_key {
+            Some(c) => {
+                community_cap == 0 || per_community.get(&c).copied().unwrap_or(0) < community_cap
+            }
+            None => true,
+        };
+        if under_session && under_community {
+            if let Some(bucket) = session {
+                *per_session.entry(bucket).or_insert(0) += 1;
+            }
+            if let Some(c) = community_key {
+                *per_community.entry(c).or_insert(0) += 1;
+            }
+            primary.push(entry);
+        } else {
+            spill.push(entry);
         }
     }
 

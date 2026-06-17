@@ -714,3 +714,105 @@ fn global_authority_pushes_down_scope_limit_and_guards() {
         "Some(empty) yields an empty ranking, not the unscoped one",
     );
 }
+
+#[test]
+fn community_labels_group_an_associative_cluster_and_separate_disconnected_ones() {
+    let store = store();
+
+    // Two disconnected associative clusters: entity A with three facts ABOUT it, entity B with
+    // two. No edge bridges them, so they are different connected components — Louvain must place
+    // them in different communities, and the facts of one cluster in the same community.
+    let e_a = entity("alpha");
+    let a_node = store.insert_entity(&e_a).expect("insert entity A");
+    let mut a_facts = Vec::new();
+    for (tag, minute) in [("a1", "30"), ("a2", "31"), ("a3", "32")] {
+        a_facts.push(
+            store
+                .assert_fact(
+                    &fact(
+                        e_a.identity.id,
+                        "rel",
+                        ObjectValue::Text(format!("alpha detail {tag}")),
+                        &format!("alpha detail {tag}"),
+                    ),
+                    a_node,
+                    &open_window(&format!("2026-06-06T09:{minute}:00-05:00[America/Chicago]")),
+                )
+                .expect("assert A fact"),
+        );
+    }
+
+    let e_b = entity("beta");
+    let b_node = store.insert_entity(&e_b).expect("insert entity B");
+    let mut b_facts = Vec::new();
+    for (tag, minute) in [("b1", "33"), ("b2", "34")] {
+        b_facts.push(
+            store
+                .assert_fact(
+                    &fact(
+                        e_b.identity.id,
+                        "rel",
+                        ObjectValue::Text(format!("beta detail {tag}")),
+                        &format!("beta detail {tag}"),
+                    ),
+                    b_node,
+                    &open_window(&format!("2026-06-06T09:{minute}:00-05:00[America/Chicago]")),
+                )
+                .expect("assert B fact"),
+        );
+    }
+
+    let all: Vec<NodeId> = a_facts.iter().chain(b_facts.iter()).copied().collect();
+    let labels = store
+        .community_labels(&all, None)
+        .expect("community labels");
+
+    // Every requested fact is labeled.
+    assert_eq!(
+        labels.len(),
+        all.len(),
+        "every requested node is labeled: {labels:?}"
+    );
+    // The three facts of cluster A share one community; the two of cluster B share another.
+    let a_comm = labels[&a_facts[0]];
+    assert!(
+        a_facts.iter().all(|f| labels[f] == a_comm),
+        "cluster A's facts share one community: {labels:?}",
+    );
+    let b_comm = labels[&b_facts[0]];
+    assert!(
+        b_facts.iter().all(|f| labels[f] == b_comm),
+        "cluster B's facts share one community: {labels:?}",
+    );
+    // The disconnected clusters are different communities — the property the diversity cap needs.
+    assert_ne!(
+        a_comm, b_comm,
+        "disconnected associative clusters are distinct communities: {labels:?}",
+    );
+
+    // No GQL pushdown, so the Rust-side filter must return only the requested subset.
+    let one = store
+        .community_labels(&[a_facts[0]], None)
+        .expect("subset labels");
+    assert_eq!(
+        one.keys().copied().collect::<Vec<_>>(),
+        vec![a_facts[0]],
+        "the label map is filtered to exactly the requested nodes",
+    );
+
+    // Deterministic within a generation: a repeated call returns the same labels (so a recall's
+    // diversity constraint is reproducible).
+    let again = store
+        .community_labels(&all, None)
+        .expect("community labels again");
+    assert_eq!(labels, again, "Louvain labels are stable across calls");
+
+    // No nodes requested: short-circuit to an empty map without building the projection.
+    assert!(
+        store
+            .community_labels(&[], None)
+            .expect("empty request is not an error")
+            .is_empty(),
+        "an empty request yields an empty label map",
+    );
+}

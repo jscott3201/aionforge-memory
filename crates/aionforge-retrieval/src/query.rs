@@ -87,6 +87,18 @@ pub struct RecallOptions {
     /// rest spill; spilled memories are appended only if the bundle is under-filled
     /// (03 §6). Zero means no cap.
     pub session_diversity_cap: usize,
+    /// The most memories from a single associative COMMUNITY allowed to fill the bundle before
+    /// the rest spill — the structural analogue of [`session_diversity_cap`](Self::session_diversity_cap)
+    /// (R2). A community is a Louvain cluster over the associative graph (facts/episodes about
+    /// the same entities, chained through support), so this stops a recall returning a wall of
+    /// near-redundant facts about one cluster. Unlike the session cap it applies to facts too
+    /// (a fact has no session but does have a community). Spilled memories are topped up only if
+    /// the bundle is under-filled. **Zero (the default) means no cap** — the community labels are
+    /// not even computed, so recall is byte-identical and zero-cost. STAGED OFF pending a
+    /// graph-bearing benchmark to tune the value (store memory `019ed336` prove-before-flip;
+    /// BEAM is episode-only and cannot exercise communities), unlike the session cap whose `3`
+    /// is already established.
+    pub community_diversity_cap: usize,
     /// A wall-clock budget for the whole recall; exceeding it surfaces as
     /// [`RetrievalError::DeadlineExceeded`](crate::RetrievalError::DeadlineExceeded)
     /// (03 §8). `None` means no deadline.
@@ -142,6 +154,7 @@ impl Default for RecallOptions {
             mode_override: None,
             temporal: TemporalMode::default(),
             session_diversity_cap: 3,
+            community_diversity_cap: 0,
             deadline: None,
             include_expired: false,
             fanout: 0,
