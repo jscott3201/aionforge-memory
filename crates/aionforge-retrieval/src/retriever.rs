@@ -26,7 +26,7 @@ use tracing::Instrument;
 
 use crate::bundle::{RecallBundle, RecallExplanation, StageTimings, render};
 use crate::error::RetrievalError;
-use crate::fusion::{DEFAULT_RRF_K, WeightedRanking, fuse};
+use crate::fusion::{FusionStrategy, WeightedRanking, WeightedRrf};
 use crate::precision::{derive_graph_seed, resolve_seed_entities};
 use crate::query::{RecallQuery, TemporalMode};
 use crate::rerank;
@@ -535,7 +535,10 @@ impl<E: Embedder> HybridRetriever<E> {
         //    `surface_system` above, in lockstep with `include_system`.
         let assemble_started = Instant::now();
         let _assemble_span = trace::stage_span("assemble").entered();
-        let fused = fuse(&rankings, DEFAULT_RRF_K);
+        // Fusion dispatches through the FusionStrategy seam; WeightedRrf is the default
+        // (and diagnostic baseline), byte-identical to the prior `fuse(&rankings,
+        // DEFAULT_RRF_K)` call it replaces.
+        let fused = WeightedRrf::default().fuse(&rankings);
         // The true candidate pool the selection examined — the distinct fused candidates
         // across every signal, before authorization / temporal / supersession / diversity
         // attrition. This is the honest "considered" count for the explanation: the gap
