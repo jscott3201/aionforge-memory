@@ -195,22 +195,20 @@ fn entity_seeds_graph_and_drops_recency() {
 }
 
 #[test]
-fn the_factual_class_floors_off_topic_and_the_others_stay_off() {
-    // The single-hop-factual class floors at 0.60 — the off-topic-rejection win measured
-    // on the eval harness. Pinning the exact value guards against an accidental change
-    // (the value is gemini-cosine-calibrated; re-measure if the embedder changes).
-    assert!(
-        (profile_for(QueryClass::SingleHopFactual).min_relevance - 0.60).abs() < 1e-12,
-        "the factual class floors off-topic hits at 0.60",
-    );
-    // The other classes have not been calibrated yet, so they stay OFF (0.0). Quote is
+fn the_calibrated_classes_floor_off_topic_and_the_rest_stay_off() {
+    // SingleHopFactual (#282) and Temporal both floor at 0.60 — off-topic-rejection wins
+    // measured on the eval harness (the temporal value from the beam_temporal_floor runner).
+    // Pinning the exact values guards against an accidental change (they are
+    // gemini-cosine-calibrated; re-measure if the embedder changes).
+    for class in [QueryClass::SingleHopFactual, QueryClass::Temporal] {
+        assert!(
+            (profile_for(class).min_relevance - 0.60).abs() < 1e-12,
+            "{class:?} floors off-topic hits at 0.60",
+        );
+    }
+    // The remaining classes have not been calibrated yet, so they stay OFF (0.0). Quote is
     // also exempt on its own merits (dense weight 0).
-    for class in [
-        QueryClass::MultiHop,
-        QueryClass::Temporal,
-        QueryClass::Entity,
-        QueryClass::Quote,
-    ] {
+    for class in [QueryClass::MultiHop, QueryClass::Entity, QueryClass::Quote] {
         assert_eq!(
             profile_for(class).min_relevance,
             0.0,

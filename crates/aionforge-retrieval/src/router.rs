@@ -101,11 +101,12 @@ pub struct RetrievalProfile {
     ///
     /// A hit whose dense cosine similarity is below the floor — or which has no dense
     /// score at all (a lexical-only hit) — is dropped, so an off-topic query can
-    /// legitimately return empty. `0.0` is OFF (the floor never fires). The factual class
-    /// floors at `0.60` (the `FACTUAL_FLOOR` const — an off-topic-rejection win measured on
-    /// the eval harness); the other classes are still OFF pending their own calibration. The
-    /// dense-weight-zero classes (e.g. `Quote`) stay exempt at `0.0`, since a dense floor
-    /// is meaningless where the dense signal itself is off. A per-query
+    /// legitimately return empty. `0.0` is OFF (the floor never fires). The factual and
+    /// temporal classes floor at `0.60` (the `FACTUAL_FLOOR` / `TEMPORAL_FLOOR` consts —
+    /// off-topic-rejection wins measured on the eval harness); the remaining `MultiHop` and
+    /// `Entity` classes are still OFF pending their own calibration. The dense-weight-zero
+    /// classes (e.g. `Quote`) stay exempt at `0.0`, since a dense floor is meaningless where
+    /// the dense signal itself is off. A per-query
     /// `RecallOptions::min_relevance` overrides this, which in turn overrides the
     /// deployment-wide `RetrieverConfig::min_relevance`.
     pub min_relevance: f64,
@@ -133,6 +134,24 @@ const FLOOR_OFF: f64 = 0.0;
 /// drift. Re-measure with `cargo test -p aionforge-eval --test floor_sweep -- --ignored`
 /// after any embedder or dimension change (the value is gemini-cosine-calibrated).
 const FACTUAL_FLOOR: f64 = 0.60;
+
+/// The temporal dense-relevance floor: an off-topic temporal query ("when did X happen")
+/// returns empty rather than surfacing a confident-but-unrelated dated hit.
+///
+/// `0.60` is the center of the separation window measured on the `aionforge-eval`
+/// `beam_temporal_floor` runner (real gemini; 20 BEAM conversations; 76 temporal-routed
+/// positives vs 340 temporal off-topic queries): on-topic gold dense cosine sat at p10
+/// ~0.652 (3072) / ~0.658 (1536) while off-topic noise peaked at p90 ~0.586 / ~0.592, and a
+/// 0.60 floor rejected ~93% of off-topic temporal queries at ZERO *marginal* false-rejection
+/// (the residual is base-retrieval miss, present with the floor off; recall@10 actually rose
+/// via de-cluttering) at both dimensions. The value coincides with [`FACTUAL_FLOOR`] but is
+/// calibrated independently: temporal weights recency heavily, yet the floor gates on dense
+/// cosine *before* recency re-ranks, so the gold's dense distribution is what matters — and
+/// on BEAM it sits as high as factual gold. Re-measure with
+/// `cargo test -p aionforge-eval --test beam_temporal_floor -- --ignored` after any embedder
+/// or dimension change. NOTE: BEAM carries no supersession chains, so the valid-but-older
+/// low-dense-gold case (temporal's distinguishing risk) is untested here.
+const TEMPORAL_FLOOR: f64 = 0.60;
 
 /// The default retrieval profile for a class (03 §3 mode-weight profiles).
 #[must_use]
@@ -182,7 +201,7 @@ pub fn profile_for(class: QueryClass) -> RetrievalProfile {
         // recall: heavy recency + dense, moderate lexical, no graph, moderate trust.
         QueryClass::Temporal => RetrievalProfile {
             class,
-            min_relevance: FLOOR_OFF,
+            min_relevance: TEMPORAL_FLOOR,
             weights: SignalWeights {
                 lexical: MODERATE,
                 lexical_anchor: OFF,
