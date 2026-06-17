@@ -56,7 +56,7 @@ Tools:
 - capture: write one event for agent_id or principal.agent_id; team target requires asserted teams.
 - batch_capture: capture an array (1..=64) under one shared writer; per-item best-effort, dup counts stored near-duplicates.
 - consolidation_status: service-wide backlog age from ingestion, not historical event time.
-- consolidate: bounded deterministic foreground pass, max_ticks <= 5. Consolidation is manual/opt-in: facts/entities/notes are derived ONLY by a run, so a backlog accrues after capture/batch_capture until you call it.
+- consolidate: bounded deterministic foreground pass, max_ticks <= 5. Consolidation is manual/opt-in unless `aionforge serve` starts the background loop; when the loop is enabled the tool returns ERR_CONSOLIDATE_MANAGED so the consolidation cursor has one writer.
 - forget / unforget: viewer-writable lifecycle ops; disabled says `reason=forgetting.enabled=false`.
 - pin / unpin: viewer-writable durability ops; pin holds a memory against decay, unpin releases it.
 - audit_history: principal-scoped audit by subject, kind, or both; subject=* means all visible subjects for a kind.
@@ -112,6 +112,7 @@ Recommended client posture:
 - Protocol annotations mirror this posture: read-like tools set readOnlyHint=true, all tools set openWorldHint=false, and forget sets destructiveHint=true.
 
 Error markers worth preserving in summaries:
+- ERR_CONSOLIDATE_MANAGED: consolidation is managed by the background loop.
 - ERR_CONSOLIDATE_BUSY: another foreground consolidation run is already active.
 - ERR_NOT_FOUND: lifecycle target was absent or not authorized for the viewer.
 - ERR_INVALID_VIEWER / ERR_INVALID_AGENT_ID: caller passed an invalid principal id.

@@ -36,7 +36,7 @@ pub use http_transport::{
     AionforgeStreamableHttpService, OAUTH_PROTECTED_RESOURCE_WELL_KNOWN_PREFIX,
     OAuthProtectedResourceMetadata, STREAMABLE_HTTP_ENDPOINT, StreamableHttpConfigError,
     StreamableHttpOptions, oauth_protected_resource_well_known_path, streamable_http_config,
-    streamable_http_service,
+    streamable_http_service, streamable_http_service_with_consolidation,
 };
 pub use inspect::{
     ReadMemoryToolParams, SessionManifestCursorToolParam, SessionManifestToolParams,
@@ -112,6 +112,7 @@ pub struct AionforgeMcp<E> {
     // secret). PR4 shipped dark — no caller set it enabled — so runtime behavior was unchanged
     // until PR5's validator layer flips it on.
     auth: AuthPosture,
+    background_managed: bool,
     consolidation_lock: Arc<tokio::sync::Mutex<()>>,
     // Used by the rmcp-generated `#[tool_handler]` impl; the macro expansion hides the
     // read from the dead-code analyzer.
@@ -130,6 +131,7 @@ impl<E> Clone for AionforgeMcp<E> {
         Self {
             memory: Arc::clone(&self.memory),
             auth: self.auth.clone(),
+            background_managed: self.background_managed,
             consolidation_lock: Arc::clone(&self.consolidation_lock),
             tool_router: self.tool_router.clone(),
             prompt_router: self.prompt_router.clone(),
@@ -160,12 +162,27 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
     /// [`AionforgeMcp::new_with_auth_posture`] to also surface the trusted issuer origins.
     #[must_use]
     pub fn new_with_auth(memory: Arc<Memory<E>>, auth_enabled: bool) -> Self {
+        Self::new_with_auth_and_consolidation(memory, auth_enabled, false)
+    }
+
+    /// Build a handler over a shared memory, selecting auth and background consolidation posture.
+    ///
+    /// `background_managed` must be true only when the host has started
+    /// [`Memory::start_consolidation`] for the same store. In that posture the foreground
+    /// `consolidate` tool returns `ERR_CONSOLIDATE_MANAGED` before taking the foreground lock,
+    /// preserving the single-writer consolidation cursor.
+    #[must_use]
+    pub fn new_with_auth_and_consolidation(
+        memory: Arc<Memory<E>>,
+        auth_enabled: bool,
+        background_managed: bool,
+    ) -> Self {
         let auth = if auth_enabled {
             AuthPosture::enabled(Vec::new())
         } else {
             AuthPosture::disabled()
         };
-        Self::new_with_auth_posture(memory, auth)
+        Self::new_with_auth_posture_and_consolidation(memory, auth, background_managed)
     }
 
     /// Build a handler with an explicit [`AuthPosture`] (enabled flag + trusted issuer origins).
@@ -176,9 +193,23 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
     /// issuers are trusted.
     #[must_use]
     pub fn new_with_auth_posture(memory: Arc<Memory<E>>, auth: AuthPosture) -> Self {
+        Self::new_with_auth_posture_and_consolidation(memory, auth, false)
+    }
+
+    /// Build a handler with explicit auth and background consolidation posture.
+    ///
+    /// See [`AionforgeMcp::new_with_auth_and_consolidation`] for the managed-loop safety
+    /// contract.
+    #[must_use]
+    pub fn new_with_auth_posture_and_consolidation(
+        memory: Arc<Memory<E>>,
+        auth: AuthPosture,
+        background_managed: bool,
+    ) -> Self {
         Self {
             memory,
             auth,
+            background_managed,
             consolidation_lock: Arc::new(tokio::sync::Mutex::new(())),
             tool_router: Self::tool_router(),
             prompt_router: Self::prompt_router(),
@@ -335,7 +366,7 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
     }
 
     #[tool(
-        description = "Run bounded deterministic consolidation (manual; derives facts only on run); approval-gate it.",
+        description = "Run bounded foreground consolidation; ERR_CONSOLIDATE_MANAGED when background-managed.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -347,6 +378,12 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
         &self,
         params: Parameters<ConsolidationRunToolParams>,
     ) -> Result<String, String> {
+        if self.background_managed {
+            return Err(
+                "ERR_CONSOLIDATE_MANAGED: consolidation is managed by the background loop"
+                    .to_string(),
+            );
+        }
         let Ok(_guard) = self.consolidation_lock.try_lock() else {
             return Err(
                 "ERR_CONSOLIDATE_BUSY: another foreground consolidation run is active".to_string(),
@@ -696,18 +733,36 @@ pub async fn serve_stdio<E: Embedder + 'static>(
     memory: Arc<Memory<E>>,
     auth_enabled: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let service = AionforgeMcp::new_with_auth(memory, auth_enabled)
-        .serve(rmcp::transport::io::stdio())
-        .await?;
+    serve_stdio_with_consolidation(memory, auth_enabled, false).await
+}
+
+/// Serve the MCP surface over stdio, selecting auth and background consolidation posture.
+///
+/// `background_managed` must match the host's serve-owned background consolidation loop. When
+/// true, the foreground `consolidate` tool is disabled with `ERR_CONSOLIDATE_MANAGED` so it cannot
+/// race the background cursor writer.
+///
+/// # Errors
+/// Returns an error if the transport cannot be established or the service fails while running.
+pub async fn serve_stdio_with_consolidation<E: Embedder + 'static>(
+    memory: Arc<Memory<E>>,
+    auth_enabled: bool,
+    background_managed: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let service =
+        AionforgeMcp::new_with_auth_and_consolidation(memory, auth_enabled, background_managed)
+            .serve(rmcp::transport::io::stdio())
+            .await?;
     service.waiting().await?;
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::tool_span_outcome;
     use rmcp::ErrorData as McpError;
     use rmcp::model::{CallToolRequestMethod, CallToolResult};
+
+    use super::tool_span_outcome;
 
     #[test]
     fn tool_span_outcome_classifies_success_tool_error_and_dispatch_error() {

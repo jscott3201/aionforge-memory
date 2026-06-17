@@ -69,16 +69,22 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::ConfigError;
 
-/// Deterministic consolidation posture (write-and-consolidation §2-§3): the scheduler's
-/// pacing/bounds and the four pass-level tunings.
+/// Deterministic consolidation posture (write-and-consolidation §2-§3): the background-loop
+/// switch, the scheduler's pacing/bounds, and the four pass-level tunings.
 ///
-/// All-defaults is today's behavior exactly — the [`Default`] impl mirrors the engine's
-/// `aionforge_consolidate` defaults knob for knob, so an absent `[consolidation]` block
-/// changes nothing. Plain primitives only; the host maps these into the engine's
-/// `ConsolidationConfig`/`PassConfig` (see the module docs).
+/// All-defaults is today's behavior exactly: the serve-only `enabled` switch is off, and the
+/// scheduler/pass primitives mirror the engine's `aionforge_consolidate` defaults knob for knob.
+/// Plain primitives only; the host maps these into the engine's `ConsolidationConfig`/`PassConfig`
+/// (see the module docs).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ConsolidationConfig {
+    /// Whether `aionforge serve` starts the autonomous background consolidation loop.
+    ///
+    /// Default `false` preserves the foreground-only posture: captures accrue in the raw backlog
+    /// until an explicit `consolidate` tool call runs. Enabling this delegates consolidation to the
+    /// serving process and makes the foreground tool a no-op/error to preserve the single writer.
+    pub enabled: bool,
     /// How often the consolidation loop wakes to drain work, in seconds. Validated `> 0`.
     pub tick_interval_secs: u64,
     /// The most episodes one tick takes (the per-tick concurrency bound). Validated `>= 1`.
@@ -104,8 +110,10 @@ pub struct ConsolidationConfig {
 
 impl Default for ConsolidationConfig {
     fn default() -> Self {
-        // Mirrors `aionforge_consolidate::ConsolidationConfig::default()` exactly.
+        // `enabled` is serve-only; the rest mirrors
+        // `aionforge_consolidate::ConsolidationConfig::default()` exactly.
         Self {
+            enabled: false,
             tick_interval_secs: 5,
             batch_size: 32,
             apply_timeout_secs: 30,
@@ -277,9 +285,9 @@ fn validate_unit_interval(key: &str, value: f64) -> Result<(), ConfigError> {
 impl ConsolidationConfig {
     /// Check the section's binding invariants, fail-closed with the offending key named.
     ///
-    /// Unlike the optional siblings ([`ForgettingConfig`](crate::ForgettingConfig) et al.)
-    /// there is no master off-switch: the deterministic consolidation path always runs, so
-    /// every knob is always live and is validated unconditionally. Thresholds must lie in
+    /// `enabled` only controls whether `aionforge serve` owns the background loop. The deterministic
+    /// foreground path remains available when that flag is false, so every scheduler/pass knob is
+    /// always live and is validated unconditionally. Thresholds must lie in
     /// `[0.0, 1.0]`; durations and counts that would divide-by-zero or wedge a pass must be
     /// positive.
     ///
@@ -400,6 +408,10 @@ mod tests {
         config.validate().expect("defaults validate");
         // The exact engine defaults (aionforge-consolidate/src/config.rs); the host mapping
         // test pins the typed equality, this pins the literal primitives.
+        assert!(
+            !config.enabled,
+            "autonomous background consolidation is default-off"
+        );
         assert_eq!(config.tick_interval_secs, 5);
         assert_eq!(config.batch_size, 32);
         assert_eq!(config.apply_timeout_secs, 30);
@@ -436,6 +448,7 @@ mod tests {
         // the defaults exactly as the real loader does (Serialized::defaults + Toml).
         let toml = r#"
             [consolidation]
+            enabled = true
             batch_size = 64
 
             [consolidation.summarization]
@@ -459,6 +472,7 @@ mod tests {
             .extract()
             .expect("parse");
         let parsed = parsed.consolidation;
+        assert!(parsed.enabled, "top-level background loop switch parses");
         assert_eq!(parsed.batch_size, 64);
         assert!(parsed.induction.enabled, "induction was turned on");
         assert_eq!(parsed.induction.repetition_threshold, 2);

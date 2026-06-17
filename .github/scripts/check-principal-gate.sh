@@ -105,8 +105,8 @@ while IFS= read -r f; do
   # POSITIVE check (every file): a tool fn that takes a validated extension must route it
   # through a resolver in the same file. We approximate "takes a validated extension" by the
   # parameter declaration; the resolver call must appear in the same production text.
-  if printf '%s\n' "$production" | grep -qE 'extension:[[:space:]]*Option<[[:space:]]*ValidatedPrincipal'; then
-    if ! printf '%s\n' "$production" | grep -qE 'resolve_reader|resolve_writer|refuse_read_only_write'; then
+  if grep -qE 'extension:[[:space:]]*Option<[[:space:]]*ValidatedPrincipal' <<< "$production"; then
+    if ! grep -qE 'resolve_reader|resolve_writer|refuse_read_only_write' <<< "$production"; then
       echo "FAIL: $f accepts a validated extension but never routes it through a resolver"
       echo "      (resolve_reader/resolve_writer/refuse_read_only_write). Identity must be minted by the resolvers."
       violations=$((violations + 1))

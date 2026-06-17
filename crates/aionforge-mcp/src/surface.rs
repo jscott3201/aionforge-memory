@@ -202,7 +202,11 @@ pub(crate) const TOOLS: &[ToolSurface] = &[
         destructive_hint: false,
         idempotent_hint: false,
         open_world_hint: false,
-        errors: &["ERR_CONSOLIDATE_BUSY", "ERR_CONSOLIDATE"],
+        errors: &[
+            "ERR_CONSOLIDATE_MANAGED",
+            "ERR_CONSOLIDATE_BUSY",
+            "ERR_CONSOLIDATE",
+        ],
     },
     ToolSurface {
         name: "forget",
