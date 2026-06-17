@@ -102,6 +102,7 @@ fn signal_label(signal: Signal) -> &'static str {
         Signal::Dense => "dense",
         Signal::Support => "support",
         Signal::Graph => "graph",
+        Signal::Authority => "authority",
         Signal::Recency => "recency",
         Signal::Importance => "importance",
         Signal::Trust => "trust",

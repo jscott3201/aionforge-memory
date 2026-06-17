@@ -52,6 +52,16 @@ pub struct SignalWeights {
     pub support: f64,
     /// Associative graph weight.
     pub graph: f64,
+    /// Global graph-authority weight (R1): the query-independent, seedless-PageRank structural
+    /// prior. STAGED OFF (`0.0`) in every class for now — the mechanism ships inert. Per the
+    /// prove-before-flip directive (store memory `019ed336`), the per-class weight is flipped on
+    /// only once a graph-bearing benchmark shows a marginal recall/nDCG lift (BEAM is
+    /// episode-only and cannot measure authority — its projection has no facts/`SUPPORTS`/
+    /// resolved entities). Intended post-validation targets: `LIGHT` on factual/temporal (where
+    /// `importance`, the non-structural prior, is already `LIGHT`), `MODERATE` on multi-hop/entity,
+    /// and OFF on quote (lexical-only). A `0.0` weight elides the signal from fusion, and the
+    /// retriever skips computing it entirely, so OFF costs nothing.
+    pub authority: f64,
     /// Recency weight.
     pub recency: f64,
     /// Effective-importance weight (05 §2, M5.T01).
@@ -70,6 +80,7 @@ impl SignalWeights {
             Signal::Dense => self.dense,
             Signal::Support => self.support,
             Signal::Graph => self.graph,
+            Signal::Authority => self.authority,
             Signal::Recency => self.recency,
             Signal::Importance => self.importance,
             Signal::Trust => self.trust,
@@ -207,6 +218,7 @@ pub fn profile_for(class: QueryClass) -> RetrievalProfile {
                 dense: HEAVY,
                 support: OFF,
                 graph: LIGHT,
+                authority: OFF,
                 recency: LIGHT,
                 importance: LIGHT,
                 trust: HEAVY,
@@ -228,6 +240,7 @@ pub fn profile_for(class: QueryClass) -> RetrievalProfile {
                 dense: HEAVY,
                 support: MODERATE,
                 graph: HEAVY,
+                authority: OFF,
                 recency: LIGHT,
                 importance: LIGHT,
                 trust: MODERATE,
@@ -249,6 +262,7 @@ pub fn profile_for(class: QueryClass) -> RetrievalProfile {
                 dense: HEAVY,
                 support: OFF,
                 graph: OFF,
+                authority: OFF,
                 recency: HEAVY,
                 importance: LIGHT,
                 trust: MODERATE,
@@ -270,6 +284,7 @@ pub fn profile_for(class: QueryClass) -> RetrievalProfile {
                 dense: MODERATE,
                 support: MODERATE,
                 graph: HEAVY,
+                authority: OFF,
                 recency: OFF,
                 importance: LIGHT,
                 trust: MODERATE,
@@ -291,6 +306,7 @@ pub fn profile_for(class: QueryClass) -> RetrievalProfile {
                 dense: OFF,
                 support: OFF,
                 graph: OFF,
+                authority: OFF,
                 recency: OFF,
                 importance: OFF,
                 trust: OFF,

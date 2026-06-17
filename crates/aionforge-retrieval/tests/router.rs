@@ -257,7 +257,31 @@ fn signal_weights_accessor_maps_each_signal() {
     assert_eq!(p.weights.weight(Signal::Dense), p.weights.dense);
     assert_eq!(p.weights.weight(Signal::Support), p.weights.support);
     assert_eq!(p.weights.weight(Signal::Graph), p.weights.graph);
+    assert_eq!(p.weights.weight(Signal::Authority), p.weights.authority);
     assert_eq!(p.weights.weight(Signal::Recency), p.weights.recency);
     assert_eq!(p.weights.weight(Signal::Importance), p.weights.importance);
     assert_eq!(p.weights.weight(Signal::Trust), p.weights.trust);
+}
+
+#[test]
+fn the_global_authority_prior_is_staged_off_in_every_profile() {
+    // R1 ships the global-authority fusion signal as inert plumbing: the mechanism (a seedless
+    // PageRank Store method + the Signal + the gated retriever block) is wired, but every class
+    // weights it at 0.0, so it is elided from fusion and never computed. Per the prove-before-flip
+    // directive (store memory 019ed336), the per-class weight is flipped on only once a
+    // graph-bearing benchmark shows a marginal lift — BEAM is episode-only and cannot measure it.
+    // This guard locks the OFF posture so an accidental flip is caught until that follow-up.
+    for class in [
+        QueryClass::SingleHopFactual,
+        QueryClass::MultiHop,
+        QueryClass::Temporal,
+        QueryClass::Entity,
+        QueryClass::Quote,
+    ] {
+        assert_eq!(
+            profile_for(class).weights.authority,
+            0.0,
+            "{class:?} stages the global-authority weight OFF pending a graph-bearing benchmark",
+        );
+    }
 }

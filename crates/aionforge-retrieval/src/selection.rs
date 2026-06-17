@@ -11,7 +11,7 @@ use aionforge_domain::nodes::episodic::{Episode, Role};
 use aionforge_domain::nodes::semantic::Fact;
 use aionforge_domain::time::Timestamp;
 use aionforge_store::{
-    CandidateSet, ExpandDirection, ExpandEdge, NodeId, SearchKind, SetOp, Store,
+    CandidateSet, ExpandDirection, ExpandEdge, NodeId, SearchHit, SearchKind, SetOp, Store,
 };
 
 use crate::bundle::{CoreBlockEntry, EpisodeEntry, FactEntry, StructuredEntry};
@@ -409,18 +409,10 @@ pub(crate) fn fact_support_ranking(
 
 /// The graph (PageRank) fact ranking, scoped by `current` (03 §1, §5).
 ///
-/// PageRank spreads associatively across the whole graph, so — unlike the lexical and
-/// dense fact searches, which the engine bounds to the current-support set — its hits
-/// are not current by construction. In Current mode (`current` is `Some`) they are
-/// intersected with the live support membership here, so graph expansion can never
-/// surface a fact the support provider excludes: `fact_passes_temporal` checks only
-/// `status == active` in Current mode (it trusts the search to have scoped the set), so
-/// a contradicted-but-active fact would otherwise leak in. No current fact is *lost* to
-/// this filter — the lexical fact signal already covers the whole support set, so graph
-/// expansion only adds associative weight to facts the other signals also reach. `None`
-/// (any non-Current mode) leaves every reached fact, with the per-candidate window test
-/// applied later in `resolve_fact`. Hits are filtered before they are numbered, so the
-/// surviving ranks stay dense (0, 1, 2, …) for fusion.
+/// Facts rank over the whole projection (`result_nodes` = `None`): the graph fact reach is
+/// bounded to the live support set by [`current_scoped`], not by a visible-namespace node scope
+/// the way the episode side is. `None` (any non-Current mode) leaves every reached fact, with
+/// the per-candidate window test applied later in `resolve_fact`.
 pub(crate) fn fact_graph_ranking(
     store: &Store,
     seeds: &[NodeId],
@@ -428,11 +420,47 @@ pub(crate) fn fact_graph_ranking(
     k: usize,
     deadline: Option<Instant>,
 ) -> Result<SignalRanking, RetrievalError> {
-    // Facts rank over the whole projection (`result_nodes` = `None`): the graph fact reach is
-    // bounded to the live support set by the `current` intersection below, not by a visible-
-    // namespace node scope the way the episode side is.
     let hits = store.personalized_pagerank_within(SearchKind::Fact, seeds, k, None, deadline)?;
-    let hits = match current {
+    Ok(ranking_from_hits(
+        Signal::Graph,
+        current_scoped(hits, current),
+    ))
+}
+
+/// The global-authority (seedless PageRank) fact ranking, scoped by `current` (R1).
+///
+/// The seedless complement to [`fact_graph_ranking`]: it ranks the globally most-connected
+/// facts rather than those near a query entity, but is otherwise identical — it ranks over the
+/// whole projection (`result_nodes` = `None`) and is bounded to the live support set by
+/// [`current_scoped`] in Current mode, so authority can never surface a non-current fact.
+pub(crate) fn fact_authority_ranking(
+    store: &Store,
+    current: Option<&[NodeId]>,
+    k: usize,
+    deadline: Option<Instant>,
+) -> Result<SignalRanking, RetrievalError> {
+    let hits = store.graph_authority(SearchKind::Fact, k, None, deadline)?;
+    Ok(ranking_from_hits(
+        Signal::Authority,
+        current_scoped(hits, current),
+    ))
+}
+
+/// Intersect PageRank fact hits with the live current-support set in Current mode (`Some`), or
+/// leave them untouched in any other temporal mode (`None`). Shared by the graph and authority
+/// fact rankings.
+///
+/// PageRank spreads associatively across the whole graph, so — unlike the lexical and dense fact
+/// searches, which the engine bounds to the current-support set — its hits are not current by
+/// construction. Intersecting with the live support membership here means graph/authority
+/// expansion can never surface a fact the support provider excludes: `fact_passes_temporal`
+/// checks only `status == active` in Current mode (it trusts the search to have scoped the set),
+/// so a contradicted-but-active fact would otherwise leak in. No current fact is *lost* to this
+/// filter — the lexical fact signal already covers the whole support set, so graph/authority
+/// expansion only adds weight to facts the other signals also reach. Hits are filtered before
+/// they are numbered, so the surviving ranks stay dense (0, 1, 2, …) for fusion.
+fn current_scoped(hits: Vec<SearchHit>, current: Option<&[NodeId]>) -> Vec<SearchHit> {
+    match current {
         Some(members) => {
             let set: HashSet<NodeId> = members.iter().copied().collect();
             hits.into_iter()
@@ -440,8 +468,7 @@ pub(crate) fn fact_graph_ranking(
                 .collect()
         }
         None => hits,
-    };
-    Ok(ranking_from_hits(Signal::Graph, hits))
+    }
 }
 
 /// Build the per-kind trust re-rankings over the candidates the search signals already

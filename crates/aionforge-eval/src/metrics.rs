@@ -278,6 +278,7 @@ mod tests {
                 dense: 1.0,
                 support: 0.0,
                 graph: 0.3,
+                authority: 0.0,
                 recency: 0.3,
                 importance: 0.3,
                 trust: 1.0,
