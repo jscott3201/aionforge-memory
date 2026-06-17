@@ -8,6 +8,9 @@
 //! per-kind ranking with the others. [`Store::graph_authority`] runs the same projection
 //! *seedless* (uniform teleport) for a query-independent global authority prior; the two share
 //! one private `pagerank_within` core and differ only in the bound personalization.
+//! [`Store::community_labels`] runs native Louvain over the same projection to group nodes into
+//! associative communities — not a retrieval signal but a selection-stage diversity constraint
+//! (R2), so a recall can't return a cluster of near-redundant facts about one entity.
 //!
 //! ## Why undirected
 //! The associative schema points records *at* entities, so under natural directed PageRank
@@ -35,13 +38,14 @@
 //! the top-`k` nodes of one [`SearchKind`] within an optional node scope, best-first, in a
 //! single bounded call — no full-graph transfer, no label scan, no Rust-side sort.
 
+use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 use selene_core::{NodeId, Value};
 
-use crate::convert::string_value;
+use crate::convert::{as_node_ref, string_value};
 use crate::error::StoreError;
-use crate::gql::BoundQuery;
+use crate::gql::{BoundQuery, QueryResult};
 use crate::search::{SearchHit, SearchKind, extract_hits, k_value};
 use crate::store::Store;
 
@@ -66,6 +70,10 @@ const SEED_WEIGHT: f64 = 1.0;
 /// PageRank traversal orientation: spread mass across each edge both ways so a seed entity
 /// reaches its facts and episodes (see the module "Why undirected" note).
 const ORIENTATION_UNDIRECTED: &str = "undirected";
+/// Louvain iteration cap — converges well within this on a memory-sized graph; matches
+/// selene's own default. Louvain is a single-pass, deterministic (spec §E30 sorted-candidate
+/// iteration) community assignment, so the labels are reproducible within a graph generation.
+const LOUVAIN_MAX_ITERATIONS: i64 = 50;
 
 impl Store {
     /// Personalized-PageRank a kind by associative proximity to `seeds` (M3.T01).
@@ -206,10 +214,7 @@ impl Store {
         // procedure (intersection before truncation); the `score > 0.0` cut below then drops
         // any node with zero mass (outside a seed's connected component, in the personalized
         // case — a no-op under uniform teleport).
-        let build = BoundQuery::new("CALL algo.projection_build($name, $labels, $types, NULL)")
-            .bind_str("name", PROJECTION_NAME)?
-            .bind("labels", string_list_value(&PROJECTION_NODE_LABELS)?)?
-            .bind("types", string_list_value(&PROJECTION_EDGE_TYPES)?)?;
+        let build = assoc_projection_build()?;
         let rank = BoundQuery::new(
             "CALL algo.pagerank($name, $damping, $max_iter, $tolerance, NULL, \
              $orientation, $seeds, $result_label, $limit, $result_nodes) YIELD node_id, score",
@@ -236,6 +241,90 @@ impl Store {
         hits.retain(|hit| hit.score > 0.0);
         Ok(hits)
     }
+
+    /// Detect community labels over the associative projection via native Louvain (R2 — the
+    /// selection-stage community-diversity constraint).
+    ///
+    /// Returns the community each requested node belongs to, as a `node -> community` map.
+    /// The community is selene's representative-node id for the community — an opaque, stable
+    /// key, suitable only for grouping (two nodes are in the same community iff their values
+    /// are equal), never as a score. A node absent from the map carries no community label
+    /// (it was not in the projection, e.g. a core block); callers treat that as "uncapped".
+    ///
+    /// Louvain runs over the SAME `{Entity,Fact,Episode}×{MENTIONS,ABOUT,SUPPORTS}` projection
+    /// as the PageRank signals, so a "community" is an associative cluster — facts about the
+    /// same entities, chained through support. It is single-pass and deterministic (selene spec
+    /// §E30), so the labels are reproducible within a graph generation; they shift across writes,
+    /// which is why the result is only ever a diversity CONSTRAINT, not a fused score.
+    ///
+    /// CAVEAT: unlike `algo.pagerank`, `algo.louvain` has no `result_nodes`/`limit` pushdown, so
+    /// it labels the WHOLE projection and the caller filters to `nodes` here (the Rust-side
+    /// intersect the upstream selene-db pushdown gap would remove). Fine at memory-store sizes;
+    /// it wants a generation-keyed projection/result cache before scale. An empty `nodes`
+    /// short-circuits without building the projection.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the projection build, the Louvain call, a bind, execution, the
+    /// deadline, or the row decode fails.
+    pub fn community_labels(
+        &self,
+        nodes: &[NodeId],
+        deadline: Option<Instant>,
+    ) -> Result<HashMap<NodeId, NodeId>, StoreError> {
+        if nodes.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let wanted: HashSet<NodeId> = nodes.iter().copied().collect();
+
+        // Build the projection and run Louvain over it in one session (the projection is
+        // session-scoped, like the PageRank path).
+        let build = assoc_projection_build()?;
+        let detect =
+            BoundQuery::new("CALL algo.louvain($name, $max_iter) YIELD node_id, community, level")
+                .bind_str("name", PROJECTION_NAME)?
+                .bind("max_iter", Value::Int(LOUVAIN_MAX_ITERATIONS))?;
+
+        let QueryResult::Rows(rows) = self.execute_session_within(&[build, detect], deadline)?
+        else {
+            // `YIELD` always projects a row table; a non-Rows result would mean the CALL did not
+            // project (or modified the graph), neither of which a read-only Louvain can do.
+            return Ok(HashMap::new());
+        };
+        let node_idx = rows
+            .column_index("node_id")
+            .ok_or_else(|| StoreError::decode("louvain result has no node_id column"))?;
+        let community_idx = rows
+            .column_index("community")
+            .ok_or_else(|| StoreError::decode("louvain result has no community column"))?;
+
+        // Louvain labels every projection node; keep only the requested ones (no GQL pushdown).
+        let mut labels = HashMap::with_capacity(wanted.len());
+        for row in 0..rows.row_count() {
+            let node = as_node_ref(
+                rows.value(row, node_idx)
+                    .ok_or_else(|| StoreError::decode("louvain row missing node_id"))?,
+            )?;
+            if !wanted.contains(&node) {
+                continue;
+            }
+            let community = as_node_ref(
+                rows.value(row, community_idx)
+                    .ok_or_else(|| StoreError::decode("louvain row missing community"))?,
+            )?;
+            labels.insert(node, community);
+        }
+        Ok(labels)
+    }
+}
+
+/// Build the shared ephemeral associative projection — the `{Entity,Fact,Episode}` nodes over
+/// the `{MENTIONS,ABOUT,SUPPORTS}` edges that every graph algorithm in this module ranks or
+/// labels. Lives only for the session that builds it, so the fixed [`PROJECTION_NAME`] is safe.
+fn assoc_projection_build() -> Result<BoundQuery, StoreError> {
+    BoundQuery::new("CALL algo.projection_build($name, $labels, $types, NULL)")
+        .bind_str("name", PROJECTION_NAME)?
+        .bind("labels", string_list_value(&PROJECTION_NODE_LABELS)?)?
+        .bind("types", string_list_value(&PROJECTION_EDGE_TYPES)?)
 }
 
 /// The `result_nodes` argument `algo.pagerank` restricts its scored rows to: a `LIST<NODE>`

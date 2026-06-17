@@ -617,6 +617,7 @@ impl<E: Embedder> HybridRetriever<E> {
             min_relevance,
             profile.floor_exempt_signals,
             ranked_budget,
+            deadline,
         )?;
 
         // 4. Structured view stays in score order behind the identity prefix; the
