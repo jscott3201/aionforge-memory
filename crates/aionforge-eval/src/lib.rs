@@ -9,20 +9,27 @@
 //! is confined to dev-dependencies and an on-demand runner, so the always-compiled
 //! surface here stays small.
 //!
-//! The two always-on modules are:
+//! The always-on modules are:
 //! - [`metrics`] — pure functions over the public [`aionforge_retrieval::RecallBundle`]:
 //!   `recall@k`, `nDCG@k`, off-topic-rejection rate, and a false-rejection guard.
 //! - [`report`] — a serde-serializable sweep report over a range of floor values.
+//! - [`fixture`] — the JSONL loader for the labeled corpus (memories + graded /
+//!   negative queries).
+//! - [`scrub`] — a secret/PII gate run over any fixture before it becomes a baseline.
 //!
 //! The embedder-backed floor-sweep *runner* (which embeds a fixture once and re-runs
 //! recall across a `min_relevance` sweep) is an on-demand, key-gated integration test —
 //! never part of CI, never a shipped artifact.
 
+pub mod fixture;
 pub mod metrics;
 pub mod report;
+pub mod scrub;
 
+pub use fixture::{Graded, MemoryRow, QueryRow, parse_memories, parse_queries};
 pub use metrics::{
     CorpusMetrics, false_rejection_rate, is_rejected, ndcg_at_k, ranked_ids, recall_at_k,
     rejection_rate,
 };
 pub use report::{FloorReport, SweepReport};
+pub use scrub::scrub_violations;

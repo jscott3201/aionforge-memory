@@ -180,9 +180,14 @@ name = "aionforge-eval"
 version = "0.2.2"
 dependencies = [
  "aionforge-domain",
+ "aionforge-embed",
  "aionforge-retrieval",
+ "aionforge-store",
+ "regex",
+ "secrecy",
  "serde",
  "serde_json",
+ "tokio",
 ]
 
 [[package]]
