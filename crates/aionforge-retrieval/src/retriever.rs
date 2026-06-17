@@ -582,6 +582,7 @@ impl<E: Embedder> HybridRetriever<E> {
             &fact_nodes,
             &dense_similarity,
             min_relevance,
+            profile.floor_exempt_signals,
             ranked_budget,
         )?;
 

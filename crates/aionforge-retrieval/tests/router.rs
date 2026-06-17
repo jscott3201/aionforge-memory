@@ -195,24 +195,53 @@ fn entity_seeds_graph_and_drops_recency() {
 }
 
 #[test]
-fn the_calibrated_classes_floor_off_topic_and_the_rest_stay_off() {
-    // SingleHopFactual (#282) and Temporal both floor at 0.60 — off-topic-rejection wins
-    // measured on the eval harness (the temporal value from the beam_temporal_floor runner).
-    // Pinning the exact values guards against an accidental change (they are
-    // gemini-cosine-calibrated; re-measure if the embedder changes).
-    for class in [QueryClass::SingleHopFactual, QueryClass::Temporal] {
+fn the_calibrated_classes_floor_off_topic_and_quote_stays_off() {
+    // The four dense-bearing classes all floor at 0.60 — off-topic-rejection wins measured
+    // independently on the eval harness: SingleHopFactual (#282, floor_sweep), Temporal
+    // (beam_temporal_floor), MultiHop + Entity (beam_multihop_floor). All three runs converge
+    // on 0.60 because it is the gemini embedder's natural on-topic/off-topic boundary on
+    // BEAM-shaped queries. Pinning the exact values guards against an accidental change (they
+    // are gemini-cosine-calibrated; re-measure if the embedder changes).
+    for class in [
+        QueryClass::SingleHopFactual,
+        QueryClass::Temporal,
+        QueryClass::MultiHop,
+        QueryClass::Entity,
+    ] {
         assert!(
             (profile_for(class).min_relevance - 0.60).abs() < 1e-12,
             "{class:?} floors off-topic hits at 0.60",
         );
     }
-    // The remaining classes have not been calibrated yet, so they stay OFF (0.0). Quote is
-    // also exempt on its own merits (dense weight 0).
-    for class in [QueryClass::MultiHop, QueryClass::Entity, QueryClass::Quote] {
+    // Quote stays OFF on its own merits — its dense weight is 0, so a dense floor is meaningless.
+    assert_eq!(
+        profile_for(QueryClass::Quote).min_relevance,
+        0.0,
+        "Quote keeps its dense-relevance floor OFF (dense weight is 0)",
+    );
+}
+
+#[test]
+fn only_the_associative_classes_exempt_graph_recovered_gold_from_the_floor() {
+    // MultiHop + Entity carry the "dense-OR-signal" hybrid exemption: graph/support-recovered
+    // gold (legitimately FAR in vector space) survives the 0.60 floor via Support/Graph. The
+    // dense-only classes carry an EMPTY exemption set, so their floor behaviour is byte-identical
+    // to the pre-hybrid dense-only gate.
+    for class in [QueryClass::MultiHop, QueryClass::Entity] {
         assert_eq!(
-            profile_for(class).min_relevance,
-            0.0,
-            "{class:?} keeps its dense-relevance floor OFF until calibrated",
+            profile_for(class).floor_exempt_signals,
+            &[Signal::Support, Signal::Graph],
+            "{class:?} exempts graph-recovered gold from the dense floor",
+        );
+    }
+    for class in [
+        QueryClass::SingleHopFactual,
+        QueryClass::Temporal,
+        QueryClass::Quote,
+    ] {
+        assert!(
+            profile_for(class).floor_exempt_signals.is_empty(),
+            "{class:?} is dense-only — no floor exemption",
         );
     }
 }

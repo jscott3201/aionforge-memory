@@ -28,6 +28,27 @@ use crate::temporal::{fact_passes_temporal, fact_serialization_id};
 /// The serialization-id kind tag for an episode (02 §10).
 const EPISODE_KIND_TAG: &str = "episode";
 
+/// The rank ceiling for a dense-floor exemption (M3 hybrid admission). A candidate below the
+/// dense floor is admitted only if an exempting signal ranked it in its top
+/// `FLOOR_EXEMPT_MAX_RANK + 1` — a generous safety ceiling so graph (Personalized PageRank)
+/// deep-tail spread cannot slip the floor. The precise value is calibratable once a
+/// graph-bearing labeled corpus exists (the population-leak validation deferred from the M1
+/// `multihop_entity_floor_probe`).
+const FLOOR_EXEMPT_MAX_RANK: usize = 32;
+
+/// Whether a candidate scoring below the dense floor is nonetheless admitted by the
+/// "dense-OR-signal" hybrid (M3): one of the class's `floor_exempt_signals` ranked it within
+/// [`FLOOR_EXEMPT_MAX_RANK`]. `exempt` is empty for the dense-only classes (factual, temporal,
+/// quote), so this is always `false` there and the floor stays byte-identical. For `MultiHop`
+/// and `Entity` it admits graph/support-recovered associative gold whose direct dense cosine is
+/// below the floor (legitimately FAR in vector space), the recall those classes exist for.
+fn floor_exempt_admits(candidate: &FusedCandidate, exempt: &[Signal]) -> bool {
+    candidate
+        .contributions
+        .iter()
+        .any(|c| exempt.contains(&c.signal) && c.rank <= FLOOR_EXEMPT_MAX_RANK)
+}
+
 /// The serialization-id kind tag for a core block (02 §10, 05 §4).
 const CORE_KIND_TAG: &str = "core";
 
@@ -127,6 +148,7 @@ pub(crate) fn select(
     fact_nodes: &HashSet<NodeId>,
     dense_similarity: &HashMap<NodeId, f64>,
     min_relevance: f64,
+    floor_exempt: &[Signal],
     limit: usize,
 ) -> Result<Selection, RetrievalError> {
     if limit == 0 {
@@ -149,12 +171,19 @@ pub(crate) fn select(
         // (the default) skips the lookup entirely, so the default path is byte-identical and an
         // unrelated query can now legitimately return empty (the bundle's considered/returned gap
         // then explains the attrition honestly).
+        //
+        // The "dense-OR-signal" hybrid (M3) exempts a below-floor candidate when one of the
+        // class's `floor_exempt` signals ranked it within the cap — so the graph-expansion
+        // classes (MultiHop, Entity) keep their graph/support-recovered associative gold, which
+        // is legitimately FAR in dense space. `floor_exempt` is empty for the dense-only classes,
+        // leaving their floor byte-identical.
         if min_relevance > 0.0
             && dense_similarity
                 .get(&candidate.node)
                 .copied()
                 .unwrap_or(0.0)
                 < min_relevance
+            && !floor_exempt_admits(&candidate, floor_exempt)
         {
             continue;
         }
