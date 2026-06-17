@@ -101,6 +101,39 @@ fn discounted_cumulative_gain(grades: impl Iterator<Item = u8>) -> f64 {
         .sum()
 }
 
+/// Community redundancy@k: the fraction of the top-`k` ranked hits that are an "extra" member of
+/// a community already represented by a higher-ranked hit (R2, the community-diversity cap).
+///
+/// `cluster_of` maps a memory id to its community key — for the graph-bearing benchmark this is
+/// the AUTHORED cluster (a fact's subject entity), so the metric measures the cap's effect against
+/// ground truth rather than against Louvain's own labels. `0.0` means every top-`k` hit is from a
+/// distinct community (maximally diverse); a higher value means the bundle piled up near-redundant
+/// hits from one cluster — exactly what the cap is meant to reduce. A hit with no cluster label is
+/// treated as its own distinct community (never redundant). An empty ranking returns `0.0`.
+#[must_use]
+pub fn community_redundancy<C: Eq + std::hash::Hash>(
+    ranked: &[Id],
+    cluster_of: &HashMap<Id, C>,
+    k: usize,
+) -> f64 {
+    let considered = ranked.len().min(k);
+    if considered == 0 {
+        return 0.0;
+    }
+    let mut seen: HashSet<&C> = HashSet::new();
+    let mut redundant = 0usize;
+    for id in &ranked[..considered] {
+        // A labeled hit whose community already appeared is a redundant repeat; an unlabeled hit
+        // (no cluster) is its own community and is never counted as redundant.
+        if let Some(cluster) = cluster_of.get(id)
+            && !seen.insert(cluster)
+        {
+            redundant += 1;
+        }
+    }
+    redundant as f64 / considered as f64
+}
+
 /// The off-topic-rejection rate: the fraction of negative (off-topic) queries that
 /// correctly surfaced no ranked hit.
 ///
@@ -430,5 +463,30 @@ mod tests {
         assert_eq!(m.queries(), 3);
         assert!((m.exact_top_rate() - 1.0 / 3.0).abs() < 1e-12);
         assert!((m.mean_reciprocal_rank() - (1.0 + 0.5) / 3.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn community_redundancy_counts_extra_cluster_members_within_k() {
+        let ids: Vec<Id> = (0..5).map(|_| Id::generate()).collect();
+        // Clusters: ids 0,1,2 -> "alpha", id 3 -> "beta", id 4 unlabeled.
+        let cluster_of: HashMap<Id, &str> = [
+            (ids[0], "alpha"),
+            (ids[1], "alpha"),
+            (ids[2], "alpha"),
+            (ids[3], "beta"),
+        ]
+        .into_iter()
+        .collect();
+
+        // Top-5: alpha(first, distinct), alpha(repeat), alpha(repeat), beta(distinct),
+        // unlabeled(distinct) => 2 redundant of 5.
+        assert!((community_redundancy(&ids, &cluster_of, 5) - 2.0 / 5.0).abs() < 1e-12);
+        // Top-2: alpha, alpha(repeat) => 1 of 2.
+        assert!((community_redundancy(&ids, &cluster_of, 2) - 0.5).abs() < 1e-12);
+        // All-distinct ranking is zero redundancy.
+        let distinct = [ids[0], ids[3], ids[4]];
+        assert_eq!(community_redundancy(&distinct, &cluster_of, 10), 0.0);
+        // Empty ranking is zero.
+        assert_eq!(community_redundancy(&[], &cluster_of, 10), 0.0);
     }
 }

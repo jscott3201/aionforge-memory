@@ -32,7 +32,7 @@ pub mod scrub;
 pub use beam::{BeamConversation, BeamMessage, BeamProbe, parse_conversations};
 pub use fixture::{Graded, MemoryRow, QueryRow, parse_memories, parse_queries};
 pub use metrics::{
-    CorpusMetrics, false_rejection_rate, is_rejected, max_dense_similarity,
+    CorpusMetrics, community_redundancy, false_rejection_rate, is_rejected, max_dense_similarity,
     min_gold_dense_similarity, ndcg_at_k, ranked_ids, recall_at_k, rejection_rate,
 };
 pub use report::{FloorReport, SweepReport};

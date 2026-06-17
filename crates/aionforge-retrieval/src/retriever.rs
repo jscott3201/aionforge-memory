@@ -98,6 +98,14 @@ pub struct RetrieverConfig {
     /// value is inert (a floor `> 1` empties recall, a floor `< 0` never fires), matching the
     /// `cooling_factor` posture — the user-facing config validates the range loudly instead.
     pub min_relevance: f64,
+    /// An experiment/A-B override for the global-authority signal weight (R1). `None` (the
+    /// default) uses each class's profile weight — which is `0.0` everywhere until R1 is
+    /// activated, so the signal stays off and recall is byte-identical. `Some(w)` forces weight
+    /// `w` for the authority signal across classes, so a benchmark can sweep authority ON vs OFF
+    /// without editing the per-class profiles (the seam the graph-bearing benchmark and the
+    /// eventual R1 activation A/B use). Plays the same measurement-override role for the
+    /// authority weight that [`min_relevance`](Self::min_relevance) plays for the dense floor.
+    pub authority_weight: Option<f64>,
 }
 
 impl Default for RetrieverConfig {
@@ -118,6 +126,9 @@ impl Default for RetrieverConfig {
             // default recall path is byte-identical. The host overrides this from
             // `[retrieval] min_relevance`.
             min_relevance: 0.0,
+            // None: use each class's profile authority weight (0.0 until R1 is activated), so the
+            // authority signal stays off by default. An experiment seam, not a host config knob.
+            authority_weight: None,
         }
     }
 }
@@ -458,8 +469,14 @@ impl<E: Embedder> HybridRetriever<E> {
         // weight (`graph_expansion` is irrelevant — authority can serve the dense classes too).
         // Every profile stages this weight at `0.0` for now (prove-before-flip, store memory
         // `019ed336`; BEAM is episode-only and cannot measure authority lift), so this block is
-        // inert — no PageRank pass runs — until the activation follow-up flips a weight on.
-        if profile.weights.authority > 0.0 {
+        // inert — no PageRank pass runs — until the activation follow-up flips a weight on. The
+        // `RetrieverConfig::authority_weight` override forces a weight for A-B measurement (the
+        // graph-bearing benchmark) without editing the per-class profiles.
+        let authority_weight = self
+            .config
+            .authority_weight
+            .unwrap_or(profile.weights.authority);
+        if authority_weight > 0.0 {
             let _signal_span = trace::signal_span(Signal::Authority, fanout).entered();
             // Like the graph signal, the episode side scopes via `algo.pagerank`'s `result_nodes`
             // (the visible-namespace episode set, materialized lazily here only when the signal
@@ -477,8 +494,8 @@ impl<E: Embedder> HybridRetriever<E> {
             let facts =
                 fact_authority_ranking(&self.store, current_facts.as_deref(), fanout, deadline)?;
             fact_nodes.extend(facts.candidates.iter().map(|c| c.node));
-            rankings.push(WeightedRanking::new(profile.weights.authority, episodes));
-            rankings.push(WeightedRanking::new(profile.weights.authority, facts));
+            rankings.push(WeightedRanking::new(authority_weight, episodes));
+            rankings.push(WeightedRanking::new(authority_weight, facts));
             signals_run.push(Signal::Authority);
         }
         bail_if_past(deadline)?;
