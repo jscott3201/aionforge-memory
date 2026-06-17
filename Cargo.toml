@@ -21,6 +21,7 @@ members = [
     "crates/aionforge-forget",       # L2 — decay, forgetting, erasure, identity/drift
     "crates/aionforge-security",     # L2 — privacy/injection filter, untrusted tagging, cross-family guard
     "crates/aionforge-redteam",      # security acceptance probes + structured reports
+    "crates/aionforge-eval",         # retrieval-quality eval harness (leaf; no core crate depends on it; excluded from the binary)
     "crates/aionforge-engine",       # L3 — façade: composes subsystems, lifecycle, cross-cutting policy
     "crates/aionforge",              # L4 — public Rust library API
     "crates/aionforge-mcp",          # L4 — optional MCP server surface

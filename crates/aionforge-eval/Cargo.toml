@@ -1,0 +1,26 @@
+[package]
+name = "aionforge-eval"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Retrieval-quality eval harness for Aionforge Memory: off-topic-rejection floor sweeps and graded-relevance metrics. A leaf crate — no core crate depends on it, so it is excluded from the shipped binary."
+
+[dependencies]
+# Lightweight, always-compiled lib surface: the metrics + report types operate over the
+# retrieval public API (RecallBundle) and domain ids only.
+aionforge-domain = { path = "../aionforge-domain", version = "0.2.2" }
+aionforge-retrieval = { path = "../aionforge-retrieval", version = "0.2.2" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# NOTE: the heavy, on-demand-only deps for the embedder-backed floor-sweep runner (the
+# real network embedder aionforge-embed, the Store seed path aionforge-store
+# `test-support`, secrecy, tokio) land in [dev-dependencies] with that runner in a later
+# slice, so they never enter any shipped artifact and the always-on lib stays minimal.
+
+[lints]
+workspace = true
