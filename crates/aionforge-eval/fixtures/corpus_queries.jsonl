@@ -1,0 +1,6 @@
+{"id":"q-0001","query":"how often should I turn my compost pile","source":"aionforge-eval-synthetic","expected":[{"id":"m-0001","grade":3},{"id":"m-0002","grade":1}]}
+{"id":"q-0002","query":"my bicycle skips when I change gears, how do I fix it","source":"aionforge-eval-synthetic","expected":[{"id":"m-0004","grade":3},{"id":"m-0005","grade":1}]}
+{"id":"q-0003","query":"how do I feed my sourdough starter to keep it alive","source":"aionforge-eval-synthetic","expected":[{"id":"m-0007","grade":3},{"id":"m-0008","grade":1}]}
+{"id":"q-0101","query":"what is the best strategy for kubernetes pod autoscaling","source":"aionforge-eval-synthetic","expected_empty":true}
+{"id":"q-0102","query":"summarize the main causes of the french revolution","source":"aionforge-eval-synthetic","expected_empty":true}
+{"id":"q-0103","query":"how do I configure oauth2 token refresh in a web application","source":"aionforge-eval-synthetic","expected_empty":true}
