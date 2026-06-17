@@ -97,6 +97,16 @@ pub struct RetrievalProfile {
     pub quote_phrase: bool,
     /// Whether to default the candidate kinds to facts (the factual class, 03 §3).
     pub restrict_to_fact_kinds: bool,
+    /// The per-class default absolute dense-relevance floor in `[0, 1]` (P0 plumbing).
+    ///
+    /// `0.0` is OFF — the floor never fires and recall is byte-identical — and is the
+    /// value for *every* class today: the mechanism ships off, pending the
+    /// off-topic-rejection benchmark that will set responsible per-class values. The
+    /// dense-weight-zero classes (e.g. `Quote`) stay exempt at `0.0`, since a dense
+    /// floor is meaningless where the dense signal itself is off. A per-query
+    /// `RecallOptions::min_relevance` overrides this, which in turn overrides the
+    /// deployment-wide `RetrieverConfig::min_relevance`.
+    pub min_relevance: f64,
 }
 
 /// Weight levels the mode profiles are built from (03 §3 "heavy/moderate/light").
@@ -104,6 +114,11 @@ const HEAVY: f64 = 1.0;
 const MODERATE: f64 = 0.6;
 const LIGHT: f64 = 0.3;
 const OFF: f64 = 0.0;
+
+/// The per-class dense-relevance floor, OFF for every class today (P0 plumbing). The
+/// mechanism is wired but disabled; the off-topic-rejection benchmark sets the real
+/// per-class values later. Named so a future non-zero value reads as a deliberate flip.
+const FLOOR_OFF: f64 = 0.0;
 
 /// The default retrieval profile for a class (03 §3 mode-weight profiles).
 #[must_use]
@@ -113,6 +128,7 @@ pub fn profile_for(class: QueryClass) -> RetrievalProfile {
         // light recency.
         QueryClass::SingleHopFactual => RetrievalProfile {
             class,
+            min_relevance: FLOOR_OFF,
             weights: SignalWeights {
                 lexical: HEAVY,
                 lexical_anchor: HEAVY,
@@ -132,6 +148,7 @@ pub fn profile_for(class: QueryClass) -> RetrievalProfile {
         // associative: heavy dense + graph, light lexical, moderate trust, light recency.
         QueryClass::MultiHop => RetrievalProfile {
             class,
+            min_relevance: FLOOR_OFF,
             weights: SignalWeights {
                 lexical: LIGHT,
                 lexical_anchor: OFF,
@@ -151,6 +168,7 @@ pub fn profile_for(class: QueryClass) -> RetrievalProfile {
         // recall: heavy recency + dense, moderate lexical, no graph, moderate trust.
         QueryClass::Temporal => RetrievalProfile {
             class,
+            min_relevance: FLOOR_OFF,
             weights: SignalWeights {
                 lexical: MODERATE,
                 lexical_anchor: OFF,
@@ -170,6 +188,7 @@ pub fn profile_for(class: QueryClass) -> RetrievalProfile {
         // entity: heavy graph + moderate dense, lexical over aliases, no recency.
         QueryClass::Entity => RetrievalProfile {
             class,
+            min_relevance: FLOOR_OFF,
             weights: SignalWeights {
                 lexical: MODERATE,
                 lexical_anchor: OFF,
@@ -189,6 +208,7 @@ pub fn profile_for(class: QueryClass) -> RetrievalProfile {
         // quote: lexical only, exact-phrase preference.
         QueryClass::Quote => RetrievalProfile {
             class,
+            min_relevance: FLOOR_OFF,
             weights: SignalWeights {
                 lexical: HEAVY,
                 lexical_anchor: HEAVY,
