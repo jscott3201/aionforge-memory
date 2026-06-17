@@ -195,6 +195,27 @@ fn entity_seeds_graph_and_drops_recency() {
 }
 
 #[test]
+fn every_class_defaults_the_relevance_floor_off() {
+    // P0 plumbing: the per-class dense-relevance floor is wired but ships OFF (0.0) for
+    // every class, so recall stays byte-identical until the off-topic-rejection benchmark
+    // sets responsible values. This guards against an accidental flip. Quote is exempt on
+    // its own merits (dense weight 0), but still defaults to 0.0 here.
+    for class in [
+        QueryClass::SingleHopFactual,
+        QueryClass::MultiHop,
+        QueryClass::Temporal,
+        QueryClass::Entity,
+        QueryClass::Quote,
+    ] {
+        assert_eq!(
+            profile_for(class).min_relevance,
+            0.0,
+            "{class:?} must default its dense-relevance floor OFF (P0 stays off)",
+        );
+    }
+}
+
+#[test]
 fn signal_weights_accessor_maps_each_signal() {
     let p = profile_for(QueryClass::MultiHop);
     assert_eq!(p.weights.weight(Signal::Lexical), p.weights.lexical);

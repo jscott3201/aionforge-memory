@@ -554,13 +554,17 @@ impl<E: Embedder> HybridRetriever<E> {
         // gets all of it, honestly, rather than a silent truncation of a redline.
         let core = core_block_entries(&self.store, &visible)?;
         let ranked_budget = query.limit.saturating_sub(core.len());
-        // The per-query floor wins; otherwise the deployment default applies — the same
-        // unwrap_or fallback as the fanout knob. `0.0` (the default) is OFF and select skips the
-        // lookup entirely, so the recall path stays byte-identical (P0a).
-        let min_relevance = query
-            .options
-            .min_relevance
-            .unwrap_or(self.config.min_relevance);
+        // Floor precedence (most specific wins): an explicit per-query floor, else the
+        // routed class's per-class default (P0 — `0.0`/OFF for every class today), else
+        // the deployment-wide default. With all class floors `0.0` this collapses to the
+        // prior `unwrap_or(self.config.min_relevance)`, so the recall path stays
+        // byte-identical; `0.0` is OFF and select skips the lookup entirely (P0a).
+        let class_floor = if profile.min_relevance > 0.0 {
+            profile.min_relevance
+        } else {
+            self.config.min_relevance
+        };
+        let min_relevance = query.options.min_relevance.unwrap_or(class_floor);
         let selection = select(
             &self.store,
             &query,
