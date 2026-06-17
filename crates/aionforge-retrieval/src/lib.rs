@@ -29,7 +29,9 @@ pub use bundle::{
     StructuredEntry, render,
 };
 pub use error::RetrievalError;
-pub use fusion::{Contribution, DEFAULT_RRF_K, FusedCandidate, WeightedRanking, fuse};
+pub use fusion::{
+    Contribution, DEFAULT_RRF_K, FusedCandidate, FusionStrategy, WeightedRanking, WeightedRrf, fuse,
+};
 pub use query::{RecallOptions, RecallQuery, TemporalMode};
 pub use retriever::{HybridRetriever, RetrieverConfig};
 pub use router::{QueryClass, RetrievalProfile, SignalWeights, classify, profile_for, route};

@@ -5,8 +5,8 @@
 //! deterministically (03 §6).
 
 use aionforge_retrieval::{
-    Contribution, DEFAULT_RRF_K, FusedCandidate, RankedCandidate, Signal, SignalRanking,
-    WeightedRanking, fuse,
+    Contribution, DEFAULT_RRF_K, FusedCandidate, FusionStrategy, RankedCandidate, Signal,
+    SignalRanking, WeightedRanking, WeightedRrf, fuse,
 };
 use aionforge_store::NodeId;
 
@@ -189,6 +189,29 @@ fn contribution_term_is_documented_shape() {
         rank: 0,
         weight: 1.0,
     }; // Contribution is part of the public surface.
+}
+
+#[test]
+fn weighted_rrf_strategy_matches_the_free_fuse() {
+    // The FusionStrategy seam is pure dispatch: the default strategy must be
+    // byte-identical to the free `fuse` at DEFAULT_RRF_K, and an explicit constant
+    // must thread straight through. This is the contract that lets the trait land as a
+    // zero-behavior-change refactor.
+    let lexical = weighted(0.6, Signal::Lexical, &[1, 2, 3]);
+    let dense = weighted(1.0, Signal::Dense, &[3, 1, 4]);
+    let recency = weighted(0.3, Signal::Recency, &[2, 4, 1]);
+    let rankings = [lexical, dense, recency];
+
+    assert_eq!(
+        WeightedRrf::default().fuse(&rankings),
+        fuse(&rankings, DEFAULT_RRF_K),
+        "the default strategy must delegate byte-identically",
+    );
+    assert_eq!(
+        WeightedRrf::new(17.0).fuse(&rankings),
+        fuse(&rankings, 17.0),
+        "an explicit k_const must thread through to fuse",
+    );
 }
 
 #[cfg(debug_assertions)]
