@@ -4805,6 +4805,7 @@ Used by:
 - aionforge-domain v0.2.2 — https://github.com/jscott3201/aionforge-memory
 - aionforge-embed v0.2.2 — https://github.com/jscott3201/aionforge-memory
 - aionforge-engine v0.2.2 — https://github.com/jscott3201/aionforge-memory
+- aionforge-eval v0.2.2 — https://github.com/jscott3201/aionforge-memory
 - aionforge-forget v0.2.2 — https://github.com/jscott3201/aionforge-memory
 - aionforge-mcp v0.2.2 — https://github.com/jscott3201/aionforge-memory
 - aionforge-procedural v0.2.2 — https://github.com/jscott3201/aionforge-memory
@@ -4823,11 +4824,11 @@ Used by:
 - r-efi v5.3.0 — https://github.com/r-efi/r-efi
 - r-efi v6.0.0 — https://github.com/r-efi/r-efi
 - rustls-platform-verifier-android v0.1.1 — https://github.com/rustls/rustls-platform-verifier
-- selene-db-algorithms v1.2.0 — https://github.com/Aionforge-Labs/selene-db
-- selene-db-core v1.2.0 — https://github.com/Aionforge-Labs/selene-db
-- selene-db-gql v1.2.0 — https://github.com/Aionforge-Labs/selene-db
-- selene-db-graph v1.2.0 — https://github.com/Aionforge-Labs/selene-db
-- selene-db-persist v1.2.0 — https://github.com/Aionforge-Labs/selene-db
+- selene-db-algorithms v1.3.0 — https://github.com/jscott3201/selene-db
+- selene-db-core v1.3.0 — https://github.com/jscott3201/selene-db
+- selene-db-gql v1.3.0 — https://github.com/jscott3201/selene-db
+- selene-db-graph v1.3.0 — https://github.com/jscott3201/selene-db
+- selene-db-persist v1.3.0 — https://github.com/jscott3201/selene-db
 - sse-stream v0.2.3 — https://github.com/4t145/sse-stream/
 - wasip3 v0.4.0+wasi-0.3.0-rc-2026-01-06 — https://github.com/bytecodealliance/wasi-rs
 - wide v0.7.33 — https://github.com/Lokathor/wide
