@@ -93,6 +93,21 @@ fn environment_sets_the_data_directory() {
 }
 
 #[test]
+fn environment_enables_background_consolidation() {
+    Jail::expect_with(|jail| {
+        clear_inherited_env(jail);
+        jail.set_env("AIONFORGE_CONSOLIDATION__ENABLED", "true");
+        let config =
+            Config::from_figment(Config::figment(Path::new("config.toml"))).expect("load from env");
+        assert!(
+            config.consolidation.enabled,
+            "the nested env layer turns on autonomous background consolidation"
+        );
+        Ok(())
+    });
+}
+
+#[test]
 fn a_missing_file_is_skipped() {
     Jail::expect_with(|jail| {
         clear_inherited_env(jail);

@@ -10,9 +10,12 @@
 //!
 //! The mapping is **default-preserving**: with an absent `[consolidation]` block (the
 //! config-layer [`ConsolidationConfig::default`](aionforge_config::ConsolidationConfig), which
-//! mirrors the engine defaults literal-for-literal), `consolidation_settings` returns exactly
+//! mirrors the engine defaults literal-for-literal except for the serve-only `enabled` switch),
+//! `consolidation_settings` returns exactly
 //! `(engine::ConsolidationConfig::default(), engine::PassConfig::default())`, so behavior is
-//! unchanged. The detection predicate map is **not** config-exposed; it is taken from the
+//! unchanged. The serve-only `enabled` switch is intentionally ignored here and consumed by
+//! `serve`; it is not part of the engine scheduler config. The detection predicate map is
+//! **not** config-exposed; it is taken from the
 //! engine `DetectionConfig::default()` (the conservative built-in ruleset) and only `enabled`
 //! and `high_trust_threshold` are overridden, so the default predicate rules are preserved.
 //! The defaults-equality is pinned by the crate's `tests` module.
@@ -178,6 +181,7 @@ mod tests {
     #[test]
     fn overrides_flow_through_with_unit_conversion() {
         let mut config = Config::default();
+        config.consolidation.enabled = true;
         config.consolidation.tick_interval_secs = 11;
         config.consolidation.batch_size = 7;
         config.consolidation.apply_timeout_secs = 90;

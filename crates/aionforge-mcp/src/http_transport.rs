@@ -314,13 +314,31 @@ pub fn streamable_http_service<E: Embedder + 'static>(
     options: StreamableHttpOptions,
     auth: AuthPosture,
 ) -> Result<AionforgeStreamableHttpService<E>, StreamableHttpConfigError> {
+    streamable_http_service_with_consolidation(memory, options, auth, false)
+}
+
+/// Build the Streamable HTTP service, selecting auth and background consolidation posture.
+///
+/// `background_managed` must be true only when the host has started a serve-owned consolidation
+/// loop for the same store. In that posture the MCP handler returns `ERR_CONSOLIDATE_MANAGED` for
+/// foreground consolidation requests before they can race the background cursor writer.
+///
+/// # Errors
+/// Returns [`StreamableHttpConfigError`] when the options are invalid.
+pub fn streamable_http_service_with_consolidation<E: Embedder + 'static>(
+    memory: Arc<Memory<E>>,
+    options: StreamableHttpOptions,
+    auth: AuthPosture,
+    background_managed: bool,
+) -> Result<AionforgeStreamableHttpService<E>, StreamableHttpConfigError> {
     let max_request_body_bytes = options.max_request_body_bytes;
     let config = streamable_http_config(options)?;
     let service = StreamableHttpService::new(
         move || {
-            Ok(AionforgeMcp::new_with_auth_posture(
+            Ok(AionforgeMcp::new_with_auth_posture_and_consolidation(
                 Arc::clone(&memory),
                 auth.clone(),
+                background_managed,
             ))
         },
         Arc::new(LocalSessionManager::default()),
