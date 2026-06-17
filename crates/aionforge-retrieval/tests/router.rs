@@ -195,13 +195,17 @@ fn entity_seeds_graph_and_drops_recency() {
 }
 
 #[test]
-fn every_class_defaults_the_relevance_floor_off() {
-    // P0 plumbing: the per-class dense-relevance floor is wired but ships OFF (0.0) for
-    // every class, so recall stays byte-identical until the off-topic-rejection benchmark
-    // sets responsible values. This guards against an accidental flip. Quote is exempt on
-    // its own merits (dense weight 0), but still defaults to 0.0 here.
+fn the_factual_class_floors_off_topic_and_the_others_stay_off() {
+    // The single-hop-factual class floors at 0.60 — the off-topic-rejection win measured
+    // on the eval harness. Pinning the exact value guards against an accidental change
+    // (the value is gemini-cosine-calibrated; re-measure if the embedder changes).
+    assert!(
+        (profile_for(QueryClass::SingleHopFactual).min_relevance - 0.60).abs() < 1e-12,
+        "the factual class floors off-topic hits at 0.60",
+    );
+    // The other classes have not been calibrated yet, so they stay OFF (0.0). Quote is
+    // also exempt on its own merits (dense weight 0).
     for class in [
-        QueryClass::SingleHopFactual,
         QueryClass::MultiHop,
         QueryClass::Temporal,
         QueryClass::Entity,
@@ -210,7 +214,7 @@ fn every_class_defaults_the_relevance_floor_off() {
         assert_eq!(
             profile_for(class).min_relevance,
             0.0,
-            "{class:?} must default its dense-relevance floor OFF (P0 stays off)",
+            "{class:?} keeps its dense-relevance floor OFF until calibrated",
         );
     }
 }
