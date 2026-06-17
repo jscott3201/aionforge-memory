@@ -24,12 +24,25 @@ Grades are `0..=3` (gain `2^grade - 1`); only `grade > 0` ids count as gold.
 
 ## Design
 
-Three unrelated everyday topics — composting, bicycle maintenance, sourdough baking —
-each with three memories. The three positive queries are clearly on-topic for one cluster
-each (so dense relevance is high); the three negative queries are about wholly unrelated
-subjects (cloud autoscaling, French history, OAuth) so a healthy dense floor should reject
-them while keeping the positives. Everyday topics, not technical ones, keep the negatives
-genuinely off-topic relative to the corpus.
+The corpus has three kinds of row, distinguished by the `source` tag:
+
+- `aionforge-eval-synthetic` — three unrelated everyday topics (composting, bicycle
+  maintenance, sourdough baking), three memories each. Clean, well-separated clusters.
+- `aionforge-eval-project-sanitized` — **sanitized paraphrases of this project's own
+  memory** about Aionforge Memory internals (rank fusion, the dense floor, the query
+  router, the selene-db greenfield rule, episodes + facts, the embedder, consolidation,
+  forgetting, provenance, supersession, work items, the operator console). These are
+  hand-paraphrased to carry the technical meaning while removing every id, git sha, PR
+  number, machine path, secret, and planning-note term — the scrub gate enforces this.
+  They make the corpus homogeneous and technical, which is how the real store looks.
+- `aionforge-eval-adjacent` — **domain-adjacent off-topic negatives** (Kubernetes,
+  quicksort, CNN training, TCP/UDP). They share vocabulary (vectors, databases, training)
+  with the project cluster but are NOT about the memory system, so they stress the floor
+  harder than everyday negatives: the floor must still reject them.
+
+Positive queries are on-topic for exactly one cluster; negatives (`expected_empty`) are
+off-topic to the whole corpus, so a healthy dense floor rejects them while keeping the
+positives.
 
 ## Scrub
 
