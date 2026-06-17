@@ -184,6 +184,8 @@ dependencies = [
  "aionforge-retrieval",
  "aionforge-store",
  "regex",
+ "reqwest",
+ "rustls",
  "secrecy",
  "serde",
  "serde_json",
