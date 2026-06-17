@@ -145,6 +145,24 @@ fn a_zero_dimension_fails_clearly() {
 }
 
 #[test]
+fn a_native_dimension_must_exceed_the_output_dimension() {
+    // Matryoshka truncation only reduces, so a native dimension that is not strictly larger
+    // than the output dimension is a misconfiguration.
+    let mut config = Config::default();
+    config.embedder.dimension = 1536;
+    config.embedder.native_dimension = Some(1536);
+    assert!(
+        matches!(config.validate(), Err(ConfigError::Invalid { key, .. }) if key == "embedder.native_dimension"),
+        "a native dimension equal to the output is rejected",
+    );
+
+    config.embedder.native_dimension = Some(3072);
+    config
+        .validate()
+        .expect("a native dimension above the output is allowed");
+}
+
+#[test]
 fn an_embedder_timeout_must_be_within_bounds() {
     let mut config = Config::default();
     config.embedder.timeout_ms = 0;

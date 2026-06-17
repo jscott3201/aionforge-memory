@@ -39,6 +39,10 @@ pub struct HttpEmbedder {
     request_model: String,
     identity: EmbedderModel,
     api_key: Option<SecretString>,
+    /// When set, the model returns vectors at this native dimension and each is truncated to
+    /// `identity.dimension` (Matryoshka) before normalization. `None` means an exact-dimension
+    /// response is required.
+    native_dimension: Option<u32>,
 }
 
 impl HttpEmbedder {
@@ -79,7 +83,25 @@ impl HttpEmbedder {
             request_model: request_model.into(),
             identity,
             api_key,
+            native_dimension: None,
         })
+    }
+
+    /// Enable Matryoshka truncation: the model returns `native`-dimension vectors and each is
+    /// truncated to the recorded identity dimension (first-N components) and renormalized.
+    ///
+    /// # Errors
+    /// Returns [`EmbedError::Config`] unless `native` is strictly greater than the identity
+    /// dimension — truncation only reduces.
+    pub fn with_native_dimension(mut self, native: u32) -> Result<Self, EmbedError> {
+        if native <= self.identity.dimension {
+            return Err(EmbedError::Config(format!(
+                "native dimension {native} must be greater than the output dimension {}",
+                self.identity.dimension
+            )));
+        }
+        self.native_dimension = Some(native);
+        Ok(self)
     }
 
     /// Build a client from an [`EmbedderConfig`] and an already-resolved API key.
@@ -98,13 +120,17 @@ impl HttpEmbedder {
             version: String::new(),
             dimension: config.dimension,
         };
-        Self::new(
+        let embedder = Self::new(
             &config.endpoint,
             config.model.clone(),
             identity,
             api_key,
             Duration::from_millis(config.timeout_ms),
-        )
+        )?;
+        match config.native_dimension {
+            Some(native) => embedder.with_native_dimension(native),
+            None => Ok(embedder),
+        }
     }
 
     /// Send the batch and turn the response into input-ordered, normalized embeddings.
@@ -160,19 +186,27 @@ impl HttpEmbedder {
             });
         }
         let mut slots: Vec<Option<Embedding>> = (0..expected).map(|_| None).collect();
+        let output = self.identity.dimension as usize;
         for datum in body.data {
-            let dimension = datum.embedding.len();
-            if dimension as u32 != self.identity.dimension {
+            let returned = datum.embedding.len();
+            // Accept an exact-dimension response, or a native-dimension response that we
+            // truncate to the output dimension (Matryoshka). Any other size is a real
+            // mismatch — the dimension hard-check still guards genuine bugs.
+            let components = if returned == output {
+                datum.embedding
+            } else if self.native_dimension == Some(returned as u32) && returned > output {
+                datum.embedding[..output].to_vec()
+            } else {
                 return Err(EmbedError::DimensionMismatch {
                     expected: self.identity.dimension,
-                    actual: dimension,
+                    actual: returned,
                 });
-            }
+            };
             let slot = slots
                 .get_mut(datum.index)
                 .ok_or_else(|| EmbedError::Decode(format!("index {} out of range", datum.index)))?;
             if slot
-                .replace(Embedding::new(datum.embedding)?.normalized())
+                .replace(Embedding::new(components)?.normalized())
                 .is_some()
             {
                 return Err(EmbedError::Decode(format!(
@@ -200,5 +234,95 @@ impl Embedder for HttpEmbedder {
 
     fn model(&self) -> &EmbedderModel {
         &self.identity
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::wire::{EmbeddingDatum, EmbeddingResponse};
+
+    fn embedder(output_dim: u32) -> HttpEmbedder {
+        HttpEmbedder::new(
+            "http://localhost:1234/v1",
+            "m",
+            EmbedderModel {
+                family: "m".to_owned(),
+                version: String::new(),
+                dimension: output_dim,
+            },
+            None,
+            Duration::from_millis(1_000),
+        )
+        .expect("build embedder")
+    }
+
+    fn one(embedding: Vec<f32>) -> EmbeddingResponse {
+        EmbeddingResponse {
+            data: vec![EmbeddingDatum {
+                embedding,
+                index: 0,
+            }],
+        }
+    }
+
+    #[test]
+    fn matryoshka_truncates_a_native_vector_to_the_output_dimension() {
+        // Output 2, native 4: the first two components [3,4] are kept and renormalized to
+        // unit length [0.6, 0.8] — proving truncation takes the leading (not trailing) dims.
+        let embedder = embedder(2).with_native_dimension(4).expect("native");
+        let out = embedder
+            .place_in_order(one(vec![3.0, 4.0, 99.0, 99.0]), 1)
+            .expect("place");
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].dimension(), 2);
+        assert!((out[0].as_slice()[0] - 0.6).abs() < 1e-6);
+        assert!((out[0].as_slice()[1] - 0.8).abs() < 1e-6);
+    }
+
+    #[test]
+    fn an_exact_dimension_response_is_accepted() {
+        let out = embedder(3)
+            .place_in_order(one(vec![0.0, 3.0, 4.0]), 1)
+            .expect("place");
+        assert_eq!(out[0].dimension(), 3);
+    }
+
+    #[test]
+    fn a_wrong_dimension_without_native_is_rejected() {
+        let err = embedder(2)
+            .place_in_order(one(vec![1.0, 2.0, 3.0, 4.0]), 1)
+            .expect_err("mismatch");
+        assert!(matches!(
+            err,
+            EmbedError::DimensionMismatch {
+                expected: 2,
+                actual: 4
+            }
+        ));
+    }
+
+    #[test]
+    fn an_oversize_response_that_is_not_the_native_size_is_still_rejected() {
+        // native is 4, but the response is 5 — not the declared native size, so it is a real
+        // mismatch, not a truncation candidate.
+        let err = embedder(2)
+            .with_native_dimension(4)
+            .expect("native")
+            .place_in_order(one(vec![1.0; 5]), 1)
+            .expect_err("mismatch");
+        assert!(matches!(
+            err,
+            EmbedError::DimensionMismatch {
+                expected: 2,
+                actual: 5
+            }
+        ));
+    }
+
+    #[test]
+    fn with_native_dimension_rejects_a_native_not_above_the_output() {
+        let err = embedder(4).with_native_dimension(4).expect_err("config");
+        assert!(matches!(err, EmbedError::Config(_)));
     }
 }

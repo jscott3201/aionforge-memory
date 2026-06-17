@@ -140,6 +140,16 @@ pub struct EmbedderConfig {
     /// The embedding dimension. Binding (data-model §13.5): every vector index is built
     /// at this dimension and a change is a migration.
     pub dimension: u32,
+    /// The model's **native** output dimension, when it differs from [`dimension`](Self::dimension).
+    ///
+    /// `None` (the default) means the API returns vectors at exactly `dimension`, which is
+    /// hard-checked. `Some(native)` enables **Matryoshka truncation**: the model returns
+    /// `native`-dimension vectors (the request carries no `dimensions` field), and the client
+    /// truncates each to the configured `dimension` (first-N components) and renormalizes.
+    /// This serves a reduced-dimension store (e.g. gemini at 1536) from a model whose native
+    /// output is larger (3072) without a per-request `dimensions` parameter. Must be strictly
+    /// greater than `dimension` when set — truncation only reduces.
+    pub native_dimension: Option<u32>,
     /// The **name** of the environment variable that holds the endpoint's API key, or
     /// none for an unauthenticated (e.g. local) endpoint. The key itself never lives in
     /// the config; see [`Config::resolve_api_key`].
@@ -155,6 +165,7 @@ impl Default for EmbedderConfig {
             endpoint: "http://127.0.0.1:1234/v1".to_owned(),
             model: "codestral-embed-2505".to_owned(),
             dimension: DEFAULT_EMBEDDING_DIMENSION,
+            native_dimension: None,
             api_key_env: None,
             timeout_ms: 30_000,
         }
@@ -536,6 +547,14 @@ impl Config {
             return Err(ConfigError::invalid(
                 "embedder.dimension",
                 "must be greater than zero",
+            ));
+        }
+        if let Some(native) = self.embedder.native_dimension
+            && native <= self.embedder.dimension
+        {
+            return Err(ConfigError::invalid(
+                "embedder.native_dimension",
+                "must be strictly greater than embedder.dimension (truncation only reduces)",
             ));
         }
         if self.embedder.enabled {
