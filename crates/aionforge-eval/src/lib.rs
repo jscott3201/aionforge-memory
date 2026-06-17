@@ -28,8 +28,8 @@ pub mod scrub;
 
 pub use fixture::{Graded, MemoryRow, QueryRow, parse_memories, parse_queries};
 pub use metrics::{
-    CorpusMetrics, false_rejection_rate, is_rejected, ndcg_at_k, ranked_ids, recall_at_k,
-    rejection_rate,
+    CorpusMetrics, false_rejection_rate, is_rejected, max_dense_similarity,
+    min_gold_dense_similarity, ndcg_at_k, ranked_ids, recall_at_k, rejection_rate,
 };
 pub use report::{FloorReport, SweepReport};
 pub use scrub::scrub_violations;
