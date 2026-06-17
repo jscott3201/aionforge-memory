@@ -1,0 +1,28 @@
+//! Retrieval-quality evaluation harness for Aionforge Memory.
+//!
+//! This crate measures *off-topic rejection* and ranking quality of the retrieval
+//! layer — the ground truth the RRF / signal-fusion work needs before any per-class
+//! relevance floor is turned on or any fusion strategy is changed. It is a **leaf
+//! crate**: it depends on the core libraries (`aionforge-retrieval`, `aionforge-domain`)
+//! but nothing in the product depends on it, so it is never compiled into the shipped
+//! `aionforge` binary. Heavy machinery (the real network embedder, the store seed path)
+//! is confined to dev-dependencies and an on-demand runner, so the always-compiled
+//! surface here stays small.
+//!
+//! The two always-on modules are:
+//! - [`metrics`] — pure functions over the public [`aionforge_retrieval::RecallBundle`]:
+//!   `recall@k`, `nDCG@k`, off-topic-rejection rate, and a false-rejection guard.
+//! - [`report`] — a serde-serializable sweep report over a range of floor values.
+//!
+//! The embedder-backed floor-sweep *runner* (which embeds a fixture once and re-runs
+//! recall across a `min_relevance` sweep) is an on-demand, key-gated integration test —
+//! never part of CI, never a shipped artifact.
+
+pub mod metrics;
+pub mod report;
+
+pub use metrics::{
+    CorpusMetrics, false_rejection_rate, is_rejected, ndcg_at_k, ranked_ids, recall_at_k,
+    rejection_rate,
+};
+pub use report::{FloorReport, SweepReport};

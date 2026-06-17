@@ -176,6 +176,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "aionforge-eval"
+version = "0.2.2"
+dependencies = [
+ "aionforge-domain",
+ "aionforge-retrieval",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "aionforge-forget"
 version = "0.2.2"
 dependencies = [
