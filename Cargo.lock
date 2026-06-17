@@ -179,6 +179,7 @@ dependencies = [
 name = "aionforge-eval"
 version = "0.2.2"
 dependencies = [
+ "aionforge-consolidate",
  "aionforge-domain",
  "aionforge-embed",
  "aionforge-retrieval",

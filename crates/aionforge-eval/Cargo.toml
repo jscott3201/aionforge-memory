@@ -25,6 +25,10 @@ regex = { workspace = true }
 # stays minimal. Nothing depends on this crate, so even these never reach the binary.
 aionforge-embed = { path = "../aionforge-embed", version = "0.2.2" }
 aionforge-store = { path = "../aionforge-store", version = "0.2.2", features = ["test-support"] }
+# The graph-bearing benchmark (tests/graph_bearing_bench.rs) runs the real consolidation
+# pipeline in-process to turn a clean-SVO corpus into facts/entities/SUPPORTS, then measures
+# the authority signal + community cap on the resulting graph. Dev-only, like the embedder.
+aionforge-consolidate = { path = "../aionforge-consolidate", version = "0.2.2" }
 secrecy = { workspace = true }
 tokio = { workspace = true }
 # The seed-once/sweep-via-search runner (tests/beam_seed_sweep.rs) drives a LIVE MCP

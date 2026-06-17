@@ -11,6 +11,7 @@ node_modules/
 
 # Per-machine agent memory identity (Aionforge Memory ID + namespace).
 claude-id.json
+codex-id.json
 
 # Local working directories — spec, planning, research, design artifacts.
 # These are working documents (and the frozen build spec) that never get
