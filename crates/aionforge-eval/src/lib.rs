@@ -15,17 +15,21 @@
 //! - [`report`] — a serde-serializable sweep report over a range of floor values.
 //! - [`fixture`] — the JSONL loader for the labeled corpus (memories + graded /
 //!   negative queries).
+//! - [`beam`] — a loader for a normalized slice of the external BEAM long-term-memory
+//!   benchmark (never vendored), used by the on-demand source-recall-under-floor runner.
 //! - [`scrub`] — a secret/PII gate run over any fixture before it becomes a baseline.
 //!
 //! The embedder-backed floor-sweep *runner* (which embeds a fixture once and re-runs
 //! recall across a `min_relevance` sweep) is an on-demand, key-gated integration test —
 //! never part of CI, never a shipped artifact.
 
+pub mod beam;
 pub mod fixture;
 pub mod metrics;
 pub mod report;
 pub mod scrub;
 
+pub use beam::{BeamConversation, BeamMessage, BeamProbe, parse_conversations};
 pub use fixture::{Graded, MemoryRow, QueryRow, parse_memories, parse_queries};
 pub use metrics::{
     CorpusMetrics, false_rejection_rate, is_rejected, max_dense_similarity,

@@ -16,3 +16,9 @@ claude-id.json
 # These are working documents (and the frozen build spec) that never get
 # committed. The leading underscore is the convention; the glob covers all.
 _*/
+
+# BEAM benchmark data is CC BY-SA 4.0 and is NEVER vendored — it lives outside the
+# repo under ~/.aionforge/beam-data. Guard against an accidental in-repo copy.
+**/beam-data/
+**/beam-100k*.jsonl
+*.parquet
