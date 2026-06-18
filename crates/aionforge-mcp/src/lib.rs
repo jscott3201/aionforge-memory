@@ -144,8 +144,8 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
     /// Build a handler over a shared memory with auth **disabled** (today's default posture).
     ///
     /// Every identity resolver reproduces the long-standing body-only behavior: the validated
-    /// request extension is ignored (and is always absent today, as no producer is wired). Use
-    /// [`AionforgeMcp::new_with_auth`] to opt into the OAuth resource-server posture (PR5).
+    /// request extension is ignored. Use [`AionforgeMcp::new_with_auth`] to opt into the OAuth
+    /// resource-server posture.
     #[must_use]
     pub fn new(memory: Arc<Memory<E>>) -> Self {
         Self::new_with_auth(memory, false)

@@ -76,14 +76,18 @@ whole proposed transition, not just a stable subject id.
 ## MCP transport security
 
 Stdio is for private process boundaries. Streamable HTTP binds to loopback by
-default and is intended for local clients on the same host. The built-in HTTP
-server does not implement transport authentication; callers supply agent
-identity through tool parameters (`agent_id`, `viewer`, and `teams`) and the
-engine applies namespace authorization from those values. For remote multi-user
-deployments, put an OAuth resource-server verifier or equivalent perimeter in
-front of the MCP service. That verifier must validate issuer, expiry, audience
-or resource binding, and scopes before requests reach Aionforge, and it must not
-pass through access tokens that were issued for another resource.
+default and is intended for local clients on the same host. HTTP auth is
+default-off: in local mode, callers supply agent identity through an explicit
+`principal` object or legacy tool parameters (`agent_id`, `viewer`, and
+`teams`), and the engine applies namespace authorization from those values. When
+`[auth].enabled=true`, `aionforge serve http` validates bearer tokens for
+`/mcp`, maps verified claims to an authoritative principal, and refuses requests
+that reach identity-bearing handlers without that validated identity. For remote
+multi-user deployments, either enable that built-in HTTP OAuth posture or put an
+OAuth-aware verifier/equivalent perimeter in front of the MCP service. Any
+verifier must validate issuer, expiry, audience or resource binding, and scopes
+before requests reach Aionforge, and it must not pass through access tokens that
+were issued for another resource.
 
 Client approval policy still matters. Read-like tools can usually be preapproved
 for a trusted local agent; mutating tools (`capture`, `consolidate`, `forget`,
