@@ -15,6 +15,10 @@ use super::{
 };
 use crate::{IngestSession, IngestTurn};
 
+mod real;
+
+use real::{is_real_question_record, parse_real_question_case};
+
 /// Parse LongMemEval JSON or JSONL into adapter-ready sessions plus retrieval labels.
 ///
 /// The loader accepts the normalized shape this repository's tests use and several
@@ -26,12 +30,31 @@ use crate::{IngestSession, IngestTurn};
 /// # Errors
 /// Returns [`LongMemEvalError`] if the JSON cannot be parsed or lacks sessions/questions.
 pub fn parse_longmemeval(input: &str) -> Result<LongMemEvalCorpus, LongMemEvalError> {
+    merge_cases(parse_longmemeval_cases(input)?)
+}
+
+/// Parse LongMemEval JSON or JSONL into one corpus per retrieval question.
+///
+/// The cleaned LongMemEval release gives each question its own controlled
+/// haystack. This parser preserves that shape so benchmark runners can seed and
+/// score every question independently instead of evaluating against one merged
+/// store. Legacy normalized fixtures are split into one case per question while
+/// reusing the fixture's session set for each case.
+///
+/// # Errors
+/// Returns [`LongMemEvalError`] if the JSON cannot be parsed or lacks sessions/questions.
+pub fn parse_longmemeval_cases(input: &str) -> Result<Vec<LongMemEvalCorpus>, LongMemEvalError> {
     let values = parse_values(input)?;
-    let mut builder = CorpusBuilder::default();
+    let mut cases = Vec::new();
     for value in &values {
-        parse_record(value, &mut builder)?;
+        parse_cases_record(value, &mut cases)?;
     }
-    builder.finish()
+    if cases.is_empty() {
+        return Err(LongMemEvalError::Parse(
+            "no LongMemEval cases found".to_string(),
+        ));
+    }
+    Ok(cases)
 }
 
 #[derive(Default)]
@@ -76,6 +99,80 @@ struct ParsedSession {
     label: String,
     session: IngestSession,
     answer_turn_ids: Vec<String>,
+}
+
+fn parse_cases_record(
+    value: &Value,
+    cases: &mut Vec<LongMemEvalCorpus>,
+) -> Result<(), LongMemEvalError> {
+    match value {
+        Value::Array(items) => {
+            for item in items {
+                parse_cases_record(item, cases)?;
+            }
+            Ok(())
+        }
+        Value::Object(map) => {
+            if let Some(items) = array_field(map, &["data", "examples", "records"]) {
+                for item in items {
+                    parse_cases_record(item, cases)?;
+                }
+                return Ok(());
+            }
+            if is_real_question_record(map) {
+                cases.push(parse_real_question_case(map, cases.len())?);
+                return Ok(());
+            }
+
+            let mut builder = CorpusBuilder::default();
+            parse_record(value, &mut builder)?;
+            push_legacy_cases(builder.finish()?, cases);
+            Ok(())
+        }
+        _ => Err(LongMemEvalError::Parse(
+            "record must be an object or array".to_string(),
+        )),
+    }
+}
+
+fn push_legacy_cases(corpus: LongMemEvalCorpus, cases: &mut Vec<LongMemEvalCorpus>) {
+    for question in &corpus.questions {
+        cases.push(LongMemEvalCorpus::new(
+            corpus.sessions.clone(),
+            vec![question.clone()],
+            corpus.session_id_map.clone(),
+        ));
+    }
+}
+
+fn merge_cases(cases: Vec<LongMemEvalCorpus>) -> Result<LongMemEvalCorpus, LongMemEvalError> {
+    let mut sessions = Vec::new();
+    let mut seen_turns = HashSet::new();
+    let mut session_id_map = HashMap::new();
+    let mut questions = Vec::new();
+    for case in cases {
+        session_id_map.extend(case.session_id_map);
+        questions.extend(case.questions);
+        for mut session in case.sessions {
+            session
+                .turns
+                .retain(|turn| seen_turns.insert(turn.fixture_id.clone()));
+            if !session.turns.is_empty() {
+                sessions.push(session);
+            }
+        }
+    }
+    if sessions.is_empty() {
+        return Err(LongMemEvalError::Parse(
+            "no LongMemEval sessions found".to_string(),
+        ));
+    }
+    if questions.is_empty() {
+        return Err(LongMemEvalError::Parse(
+            "no LongMemEval questions found".to_string(),
+        ));
+    }
+    Ok(LongMemEvalCorpus::new(sessions, questions, session_id_map))
 }
 
 fn parse_values(input: &str) -> Result<Vec<Value>, LongMemEvalError> {
@@ -384,6 +481,21 @@ fn string_field(map: &Map<String, Value>, names: &[&str]) -> Option<String> {
     })
 }
 
+fn strings_array_field(map: &Map<String, Value>, names: &[&str]) -> Option<Vec<String>> {
+    names.iter().find_map(|name| {
+        map.get(*name)?.as_array().map(|items| {
+            items
+                .iter()
+                .filter_map(|value| match value {
+                    Value::String(value) => Some(value.clone()),
+                    Value::Number(value) => Some(value.to_string()),
+                    _ => None,
+                })
+                .collect()
+        })
+    })
+}
+
 fn number_field(map: &Map<String, Value>, names: &[&str]) -> Option<f64> {
     names.iter().find_map(|name| map.get(*name)?.as_f64())
 }
@@ -436,6 +548,35 @@ fn parse_time(raw: &str) -> Option<Timestamp> {
                 .filter(|value| !value.contains('['))
                 .and_then(|value| format!("{value}+00:00[UTC]").parse().ok())
         })
+        .or_else(|| parse_slash_datetime(raw))
+}
+
+fn parse_slash_datetime(raw: &str) -> Option<Timestamp> {
+    let mut date = None;
+    let mut time = None;
+    for part in raw.split_whitespace() {
+        if part.contains('/') {
+            date = Some(part);
+        } else if part.contains(':') {
+            time = Some(part);
+        }
+    }
+    let mut date_parts = date?.split('/');
+    let year = date_parts.next()?.parse::<u16>().ok()?;
+    let month = date_parts.next()?.parse::<u8>().ok()?;
+    let day = date_parts.next()?.parse::<u8>().ok()?;
+    if date_parts.next().is_some() || month == 0 || month > 12 || day == 0 || day > 31 {
+        return None;
+    }
+    let mut time_parts = time.unwrap_or("00:00").split(':');
+    let hour = time_parts.next()?.parse::<u8>().ok()?;
+    let minute = time_parts.next()?.parse::<u8>().ok()?;
+    if time_parts.next().is_some() || hour > 23 || minute > 59 {
+        return None;
+    }
+    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:00Z[UTC]")
+        .parse()
+        .ok()
 }
 
 fn fallback_time(index: usize) -> Timestamp {

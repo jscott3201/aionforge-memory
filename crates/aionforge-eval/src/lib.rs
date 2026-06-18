@@ -44,7 +44,8 @@ pub use longmemeval::{
     DEFAULT_LONGMEMEVAL_DATA_PATH, GoldGranularity, LONGMEMEVAL_DATA_ENV, LongMemEvalArm,
     LongMemEvalArmReport, LongMemEvalCorpus, LongMemEvalError, LongMemEvalGold,
     LongMemEvalQuestion, LongMemEvalQuestionScore, LongMemEvalReport, LongMemEvalScoringOptions,
-    parse_longmemeval, score_longmemeval, score_ranked_ids,
+    parse_longmemeval, parse_longmemeval_cases, score_longmemeval, score_ranked_ids,
+    score_seeded_longmemeval_cases,
 };
 pub use metrics::{
     CorpusMetrics, community_redundancy, false_rejection_rate, is_rejected, max_dense_similarity,

@@ -99,20 +99,22 @@ Recall@k/nDCG@k/MRR scorer -> LoCoMo/BEIR smokes -> BEAM 128K+ tiers
 
 Date: 2026-06-18
 
-Benchmark PR: pending (BRIEF-8)
+Benchmark PR: pending (BRIEF-9)
 
 Runner:
-`cargo test -p aionforge-eval --test longmemeval_scorer longmemeval_s_real_embedder -- --ignored --nocapture`
+`AIONFORGE_LONGMEMEVAL_LIMIT=30 cargo test -p aionforge-eval --release --test longmemeval_scorer longmemeval_s_real_embedder -- --ignored --nocapture`
 
 Fixture: external LongMemEval_S via `AIONFORGE_LONGMEMEVAL_DATA` or
 `~/.aionforge/longmemeval-data/LongMemEval_S.json`
 
-Metrics: Recall@k, nDCG@k, MRR
+Metrics: Recall@k, nDCG@k, MRR. First run used 30/500 questions,
+per-question haystack seeding, turn-level gold from `has_answer`, k=10,
+approximately 3,581,009 input tokens, and estimated embedding spend of
+`$0.5372` at `$0.1500` per 1M tokens.
 
 | arm | fixture | k | questions | recall@k | nDCG@k | MRR | status |
 |---|---|---:|---:|---:|---:|---:|---|
-| RRF default | pending data acquisition | 10 | pending | pending | pending | pending | no local LongMemEval_S file present in this checkout |
+| RRF default | LongMemEval_S, first 30 questions, turn gold | 10 | 30 | 0.917 | 0.819 | 0.802 | measured locally with OpenRouter `google/gemini-embedding-2` |
 
-Decision: pending real run. The scorer and key-gated local runner landed here;
-replace this row with measured baseline values once LongMemEval_S is available
-locally.
+Decision: first real labeled retrieval baseline established. Use this row as the
+RRF-default reference for the follow-on FusionStrategy A/B arms.
