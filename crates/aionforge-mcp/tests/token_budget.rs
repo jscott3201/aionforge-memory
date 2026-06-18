@@ -1,10 +1,10 @@
 //! Token-budget regression tests for advertised MCP metadata.
 
 const MCP_LIB_RS: &str = include_str!("../src/lib.rs");
-const MAX_TOOL_DESCRIPTION_CHARS: usize = 120;
-const MAX_TOOL_DESCRIPTION_WORDS: usize = 16;
-const MAX_TOTAL_DESCRIPTION_CHARS: usize = 1_550;
-const MAX_TOTAL_DESCRIPTION_WORDS: usize = 225;
+const MAX_TOOL_DESCRIPTION_CHARS: usize = 160;
+const MAX_TOOL_DESCRIPTION_WORDS: usize = 24;
+const MAX_TOTAL_DESCRIPTION_CHARS: usize = 2_400;
+const MAX_TOTAL_DESCRIPTION_WORDS: usize = 320;
 
 #[test]
 fn mcp_tool_descriptions_stay_compact() {

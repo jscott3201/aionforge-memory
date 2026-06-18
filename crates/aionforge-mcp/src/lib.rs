@@ -217,7 +217,7 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
     }
 
     #[tool(
-        description = "Report compact server status: version, counts, transports, sampling posture, and mutating-tool count.",
+        description = "Report version, counts, transports, auth/sampling posture, tool classes, and resources; read-only diagnostic.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -248,7 +248,7 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
     }
 
     #[tool(
-        description = "Capture a memory: filter, deduplicate, embed, and commit one event. Returns a compact receipt line.",
+        description = "Persist one event after filtering, dedupe, and embedding; team target needs asserted teams; errors ERR_CAPTURE/ERR_INVALID_*.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -268,7 +268,7 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
     }
 
     #[tool(
-        description = "Capture an array of memories in one call; per-item best-effort receipt lines.",
+        description = "Persist 1..=64 events under one writer; per-item failures return ERR_ITEM[i], with ERR_EMPTY_BATCH/ERR_BATCH_TOO_LARGE call errors.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -288,7 +288,7 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
     }
 
     #[tool(
-        description = "Search visible memories; returns compact id/score/snippet hits in a recalled-memory-context data wrapper.",
+        description = "Search visible memories for viewer/principal; returns capped snippets in recalled-memory-context; validates fanout/min_relevance.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -313,7 +313,7 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
     }
 
     #[tool(
-        description = "Read 1..=16 memories by id; full=true returns untruncated bodies.",
+        description = "Read 1..=16 visible ids; assert teams for team ids; full=true is untruncated, verbose is wider; ERR_TOO_MANY_IDS.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -331,7 +331,7 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
     }
 
     #[tool(
-        description = "List a session's visible captures as a handoff manifest; sessionless ones are excluded.",
+        description = "List visible captures for one session with after/next pagination; sessionless captures excluded; max 200.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -349,7 +349,7 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
     }
 
     #[tool(
-        description = "Report consolidation backlog status: pending/failed episode counts, oldest pending ingestion age, and graph generation.",
+        description = "Report consolidation backlog counts, oldest pending age, graph generation, and optional hint; errors ERR_CONSOLIDATION_STATUS.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -366,7 +366,7 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
     }
 
     #[tool(
-        description = "Run bounded foreground consolidation; ERR_CONSOLIDATE_MANAGED when background-managed.",
+        description = "Run bounded foreground consolidation (max_ticks<=5); ERR_CONSOLIDATE_MANAGED if background-owned, ERR_CONSOLIDATE_BUSY if locked.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -393,7 +393,7 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
     }
 
     #[tool(
-        description = "Soft-forget one memory in the supplied viewer's writable namespace set.",
+        description = "Soft-forget one writable memory id for the viewer/principal; may return ERR_NOT_FOUND or disabled-forgetting outcome.",
         annotations(
             read_only_hint = false,
             destructive_hint = true,
@@ -413,7 +413,7 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
     }
 
     #[tool(
-        description = "Restore one soft-forgotten memory in the supplied viewer's writable namespace set.",
+        description = "Restore one soft-forgotten writable memory id for the viewer/principal; same team gate as forget, ERR_NOT_FOUND on miss.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -433,7 +433,7 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
     }
 
     #[tool(
-        description = "Pin one writable memory so decay and forgetting spare it.",
+        description = "Pin one writable memory id so decay and forgetting spare it; same viewer/team gate as forget, ERR_NOT_FOUND on miss.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -453,7 +453,7 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
     }
 
     #[tool(
-        description = "Unpin one writable memory so decay and forgetting resume.",
+        description = "Unpin one writable memory id so decay and forgetting resume; same viewer/team gate as pin, ERR_NOT_FOUND on miss.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -473,7 +473,7 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
     }
 
     #[tool(
-        description = "Read principal-scoped audit history by subject, by snake_case kind, or by subject+kind.",
+        description = "Read visible audit rows by subject_id, snake_case kind, or both; max 50; ERR_INVALID_AUDIT_QUERY if neither is supplied.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -492,7 +492,7 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
     }
 
     #[tool(
-        description = "Create a work item at a caller-defined level in the writer's or an authorized namespace.",
+        description = "Create a work item in private or authorized team namespace; parent must share namespace; errors ERR_NOT_AUTHORIZED/ERR_WORK_PARENT_*.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -511,7 +511,7 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
     }
 
     #[tool(
-        description = "Advance a work item's status as a guarded compare-and-set, recording a signed transition.",
+        description = "Advance a work item's status with optional expected_from CAS; audited; errors ERR_WORK_STATE_CONFLICT or ERR_NOT_FOUND.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -530,7 +530,7 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
     }
 
     #[tool(
-        description = "Attach a HAS_TAG classification to a work item, minting the tag on first use.",
+        description = "Attach a HAS_TAG classification to a writable work item, minting the tag on first use; ERR_INVALID_SLUG/ERR_NOT_FOUND.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -549,7 +549,7 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
     }
 
     #[tool(
-        description = "Read a work item's subtree as a recalled-memory-context wrapper of visible nodes.",
+        description = "Read a visible work item's subtree as recalled-memory-context; depth defaults to 3 and caps at 8; ERR_NOT_FOUND on miss.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -567,7 +567,7 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
     }
 
     #[tool(
-        description = "Query work items by lifecycle status and/or caller-defined level, scoped to visible namespaces.",
+        description = "Query visible work items by work_status and/or level; max 200; ERR_WORK_QUERY if no filter is supplied.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
