@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" role="img" aria-labelledby="title desc">
+<title id="title">Aionforge Memory data model overview</title>
+<desc id="desc">A high-level flow from capture to episode storage, deterministic consolidation, graph storage, recall output, and optional lifecycle controls.</desc>
+<defs>
+  <marker id="arrow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M 0 0 L 10 5 L 0 10 z" fill="#5b6b82"/>
+  </marker>
+  <marker id="arrowSoft" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M 0 0 L 10 5 L 0 10 z" fill="#7c8aa1"/>
+  </marker>
+  <filter id="shadow" x="-10%" y="-10%" width="120%" height="140%">
+    <feDropShadow dx="0" dy="8" stdDeviation="8" flood-color="#152033" flood-opacity="0.08"/>
+  </filter>
+  <style>
+  .bg { fill: #fbfcfe; }
+  .title { font: 700 30px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; fill: #172033; }
+  .subtitle { font: 400 15px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; fill: #536179; }
+  .section { font: 700 17px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; fill: #24324a; }
+  .label { font: 700 14px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; fill: #1f2937; }
+  .small { font: 400 12px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; fill: #4b5563; }
+  .tiny { font: 400 11px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; fill: #6b7280; }
+  .mono { font: 600 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fill: #374151; }
+  .box { fill: #ffffff; stroke: #c9d5e4; stroke-width: 1.4; rx: 16; }
+  .box-blue { fill: #eef6ff; stroke: #8ebce8; stroke-width: 1.5; rx: 16; }
+  .box-green { fill: #effaf3; stroke: #8ed0a6; stroke-width: 1.5; rx: 16; }
+  .box-purple { fill: #f4f0ff; stroke: #b5a1e8; stroke-width: 1.5; rx: 16; }
+  .box-amber { fill: #fff7e6; stroke: #ecc36d; stroke-width: 1.5; rx: 16; }
+  .box-red { fill: #fff1f2; stroke: #f2a7b5; stroke-width: 1.5; rx: 16; }
+  .box-slate { fill: #f8fafc; stroke: #b8c4d4; stroke-width: 1.5; rx: 16; }
+  .chip { fill: #ffffff; stroke: #d6dee9; stroke-width: 1.1; rx: 11; }
+  .arrow { stroke: #5b6b82; stroke-width: 2.2; fill: none; marker-end: url(#arrow); }
+  .arrow-soft { stroke: #7c8aa1; stroke-width: 1.8; fill: none; marker-end: url(#arrowSoft); }
+  .arrow-dash { stroke: #7c8aa1; stroke-width: 2; fill: none; stroke-dasharray: 7 6; marker-end: url(#arrowSoft); }
+  .muted-line { stroke: #dbe3ee; stroke-width: 1; }
+  .dash-box { fill: #ffffff; stroke: #a8b4c4; stroke-width: 1.6; stroke-dasharray: 7 5; rx: 18; }
+</style>
+</defs>
+<rect width="1280" height="720" class="bg"/>
+<text x="50" y="48" text-anchor="start" class="title">Aionforge Memory: from capture to recalled context</text><text x="52" y="74" text-anchor="start" class="subtitle">Public mental model: raw events stay immutable; derived graph data is added beside them; recall returns a wrapped, bounded string.</text><rect x="45" y="125" width="205" height="155" class="box-blue" filter="url(#shadow)"/><text x="63" y="157" text-anchor="start" class="section">1. Capture</text><text x="65" y="187" text-anchor="start" class="small"><tspan x="65" dy="0">• request enters</tspan><tspan x="65" dy="19">• role gate</tspan><tspan x="65" dy="19">• privacy filter</tspan><tspan x="65" dy="19">• duplicate check</tspan></text><rect x="290" y="125" width="205" height="155" class="box-green" filter="url(#shadow)"/><text x="308" y="157" text-anchor="start" class="section">2. Episode</text><text x="310" y="187" text-anchor="start" class="small"><tspan x="310" dy="0">• one accepted capture</tspan><tspan x="310" dy="19">• inline content</tspan><tspan x="310" dy="19">• immutable</tspan><tspan x="310" dy="19">• append-only</tspan></text><rect x="535" y="125" width="225" height="155" class="box-purple" filter="url(#shadow)"/><text x="553" y="157" text-anchor="start" class="section">3. Consolidate</text><text x="555" y="187" text-anchor="start" class="small"><tspan x="555" dy="0">• deterministic pass</tspan><tspan x="555" dy="19">• extract Facts</tspan><tspan x="555" dy="19">• resolve Entities</tspan><tspan x="555" dy="19">• condense Notes</tspan></text><rect x="805" y="125" width="205" height="155" class="box-amber" filter="url(#shadow)"/><text x="823" y="157" text-anchor="start" class="section">4. Graph</text><text x="825" y="187" text-anchor="start" class="small"><tspan x="825" dy="0">• typed nodes</tspan><tspan x="825" dy="19">• typed edges</tspan><tspan x="825" dy="19">• provenance</tspan><tspan x="825" dy="19">• audit + validity</tspan></text><rect x="1050" y="125" width="185" height="155" class="box-slate" filter="url(#shadow)"/><text x="1068" y="157" text-anchor="start" class="section">5. Recall</text><text x="1070" y="187" text-anchor="start" class="small"><tspan x="1070" dy="0">• keyword + vector</tspan><tspan x="1070" dy="19">• RRF fusion</tspan><tspan x="1070" dy="19">• core blocks</tspan><tspan x="1070" dy="19">• untrusted bundle</tspan></text><path d="M 250 202 L 275 202" class="arrow"/><path d="M 495 202 L 520 202" class="arrow"/><path d="M 760 202 L 790 202" class="arrow"/><path d="M 1010 202 L 1035 202" class="arrow"/><rect x="80" y="365" width="500" height="155" class="box" filter="url(#shadow)"/><text x="105" y="398" text-anchor="start" class="section">Storage boundary</text><text x="105" y="428" text-anchor="start" class="small"><tspan x="105" dy="0">No node carries a file URI, path, or href.</tspan><tspan x="105" dy="21">SourceSpan points into stored Episode content, not disk.</tspan><tspan x="105" dy="21">External references must live in content or sidecar metadata.</tspan></text><rect x="700" y="365" width="500" height="155" class="dash-box" filter="url(#shadow)"/><text x="725" y="398" text-anchor="start" class="section">Lifecycle tail: explicit and off by default</text><text x="725" y="428" text-anchor="start" class="small"><tspan x="725" dy="0">Decay is computed at rank or sweep time.</tspan><tspan x="725" dy="21">Soft-forget sets expired_at and is reversible.</tspan><tspan x="725" dy="21">Erasure is a logical cascade; physical cleanup depends on compaction.</tspan><tspan x="725" dy="21">Promotion copies across namespaces; it is not ranking.</tspan></text><path d="M 392 280 C 392 320 315 328 315 365" class="arrow-soft"/><path d="M 910 280 C 910 323 950 327 950 365" class="arrow-dash"/><rect x="175" y="585" width="930" height="70" class="box-red" filter="url(#shadow)"/><text x="210" y="615" text-anchor="start" class="section">Context safety invariant</text><text x="210" y="640" text-anchor="start" class="small">Stored memory enters an agent context only through tool output. Search results are wrapped as third-party data, not instructions.</text>
+</svg>

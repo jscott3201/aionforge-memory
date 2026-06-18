@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="690" viewBox="0 0 1280 690" role="img" aria-labelledby="title desc">
+<title id="title">Aionforge Memory recall context rendering</title>
+<desc id="desc">A diagram showing how search renders core blocks, ranked hits, a trusted summary line, and an untrusted recalled-memory-context wrapper.</desc>
+<defs>
+  <marker id="arrow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M 0 0 L 10 5 L 0 10 z" fill="#5b6b82"/>
+  </marker>
+  <marker id="arrowSoft" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M 0 0 L 10 5 L 0 10 z" fill="#7c8aa1"/>
+  </marker>
+  <filter id="shadow" x="-10%" y="-10%" width="120%" height="140%">
+    <feDropShadow dx="0" dy="8" stdDeviation="8" flood-color="#152033" flood-opacity="0.08"/>
+  </filter>
+  <style>
+  .bg { fill: #fbfcfe; }
+  .title { font: 700 30px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; fill: #172033; }
+  .subtitle { font: 400 15px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; fill: #536179; }
+  .section { font: 700 17px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; fill: #24324a; }
+  .label { font: 700 14px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; fill: #1f2937; }
+  .small { font: 400 12px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; fill: #4b5563; }
+  .tiny { font: 400 11px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; fill: #6b7280; }
+  .mono { font: 600 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fill: #374151; }
+  .box { fill: #ffffff; stroke: #c9d5e4; stroke-width: 1.4; rx: 16; }
+  .box-blue { fill: #eef6ff; stroke: #8ebce8; stroke-width: 1.5; rx: 16; }
+  .box-green { fill: #effaf3; stroke: #8ed0a6; stroke-width: 1.5; rx: 16; }
+  .box-purple { fill: #f4f0ff; stroke: #b5a1e8; stroke-width: 1.5; rx: 16; }
+  .box-amber { fill: #fff7e6; stroke: #ecc36d; stroke-width: 1.5; rx: 16; }
+  .box-red { fill: #fff1f2; stroke: #f2a7b5; stroke-width: 1.5; rx: 16; }
+  .box-slate { fill: #f8fafc; stroke: #b8c4d4; stroke-width: 1.5; rx: 16; }
+  .chip { fill: #ffffff; stroke: #d6dee9; stroke-width: 1.1; rx: 11; }
+  .arrow { stroke: #5b6b82; stroke-width: 2.2; fill: none; marker-end: url(#arrow); }
+  .arrow-soft { stroke: #7c8aa1; stroke-width: 1.8; fill: none; marker-end: url(#arrowSoft); }
+  .arrow-dash { stroke: #7c8aa1; stroke-width: 2; fill: none; stroke-dasharray: 7 6; marker-end: url(#arrowSoft); }
+  .muted-line { stroke: #dbe3ee; stroke-width: 1; }
+  .dash-box { fill: #ffffff; stroke: #a8b4c4; stroke-width: 1.6; stroke-dasharray: 7 5; rx: 18; }
+</style>
+</defs>
+<rect width="1280" height="690" class="bg"/>
+<text x="50" y="48" text-anchor="start" class="title">Recall exposure: what reaches the context window</text><text x="52" y="74" text-anchor="start" class="subtitle">Search produces one rendered string. The graph stays behind the tool boundary; memory snippets are labeled as untrusted third-party data.</text><rect x="55" y="140" width="180" height="90" class="box-blue" filter="url(#shadow)"/><text x="73" y="168" text-anchor="start" class="section">search()</text><text x="75" y="190" text-anchor="start" class="tiny"><tspan x="75" dy="0">• query</tspan><tspan x="75" dy="14">• default 10, max 100</tspan><tspan x="75" dy="14">• verbose?</tspan></text><rect x="285" y="140" width="180" height="90" class="box-green" filter="url(#shadow)"/><text x="303" y="168" text-anchor="start" class="section">CoreBlocks</text><text x="305" y="190" text-anchor="start" class="tiny"><tspan x="305" dy="0">• prepended</tspan><tspan x="305" dy="14">• always-on</tspan><tspan x="305" dy="14">• not capped by ranked budget</tspan></text><rect x="515" y="140" width="200" height="90" class="box-purple" filter="url(#shadow)"/><text x="533" y="168" text-anchor="start" class="section">Ranked hits</text><text x="535" y="190" text-anchor="start" class="tiny"><tspan x="535" dy="0">• Episode + Fact</tspan><tspan x="535" dy="14">• keyword + vector</tspan><tspan x="535" dy="14">• RRF fusion</tspan></text><rect x="765" y="140" width="180" height="90" class="box-amber" filter="url(#shadow)"/><text x="783" y="168" text-anchor="start" class="section">Render</text><text x="785" y="190" text-anchor="start" class="tiny"><tspan x="785" dy="0">• compact string</tspan><tspan x="785" dy="14">• per-hit snippets</tspan></text><rect x="995" y="140" width="210" height="90" class="box-slate" filter="url(#shadow)"/><text x="1013" y="168" text-anchor="start" class="section">Agent context</text><text x="1015" y="190" text-anchor="start" class="tiny"><tspan x="1015" dy="0">• tool output only</tspan><tspan x="1015" dy="14">• not graph access</tspan></text><path d="M 235 180 L 271 180" class="arrow"/><path d="M 465 180 L 501 180" class="arrow"/><path d="M 715 180 L 751 180" class="arrow"/><path d="M 945 180 L 981 180" class="arrow"/><rect x="90" y="305" width="1090" height="285" class="box" filter="url(#shadow)"/><text x="120" y="338" text-anchor="start" class="section">Rendered response trust zones</text><rect x="130" y="370" width="450" height="150" class="box-green" filter="url(#shadow)"/><text x="155" y="405" text-anchor="start" class="section">Trusted tool text</text><text x="155" y="435" text-anchor="start" class="small"><tspan x="155" dy="0">summary line outside wrapper</tspan><tspan x="155" dy="21">hits N of M · result class · embedder status</tspan><tspan x="155" dy="21">optional explanation produced by tool</tspan></text><rect x="700" y="370" width="420" height="150" class="box-red" filter="url(#shadow)"/><text x="725" y="405" text-anchor="start" class="section">Untrusted memory content</text><text x="725" y="435" text-anchor="start" class="small"><tspan x="725" dy="0">inside &lt;recalled-memory-context&gt;</tspan><tspan x="725" dy="21">per-hit id · kind · score band · snippet</tspan><tspan x="725" dy="21">third-party data, not instructions</tspan></text><path d="M 580 445 L 686 445" class="arrow"/><text x="633" y="433" text-anchor="middle" class="tiny">wrapper boundary</text><rect x="110" y="615" width="1060" height="45" class="box-amber" filter="url(#shadow)"/><text x="135" y="643" text-anchor="start" class="small">Caps: search snippet 360 chars · read_memory default 480 · verbose 2000 · full=true unbounded · search max 100 hits</text>
+</svg>
