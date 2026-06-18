@@ -1,7 +1,9 @@
 //! MCP server command execution.
 
 use std::convert::Infallible;
+use std::future::Future;
 use std::net::SocketAddr;
+use std::pin::Pin;
 use std::sync::Arc;
 
 use aionforge::{
@@ -13,14 +15,12 @@ use aionforge_mcp::{
     StreamableHttpOptions, serve_stdio_with_consolidation,
     streamable_http_service_with_consolidation,
 };
+use axum::Router;
+use axum::body::Body;
+use axum::http::header::AUTHORIZATION;
+use axum::http::{Method, Request, Response, StatusCode};
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full, combinators::BoxBody};
-use hyper::body::Incoming;
-use hyper::header::AUTHORIZATION;
-use hyper::service::service_fn;
-use hyper::{Method, Request, Response, StatusCode};
-use hyper_util::rt::{TokioExecutor, TokioIo};
-use hyper_util::server::conn::auto::Builder as AutoHttpBuilder;
 use tokio::net::TcpListener;
 use tower_service::Service;
 
@@ -231,31 +231,19 @@ async fn serve_http(
     };
 
     let listener = TcpListener::bind(resolved.listen).await?;
-    let builder = AutoHttpBuilder::new(TokioExecutor::new());
-    let shutdown = shutdown_signal();
-    tokio::pin!(shutdown);
-    loop {
-        tokio::select! {
-            accepted = listener.accept() => {
-                let (stream, _) = accepted?;
-                let io = TokioIo::new(stream);
-                let builder = builder.clone();
-                let service = service.clone();
-                tokio::spawn(async move {
-                    let hyper_service = service_fn(move |request| {
-                        let mut service = service.clone();
-                        async move { service.call(request).await }
-                    });
-                    let _ = builder.serve_connection(io, hyper_service).await;
-                });
+    let app = Router::new().fallback_service(service);
+    axum::serve(listener, app)
+        .with_graceful_shutdown(async {
+            if let Err(error) = shutdown_signal().await {
+                tracing::error!(
+                    target: "aionforge::serve",
+                    error = %error,
+                    "shutdown signal listener failed",
+                );
             }
-            shutdown = &mut shutdown => {
-                shutdown?;
-                report_shutdown_signal();
-                break;
-            }
-        }
-    }
+            report_shutdown_signal();
+        })
+        .await?;
     Ok(())
 }
 
@@ -354,7 +342,7 @@ struct HttpMcpRouter {
 }
 
 impl HttpMcpRouter {
-    async fn call(&mut self, mut request: Request<Incoming>) -> Result<HttpResponse, Infallible> {
+    async fn handle(&mut self, mut request: Request<Body>) -> Result<HttpResponse, Infallible> {
         // DEFAULT-OFF fast path: with no producer the router is byte-for-byte the pre-PR5 router —
         // `/mcp` delegates to the inner service, every other path 404s, nothing else runs.
         let Some(validators) = self.validators.clone() else {
@@ -393,6 +381,24 @@ impl HttpMcpRouter {
         // handler and a total auth-on outage.
         request.extensions_mut().insert(validated);
         self.inner.call(request).await
+    }
+}
+
+impl Service<Request<Body>> for HttpMcpRouter {
+    type Response = HttpResponse;
+    type Error = Infallible;
+    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
+
+    fn poll_ready(
+        &mut self,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), Self::Error>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, request: Request<Body>) -> Self::Future {
+        let mut service = self.clone();
+        Box::pin(async move { service.handle(request).await })
     }
 }
 
