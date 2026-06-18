@@ -102,8 +102,9 @@ docker pull ghcr.io/jscott3201/aionforge-memory:0.3.0
 ```
 
 The repository Dockerfile builds the binary with the pinned Rust toolchain and
-runs it as UID/GID `10001` in a Debian runtime image. For a local smoke test
-without an embedding provider, disable embeddings explicitly:
+runs it as UID/GID `10001` in a Debian runtime image. It also builds and bundles
+the operator console, served at `/console` by the same HTTP process. For a local
+smoke test without an embedding provider, disable embeddings explicitly:
 
 ```bash
 docker build -t aionforge-memory:dev .

@@ -8,7 +8,9 @@ use `AIONFORGE_CONSOLE_BASE`, defaulting to `/console`.
 
 The Rust server serves the built console from `ui/console/build` by default when
 started from the repository root. Set `AIONFORGE_CONSOLE_DIST_DIR` to point at a
-different packaged build directory.
+different packaged build directory. Release archives place the build in a
+sibling `console/` directory next to the binary; container images serve it from
+`/usr/local/share/aionforge/console`.
 
 ```bash
 pnpm install

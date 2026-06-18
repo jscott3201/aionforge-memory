@@ -8,6 +8,7 @@
 .DS_Store
 .env
 .env.*
+.pnpm-store
 Dockerfile
 .dockerignore
 README.md
@@ -22,3 +23,11 @@ deny.toml
 scripts
 target
 _*
+node_modules
+ui/console/.pnpm-store
+ui/console/.svelte-kit
+ui/console/build
+ui/console/node_modules
+ui/console/blob-report
+ui/console/playwright-report
+ui/console/test-results

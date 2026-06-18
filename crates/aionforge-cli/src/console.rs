@@ -13,15 +13,41 @@ use tower_http::services::ServeDir;
 pub(crate) const BASE_PATH: &str = "/console";
 
 const DIST_ENV: &str = "AIONFORGE_CONSOLE_DIST_DIR";
-const DEFAULT_DIST_DIR: &str = "ui/console/build";
+const REPO_DIST_DIR: &str = "ui/console/build";
+const RELEASE_DIST_DIR: &str = "console";
+const CONTAINER_DIST_DIR: &str = "/usr/local/share/aionforge/console";
+const DEFAULT_DIST_HINT: &str =
+    "ui/console/build, executable-adjacent console/, ./console, /usr/local/share/aionforge/console";
 const SPA_SHELL: &str = "200.html";
 
 pub(crate) fn resolve_dist_dir() -> Option<PathBuf> {
-    let configured = std::env::var_os(DIST_ENV)
+    if let Some(configured) = std::env::var_os(DIST_ENV)
         .filter(|value| !value.is_empty())
-        .map(PathBuf::from);
-    let candidate = configured.unwrap_or_else(|| PathBuf::from(DEFAULT_DIST_DIR));
-    candidate.join(SPA_SHELL).is_file().then_some(candidate)
+        .map(PathBuf::from)
+    {
+        return dist_dir_with_shell(configured);
+    }
+
+    default_dist_dirs()
+        .into_iter()
+        .find_map(dist_dir_with_shell)
+}
+
+fn default_dist_dirs() -> Vec<PathBuf> {
+    let mut candidates = vec![PathBuf::from(REPO_DIST_DIR)];
+    if let Some(exe_parent) = std::env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(Path::to_path_buf))
+    {
+        candidates.push(exe_parent.join(RELEASE_DIST_DIR));
+    }
+    candidates.push(PathBuf::from(RELEASE_DIST_DIR));
+    candidates.push(PathBuf::from(CONTAINER_DIST_DIR));
+    candidates
+}
+
+fn dist_dir_with_shell(path: PathBuf) -> Option<PathBuf> {
+    path.join(SPA_SHELL).is_file().then_some(path)
 }
 
 pub(crate) fn report_startup(console_dist: Option<&Path>) {
@@ -39,7 +65,7 @@ pub(crate) fn report_startup(console_dist: Option<&Path>) {
                 target: "aionforge::serve",
                 base_path = BASE_PATH,
                 env = DIST_ENV,
-                default_dist_dir = DEFAULT_DIST_DIR,
+                default_dist_dirs = DEFAULT_DIST_HINT,
                 "operator console disabled; build assets or set the console dist env",
             );
         }
@@ -153,6 +179,15 @@ fn plain_body_response(status: StatusCode, body: &'static str) -> Response<Body>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_dist_dirs_cover_source_archive_and_container_layouts() {
+        let candidates = default_dist_dirs();
+
+        assert_eq!(candidates.first(), Some(&PathBuf::from(REPO_DIST_DIR)));
+        assert!(candidates.contains(&PathBuf::from(RELEASE_DIST_DIR)));
+        assert!(candidates.contains(&PathBuf::from(CONTAINER_DIST_DIR)));
+    }
 
     #[test]
     fn spa_shell_only_answers_navigation_methods() {
