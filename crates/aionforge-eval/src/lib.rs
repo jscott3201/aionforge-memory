@@ -17,6 +17,7 @@
 //!   negative queries).
 //! - [`beam`] — a loader for a normalized slice of the external BEAM long-term-memory
 //!   benchmark (never vendored), used by the on-demand source-recall-under-floor runner.
+//! - [`ingest_adapter`] — a session/time-aware seed path for benchmark conversations.
 //! - [`scrub`] — a secret/PII gate run over any fixture before it becomes a baseline.
 //!
 //! The embedder-backed floor-sweep *runner* (which embeds a fixture once and re-runs
@@ -25,12 +26,17 @@
 
 pub mod beam;
 pub mod fixture;
+pub mod ingest_adapter;
 pub mod metrics;
 pub mod report;
 pub mod scrub;
 
 pub use beam::{BeamConversation, BeamMessage, BeamProbe, parse_conversations};
 pub use fixture::{Graded, MemoryRow, QueryRow, parse_memories, parse_queries};
+pub use ingest_adapter::{
+    IngestCorpus, IngestError, IngestMode, IngestOutcome, IngestSession, IngestTurn, seed_sessions,
+    seed_sessions_with_embeddings,
+};
 pub use metrics::{
     CorpusMetrics, community_redundancy, false_rejection_rate, is_rejected, max_dense_similarity,
     min_gold_dense_similarity, ndcg_at_k, ranked_ids, recall_at_k, rejection_rate,
