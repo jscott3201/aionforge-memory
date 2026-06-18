@@ -209,6 +209,17 @@ async fn recall_with(store: Arc<Store>, community_cap: usize, limit: usize) -> R
     .expect("recall")
 }
 
+async fn recall_default(store: Arc<Store>, limit: usize) -> RecallBundle {
+    let r = HybridRetriever::new(store, FakeEmbedder::new(), RetrieverConfig::default());
+    r.recall(RecallQuery::new(
+        QUERY,
+        Principal::agent(Id::generate()),
+        limit,
+    ))
+    .await
+    .expect("recall")
+}
+
 fn cluster_count(bundle: &RecallBundle, prefix: &str) -> usize {
     bundle
         .structured
@@ -255,6 +266,26 @@ async fn the_community_cap_demotes_a_dominant_cluster_and_promotes_the_diverse_o
         cluster_count(&capped, "beta lone"),
         1,
         "the diverse community is promoted into the bundle",
+    );
+}
+
+#[tokio::test]
+async fn default_recall_options_activate_the_community_cap() {
+    let bundle = recall_default(two_cluster_store(), 3).await;
+    assert_eq!(
+        bundle.structured.len(),
+        3,
+        "the default path still fills the bundle to the requested limit",
+    );
+    assert_eq!(
+        cluster_count(&bundle, "alpha cluster"),
+        2,
+        "RecallQuery::new uses the production community cap and limits the dominant cluster",
+    );
+    assert_eq!(
+        cluster_count(&bundle, "beta lone"),
+        1,
+        "the default path promotes a diverse community into the live recall bundle",
     );
 }
 

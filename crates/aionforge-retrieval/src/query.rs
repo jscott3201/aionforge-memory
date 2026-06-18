@@ -93,11 +93,10 @@ pub struct RecallOptions {
     /// the same entities, chained through support), so this stops a recall returning a wall of
     /// near-redundant facts about one cluster. Unlike the session cap it applies to facts too
     /// (a fact has no session but does have a community). Spilled memories are topped up only if
-    /// the bundle is under-filled. **Zero (the default) means no cap** — the community labels are
-    /// not even computed, so recall is byte-identical and zero-cost. STAGED OFF pending a
-    /// graph-bearing benchmark to tune the value (store memory `019ed336` prove-before-flip;
-    /// BEAM is episode-only and cannot exercise communities), unlike the session cap whose `3`
-    /// is already established.
+    /// the bundle is under-filled. The production default is `2`, activated from the #291
+    /// graph-bearing sweep as a conservative first cap: it breaks the one-cluster wall while
+    /// still allowing two facts from a legitimate single-entity community. **Zero means no cap**
+    /// — the community labels are not even computed, so recall is byte-identical and zero-cost.
     pub community_diversity_cap: usize,
     /// A wall-clock budget for the whole recall; exceeding it surfaces as
     /// [`RetrievalError::DeadlineExceeded`](crate::RetrievalError::DeadlineExceeded)
@@ -154,7 +153,7 @@ impl Default for RecallOptions {
             mode_override: None,
             temporal: TemporalMode::default(),
             session_diversity_cap: 3,
-            community_diversity_cap: 0,
+            community_diversity_cap: 2,
             deadline: None,
             include_expired: false,
             fanout: 0,
