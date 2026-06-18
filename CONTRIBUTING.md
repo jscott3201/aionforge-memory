@@ -9,11 +9,12 @@ drift, `AGENTS.md` wins — this file links to it rather than restating it.
 
 - Every logical change opens a pull request into the `development` branch.
 - Development PRs run the **fast CI gates** only (formatting, repository safety
-  scans, and — for dependency changes — license/attribution checks). The heavy
-  Rust build, clippy, test, and red-team matrix runs at the **release gate** when
+  scans, console format/lint/type/build checks when `ui/console` changes, and —
+  for dependency changes — license/attribution checks). The heavy Rust build,
+  clippy, test, and red-team matrix runs at the **release gate** when
   `development` is batched into `main`, and a version tag drives the gated
-  publish. That is why a passing development PR has not run the full
-  ubuntu + macOS matrix — run the local validation below before you open it.
+  publish. That is why a passing development PR has not run the full ubuntu +
+  macOS matrix — run the local validation below before you open it.
 - Keep changes scoped to the crate or subsystem that owns the behavior, and add
   or update tests when you change behavior. See
   [`AGENTS.md`](AGENTS.md) for the crate map and editing guidance.
@@ -58,6 +59,15 @@ bash .github/scripts/check-plugin-package.sh
 bash .github/scripts/check-no-gql-interpolation.sh
 bash .github/scripts/check-store-only-selene.sh
 bash .github/scripts/check-audit-keygen-confined.sh
+bash .github/scripts/check-principal-gate.sh
+```
+
+Console changes under `ui/console` also require:
+
+```bash
+cd ui/console
+pnpm install --frozen-lockfile
+pnpm validate
 ```
 
 Dependency or manifest changes (`Cargo.lock`, `Cargo.toml`, any

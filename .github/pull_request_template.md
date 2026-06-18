@@ -37,7 +37,8 @@ Closes #
 - [ ] `cargo nextest run --workspace --locked --all-features --profile ci`
 - [ ] `cargo test --workspace --locked --all-features --doc`
 - [ ] `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace --lib --document-private-items --locked`
-- [ ] Repository fast gates: `bash .github/scripts/check-file-size.sh`, `check-no-secrets.sh`, `check-plugin-package.sh`, `check-no-gql-interpolation.sh`, `check-store-only-selene.sh`, `check-audit-keygen-confined.sh`
+- [ ] Repository fast gates: `bash .github/scripts/check-file-size.sh`, `check-no-secrets.sh`, `check-plugin-package.sh`, `check-no-gql-interpolation.sh`, `check-store-only-selene.sh`, `check-audit-keygen-confined.sh`, `check-principal-gate.sh`
+- [ ] Console changes ran: `cd ui/console && pnpm install --frozen-lockfile && pnpm validate` — or N/A
 
 <!--
   Dependency / manifest changes only (Cargo.lock, Cargo.toml, crates/*/Cargo.toml,
@@ -55,7 +56,7 @@ Closes #
 
 <!-- Core invariants are defined in AGENTS.md. Confirm this change respects them. -->
 
-- [ ] Change is crate-scoped and respects the layered acyclic boundaries (selene-db types stay inside `aionforge-store`; no raw GQL interpolation; no `unsafe`; public APIs have doc comments; every file under the 700-LOC cap). See AGENTS.md.
+- [ ] Change is subsystem-scoped and respects the layered acyclic boundaries (selene-db types stay inside `aionforge-store`; no raw GQL interpolation; no `unsafe`; public APIs have doc comments; every source file under the 700-LOC cap). See AGENTS.md.
 
 ## Public-repo check
 
