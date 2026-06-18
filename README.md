@@ -71,6 +71,15 @@ models or execute recalled content as instructions. See
 [honest scope](docs/honest-scope.md) for the current boundaries and deferred
 work.
 
+## Memory Model
+
+A capture becomes one immutable episode. Consolidation adds derived facts,
+entities, and notes beside that episode instead of rewriting it. Recall returns
+a bounded, explicitly untrusted context bundle; lifecycle operations such as
+forgetting, erasure, promotion, and demotion are explicit controls.
+
+For the full model, see [Data model and mental model](docs/data-model.md).
+
 ## Configure A Client
 
 The server publishes MCP tools, resources, and prompts. For a local HTTP server,
