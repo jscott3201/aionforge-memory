@@ -20,11 +20,10 @@ aionforge-embed = { path = "../aionforge-embed", version = "0.3.0" }
 aionforge-mcp = { path = "../aionforge-mcp", version = "0.3.0" }
 aionforge-store = { path = "../aionforge-store", version = "0.3.0" }
 aionforge-tui = { path = "../aionforge-tui", version = "0.3.0" }
+axum = { version = "0.8.9", default-features = false, features = ["tokio", "http1", "http2"] }
 bytes = "1"
 clap = { workspace = true }
 http-body-util = "0.1"
-hyper = { version = "1.10", features = ["server", "http1", "http2"] }
-hyper-util = { version = "0.1.20", features = ["server-auto", "tokio"] }
 secrecy = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
