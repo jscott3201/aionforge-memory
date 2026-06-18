@@ -51,7 +51,7 @@ pub(crate) const TOOLS: &[ToolSurface] = &[
     ToolSurface {
         name: "server_status",
         class: ToolClass::ReadLike,
-        default_output: "one compact [server] status line",
+        default_output: "[server] status line",
         verbose: true,
         read_only_hint: true,
         destructive_hint: false,
@@ -62,7 +62,7 @@ pub(crate) const TOOLS: &[ToolSurface] = &[
     ToolSurface {
         name: "search",
         class: ToolClass::ReadLike,
-        default_output: "compact recalled-memory-context wrapper with one line per hit",
+        default_output: "hits header plus recalled-memory-context lines",
         verbose: true,
         read_only_hint: true,
         destructive_hint: false,
@@ -79,7 +79,7 @@ pub(crate) const TOOLS: &[ToolSurface] = &[
     ToolSurface {
         name: "read_memory",
         class: ToolClass::ReadLike,
-        default_output: "[read_memory] requested/found header then one <memory> per found id in a recalled-memory-context wrapper; missing/unauthorized ids absent",
+        default_output: "[read_memory] requested/found plus visible memory lines",
         verbose: true,
         read_only_hint: true,
         destructive_hint: false,
@@ -99,7 +99,7 @@ pub(crate) const TOOLS: &[ToolSurface] = &[
     ToolSurface {
         name: "session_manifest",
         class: ToolClass::ReadLike,
-        default_output: "visible captured-memory manifest for one session",
+        default_output: "[session_manifest] page plus visible episode lines",
         verbose: true,
         read_only_hint: true,
         destructive_hint: false,
@@ -119,7 +119,7 @@ pub(crate) const TOOLS: &[ToolSurface] = &[
     ToolSurface {
         name: "consolidation_status",
         class: ToolClass::ReadLike,
-        default_output: "one compact [consolidation] backlog line",
+        default_output: "[consolidation] backlog line",
         verbose: true,
         read_only_hint: true,
         destructive_hint: false,
@@ -130,7 +130,7 @@ pub(crate) const TOOLS: &[ToolSurface] = &[
     ToolSurface {
         name: "audit_history",
         class: ToolClass::ReadLike,
-        default_output: "compact audit page with cursor; subject=* means all visible subjects for a kind",
+        default_output: "[audit] page with optional cursor",
         verbose: true,
         read_only_hint: true,
         destructive_hint: false,
@@ -152,7 +152,7 @@ pub(crate) const TOOLS: &[ToolSurface] = &[
     ToolSurface {
         name: "capture",
         class: ToolClass::Mutating,
-        default_output: "one compact [capture] receipt line with marker ids when flags fire",
+        default_output: "[capture] receipt line",
         verbose: false,
         read_only_hint: false,
         destructive_hint: false,
@@ -173,7 +173,7 @@ pub(crate) const TOOLS: &[ToolSurface] = &[
     ToolSurface {
         name: "batch_capture",
         class: ToolClass::Mutating,
-        default_output: "[batch_capture] items/new/dup/err header then one receipt or ERR_ITEM[i] per item in order; dup counts stored near-duplicates",
+        default_output: "[batch_capture] tally plus per-item receipts/errors",
         verbose: false,
         read_only_hint: false,
         destructive_hint: false,
@@ -196,7 +196,7 @@ pub(crate) const TOOLS: &[ToolSurface] = &[
     ToolSurface {
         name: "consolidate",
         class: ToolClass::Mutating,
-        default_output: "one compact [consolidate] run summary line",
+        default_output: "[consolidate] run summary",
         verbose: true,
         read_only_hint: false,
         destructive_hint: false,
@@ -211,7 +211,7 @@ pub(crate) const TOOLS: &[ToolSurface] = &[
     ToolSurface {
         name: "forget",
         class: ToolClass::Mutating,
-        default_output: "one compact [forget] outcome line with disabled config reason when off",
+        default_output: "[forget] outcome line",
         verbose: false,
         read_only_hint: false,
         destructive_hint: true,
@@ -231,7 +231,7 @@ pub(crate) const TOOLS: &[ToolSurface] = &[
     ToolSurface {
         name: "unforget",
         class: ToolClass::Mutating,
-        default_output: "one compact [unforget] outcome line with disabled config reason when off",
+        default_output: "[unforget] outcome line",
         verbose: false,
         read_only_hint: false,
         destructive_hint: false,
@@ -251,7 +251,7 @@ pub(crate) const TOOLS: &[ToolSurface] = &[
     ToolSurface {
         name: "pin",
         class: ToolClass::Mutating,
-        default_output: "one compact [pin] outcome line (pinned|already_pinned|not_found)",
+        default_output: "[pin] outcome line",
         verbose: false,
         read_only_hint: false,
         destructive_hint: false,
@@ -271,7 +271,7 @@ pub(crate) const TOOLS: &[ToolSurface] = &[
     ToolSurface {
         name: "unpin",
         class: ToolClass::Mutating,
-        default_output: "one compact [unpin] outcome line (unpinned|not_pinned|not_found)",
+        default_output: "[unpin] outcome line",
         verbose: false,
         read_only_hint: false,
         destructive_hint: false,
@@ -291,7 +291,7 @@ pub(crate) const TOOLS: &[ToolSurface] = &[
     ToolSurface {
         name: "work_create",
         class: ToolClass::Mutating,
-        default_output: "one compact [work_create] receipt line (id, level, status, namespace, parent)",
+        default_output: "[work_create] receipt line",
         verbose: false,
         read_only_hint: false,
         destructive_hint: false,
@@ -315,7 +315,7 @@ pub(crate) const TOOLS: &[ToolSurface] = &[
     ToolSurface {
         name: "work_advance",
         class: ToolClass::Mutating,
-        default_output: "one compact [work_advance] outcome line (id, status, namespace)",
+        default_output: "[work_advance] outcome line",
         verbose: false,
         read_only_hint: false,
         destructive_hint: false,
@@ -337,7 +337,7 @@ pub(crate) const TOOLS: &[ToolSurface] = &[
     ToolSurface {
         name: "work_link",
         class: ToolClass::Mutating,
-        default_output: "one compact [work_link] outcome line (work id, tag id, slug)",
+        default_output: "[work_link] outcome line",
         verbose: false,
         read_only_hint: false,
         destructive_hint: false,
@@ -358,7 +358,7 @@ pub(crate) const TOOLS: &[ToolSurface] = &[
     ToolSurface {
         name: "work_tree",
         class: ToolClass::ReadLike,
-        default_output: "[work_tree] root/found header then one <memory> per visible subtree node in a recalled-memory-context wrapper",
+        default_output: "[work_tree] root/found plus visible work lines",
         verbose: false,
         read_only_hint: true,
         destructive_hint: false,
@@ -376,7 +376,7 @@ pub(crate) const TOOLS: &[ToolSurface] = &[
     ToolSurface {
         name: "work_query",
         class: ToolClass::ReadLike,
-        default_output: "[work_query] filter/found header then one <memory> per matching item in a recalled-memory-context wrapper",
+        default_output: "[work_query] filter/found plus visible work lines",
         verbose: false,
         read_only_hint: true,
         destructive_hint: false,

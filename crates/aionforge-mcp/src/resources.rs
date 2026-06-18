@@ -65,6 +65,7 @@ Tools:
 
 Local discipline:
 - Keep the built-in HTTP server on loopback when auth is disabled; auth-disabled HTTP does not implement transport authentication. For shared networks, enable `[auth].enabled=true` or use an OAuth-aware perimeter.
+- Read-like tool calls preserve their compact text content and also attach MCP `structuredContent`; schema names are listed in aionforge://manifest/tools.json for console/UI clients.
 - Identity tools accept principal={agent_id,teams}; legacy agent_id/viewer works when auth is disabled. If principal is present, principal.teams is authoritative and any legacy teams must match.
 - No default principal or target is derived from connection, session, or content. With auth enabled, the validated bearer-token identity is authoritative and body identity fields may only restate it.
 - Private agent namespaces are not cross-readable by receipt id; use team target_namespace or session_manifest for cross-agent bootstraps.
@@ -488,6 +489,8 @@ struct ToolEntryManifest {
     idempotent_hint: bool,
     open_world_hint: bool,
     default_output: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    schema: Option<&'static str>,
     verbose: bool,
     errors: &'static [&'static str],
 }
@@ -507,7 +510,7 @@ fn tool_manifest_json() -> String {
         policy: PolicyManifest {
             read_like_approval: ToolClass::ReadLike.approval(),
             mutating_approval: ToolClass::Mutating.approval(),
-            mutation_rule: "ask before mutations",
+            mutation_rule: "ask",
         },
         resources: ResourceManifest {
             tool_manifest: TOOL_MANIFEST_RESOURCE_URI,
@@ -537,8 +540,23 @@ fn tool_entry_manifest(tool: &ToolSurface) -> ToolEntryManifest {
         idempotent_hint: tool.idempotent_hint,
         open_world_hint: tool.open_world_hint,
         default_output: tool.default_output,
+        schema: structured_output_schema(tool.name),
         verbose: tool.verbose,
         errors: tool.errors,
+    }
+}
+
+fn structured_output_schema(tool_name: &str) -> Option<&'static str> {
+    match tool_name {
+        "server_status" => Some("aionforge.server_status.v1"),
+        "search" => Some("aionforge.search_results.v1"),
+        "read_memory" => Some("aionforge.read_memory.v1"),
+        "session_manifest" => Some("aionforge.session_manifest.v1"),
+        "consolidation_status" => Some("aionforge.consolidation_status.v1"),
+        "audit_history" => Some("aionforge.audit_history.v1"),
+        "work_tree" => Some("aionforge.work_tree.v1"),
+        "work_query" => Some("aionforge.work_query.v1"),
+        _ => None,
     }
 }
 

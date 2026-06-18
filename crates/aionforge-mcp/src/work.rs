@@ -21,12 +21,14 @@ use aionforge_domain::nodes::work::{WorkItem, WorkStatus};
 use aionforge_domain::time::Timestamp;
 use aionforge_engine::{Memory, ResolvedMemory, Store};
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-use crate::inspect::{SNIPPET_CHARS, render_memory_line, work_status_tag};
+use crate::inspect::SNIPPET_CHARS;
 use crate::principal::{
     AuthEnabled, HostPrincipalToolParam, refuse_read_only_write, resolve_reader,
 };
+use crate::render::{render_memory_line, work_status_tag};
+use crate::structured::StructuredToolOutput;
 use crate::tools::parse_target_namespace;
 use crate::validated::ValidatedPrincipal;
 
@@ -193,6 +195,43 @@ pub struct WorkQueryToolParams {
     #[serde(default)]
     #[schemars(description = "Teams the host asserts this reader belongs to. Optional.")]
     pub teams: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct WorkItemStructured {
+    id: String,
+    namespace: String,
+    ingested_at: String,
+    level: String,
+    status: &'static str,
+    parent: Option<String>,
+    ordinal: u64,
+    title: String,
+    body: Option<String>,
+}
+
+#[derive(Serialize)]
+struct WorkTreeStructured {
+    schema: &'static str,
+    root: String,
+    depth: usize,
+    found: usize,
+    items: Vec<WorkItemStructured>,
+}
+
+#[derive(Serialize)]
+struct WorkQueryStructured {
+    schema: &'static str,
+    filter: WorkQueryFilterStructured,
+    found: usize,
+    items: Vec<WorkItemStructured>,
+}
+
+#[derive(Serialize)]
+struct WorkQueryFilterStructured {
+    status: Option<&'static str>,
+    level: Option<String>,
+    parent: Option<String>,
 }
 
 // ----- Tools -------------------------------------------------------------------------------
@@ -400,6 +439,16 @@ pub fn work_tree_tool<E: Embedder>(
     extension: Option<ValidatedPrincipal>,
     auth_enabled: AuthEnabled,
 ) -> Result<String, String> {
+    Ok(work_tree_tool_output(memory, params, extension, auth_enabled)?.text)
+}
+
+/// Return a work subtree as stable text plus structured work-item records.
+pub(crate) fn work_tree_tool_output<E: Embedder>(
+    memory: &Memory<E>,
+    params: WorkTreeToolParams,
+    extension: Option<ValidatedPrincipal>,
+    auth_enabled: AuthEnabled,
+) -> Result<StructuredToolOutput, String> {
     let root_id = parse_work_id(&params.root_id)?;
     let principal = resolve_reader(
         params.viewer.as_deref(),
@@ -423,11 +472,16 @@ pub fn work_tree_tool<E: Embedder>(
     {
         collect_subtree(memory.store(), &root, depth, &visible, &mut collected)?;
     }
-    Ok(render_work_lines(
-        &format!("[work_tree] root={root_id} found={}", collected.len()),
-        &collected,
-        "work_tree",
-    ))
+    let header = format!("[work_tree] root={root_id} found={}", collected.len());
+    let text = render_work_lines(&header, &collected, "work_tree");
+    let structured = WorkTreeStructured {
+        schema: "aionforge.work_tree.v1",
+        root: root_id.to_string(),
+        depth,
+        found: collected.len(),
+        items: collected.iter().map(structured_work_item).collect(),
+    };
+    Ok(StructuredToolOutput::new(text, structured))
 }
 
 /// Return work items filtered by status and/or level, in the caller's visible namespaces.
@@ -441,6 +495,16 @@ pub fn work_query_tool<E: Embedder>(
     extension: Option<ValidatedPrincipal>,
     auth_enabled: AuthEnabled,
 ) -> Result<String, String> {
+    Ok(work_query_tool_output(memory, params, extension, auth_enabled)?.text)
+}
+
+/// Return filtered work items as stable text plus structured work-item records.
+pub(crate) fn work_query_tool_output<E: Embedder>(
+    memory: &Memory<E>,
+    params: WorkQueryToolParams,
+    extension: Option<ValidatedPrincipal>,
+    auth_enabled: AuthEnabled,
+) -> Result<StructuredToolOutput, String> {
     let status = params
         .work_status
         .as_deref()
@@ -490,7 +554,18 @@ pub fn work_query_tool<E: Embedder>(
         level.as_deref().unwrap_or("*"),
         items.len(),
     );
-    Ok(render_work_lines(&header, &items, "work_query"))
+    let text = render_work_lines(&header, &items, "work_query");
+    let structured = WorkQueryStructured {
+        schema: "aionforge.work_query.v1",
+        filter: WorkQueryFilterStructured {
+            status: status.map(work_status_tag),
+            level,
+            parent: None,
+        },
+        found: items.len(),
+        items: items.iter().map(structured_work_item).collect(),
+    };
+    Ok(StructuredToolOutput::new(text, structured))
 }
 
 // ----- Helpers -----------------------------------------------------------------------------
@@ -574,6 +649,20 @@ fn render_work_lines(header: &str, items: &[WorkItem], tool: &'static str) -> St
     out.push_str("\n</recalled-memory-context>");
     crate::telemetry::record_recall_served(tool, &out);
     out
+}
+
+fn structured_work_item(item: &WorkItem) -> WorkItemStructured {
+    WorkItemStructured {
+        id: item.identity.id.to_string(),
+        namespace: item.identity.namespace.to_string(),
+        ingested_at: item.identity.ingested_at.to_string(),
+        level: item.level.clone(),
+        status: work_status_tag(item.work_status),
+        parent: item.parent_id.map(|id| id.to_string()),
+        ordinal: item.ordinal,
+        title: item.title.clone(),
+        body: item.body.clone(),
+    }
 }
 
 /// Parse a work item id, mapping a malformed value to a structured error.

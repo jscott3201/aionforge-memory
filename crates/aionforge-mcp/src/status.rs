@@ -2,8 +2,12 @@
 
 use aionforge_engine::{MemoryCounts, WorkCounts};
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
+use crate::resources::{
+    MCP_SURFACE_GUIDE_RESOURCE_URI, TOOL_APPROVAL_POLICY_RESOURCE_URI, TOOL_MANIFEST_RESOURCE_URI,
+};
+use crate::structured::StructuredToolOutput;
 use crate::surface::{self, ToolClass};
 
 /// The short source SHA baked in at build time (release-integrity Layer 1, see `build.rs`).
@@ -27,6 +31,68 @@ pub struct ServerStatusToolParams {
     /// Include tool class lists and operational hints.
     #[schemars(description = "Include tool class lists and operational hints.")]
     pub verbose: Option<bool>,
+}
+
+#[derive(Serialize)]
+struct ServerStatusStructured {
+    schema: &'static str,
+    version: &'static str,
+    build: ServerStatusBuild,
+    surface: ServerStatusSurface,
+    transports: Vec<&'static str>,
+    sampling: bool,
+    recall_wrapper: &'static str,
+    counts: ServerStatusCounts,
+    auth: ServerStatusAuth,
+    resources: Vec<&'static str>,
+}
+
+#[derive(Serialize)]
+struct ServerStatusBuild {
+    sha: &'static str,
+    profile: &'static str,
+}
+
+#[derive(Serialize)]
+struct ServerStatusSurface {
+    tools: usize,
+    resources: usize,
+    prompts: usize,
+    read_like_tools: Vec<&'static str>,
+    mutating_tools: Vec<&'static str>,
+}
+
+#[derive(Serialize)]
+struct ServerStatusCounts {
+    memories: u64,
+    work_items: u64,
+    kinds: ServerStatusKindCounts,
+    work_statuses: ServerStatusWorkCounts,
+}
+
+#[derive(Serialize)]
+struct ServerStatusKindCounts {
+    episodes: u64,
+    facts: u64,
+    entities: u64,
+    notes: u64,
+    skills: u64,
+    bad_patterns: u64,
+}
+
+#[derive(Serialize)]
+struct ServerStatusWorkCounts {
+    todo: u64,
+    in_progress: u64,
+    blocked: u64,
+    done: u64,
+    dropped: u64,
+}
+
+#[derive(Serialize)]
+struct ServerStatusAuth {
+    enabled: bool,
+    issuers: Vec<String>,
 }
 
 /// The OAuth resource-server posture `server_status` reports — **posture only, never a secret**.
@@ -76,6 +142,18 @@ pub fn server_status_tool(
     params: ServerStatusToolParams,
     auth: &AuthPosture,
 ) -> String {
+    server_status_tool_output(resource_count, counts, work_counts, params, auth).text
+}
+
+/// Render compact status text and the console-facing structured status DTO.
+#[must_use]
+pub(crate) fn server_status_tool_output(
+    resource_count: usize,
+    counts: MemoryCounts,
+    work_counts: WorkCounts,
+    params: ServerStatusToolParams,
+    auth: &AuthPosture,
+) -> StructuredToolOutput {
     let mut out = format!(
         "[server] version={} build_sha={} build={} tools={} resources={} prompts={} transports={} sampling=false recall_wrapper=recalled-memory-context mutating_tools={} memories={} work_items={} auth_enabled={} auth_issuers={}",
         env!("CARGO_PKG_VERSION"),
@@ -130,7 +208,53 @@ pub fn server_status_tool(
             "policy=allow_read_like_ask_mutations resources=aionforge://manifest/tools.json,aionforge://guide/mcp-surface,aionforge://policy/tool-approval",
         );
     }
-    out
+    let structured = ServerStatusStructured {
+        schema: "aionforge.server_status.v1",
+        version: env!("CARGO_PKG_VERSION"),
+        build: ServerStatusBuild {
+            sha: BUILD_SHA,
+            profile: BUILD_STATUS,
+        },
+        surface: ServerStatusSurface {
+            tools: surface::tool_count(),
+            resources: resource_count,
+            prompts: surface::PROMPT_COUNT,
+            read_like_tools: surface::tool_names_by_class(ToolClass::ReadLike),
+            mutating_tools: surface::tool_names_by_class(ToolClass::Mutating),
+        },
+        transports: surface::TRANSPORTS.to_vec(),
+        sampling: false,
+        recall_wrapper: "recalled-memory-context",
+        counts: ServerStatusCounts {
+            memories: counts.total(),
+            work_items: work_counts.total(),
+            kinds: ServerStatusKindCounts {
+                episodes: counts.episodes,
+                facts: counts.facts,
+                entities: counts.entities,
+                notes: counts.notes,
+                skills: counts.skills,
+                bad_patterns: counts.bad_patterns,
+            },
+            work_statuses: ServerStatusWorkCounts {
+                todo: work_counts.todo,
+                in_progress: work_counts.in_progress,
+                blocked: work_counts.blocked,
+                done: work_counts.done,
+                dropped: work_counts.dropped,
+            },
+        },
+        auth: ServerStatusAuth {
+            enabled: auth.enabled,
+            issuers: auth.issuer_origins.clone(),
+        },
+        resources: vec![
+            TOOL_MANIFEST_RESOURCE_URI,
+            MCP_SURFACE_GUIDE_RESOURCE_URI,
+            TOOL_APPROVAL_POLICY_RESOURCE_URI,
+        ],
+    };
+    StructuredToolOutput::new(out, structured)
 }
 
 #[cfg(test)]

@@ -18,11 +18,14 @@ mod http_body_limit;
 mod http_transport;
 mod inspect;
 mod lifecycle;
+mod lifecycle_output;
 mod mapper;
 mod principal;
 mod prompt;
+mod render;
 mod resources;
 mod status;
+mod structured;
 mod surface;
 mod telemetry;
 mod tools;
@@ -228,7 +231,7 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
     async fn server_status(
         &self,
         params: Parameters<ServerStatusToolParams>,
-    ) -> Result<String, String> {
+    ) -> Result<CallToolResult, String> {
         let counts = self
             .memory
             .memory_counts()
@@ -238,12 +241,14 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
             .store()
             .work_counts()
             .map_err(|e| format!("ERR_SERVER_STATUS {e}"))?;
-        Ok(server_status_tool(
-            resources::static_resource_count(),
-            counts,
-            work_counts,
-            params.0,
-            &self.auth,
+        Ok(structured::call_tool_result(
+            status::server_status_tool_output(
+                resources::static_resource_count(),
+                counts,
+                work_counts,
+                params.0,
+                &self.auth,
+            ),
         ))
     }
 
@@ -300,7 +305,7 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
         &self,
         params: Parameters<SearchToolParams>,
         context: RequestContext<RoleServer>,
-    ) -> Result<String, String> {
+    ) -> Result<CallToolResult, String> {
         // The host boundary owns the wall clock, mirroring `capture`: stamping the recall
         // instant here keeps the substrate free of an ambient clock while making the
         // importance and recency re-ranks available to every MCP search — each query class
@@ -309,7 +314,9 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
         let params = params.0;
         let now = jiff::Zoned::now();
         let extension = validated_principal_from_extensions(&context.extensions);
-        search_tool(&self.memory, params, &now, extension, self.auth_enabled()).await
+        tools::search_tool_output(&self.memory, params, &now, extension, self.auth_enabled())
+            .await
+            .map(structured::call_tool_result)
     }
 
     #[tool(
@@ -325,9 +332,10 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
         &self,
         params: Parameters<ReadMemoryToolParams>,
         context: RequestContext<RoleServer>,
-    ) -> Result<String, String> {
+    ) -> Result<CallToolResult, String> {
         let extension = validated_principal_from_extensions(&context.extensions);
-        read_memory_tool(&self.memory, params.0, extension, self.auth_enabled())
+        inspect::read_memory_tool_output(&self.memory, params.0, extension, self.auth_enabled())
+            .map(structured::call_tool_result)
     }
 
     #[tool(
@@ -343,9 +351,15 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
         &self,
         params: Parameters<SessionManifestToolParams>,
         context: RequestContext<RoleServer>,
-    ) -> Result<String, String> {
+    ) -> Result<CallToolResult, String> {
         let extension = validated_principal_from_extensions(&context.extensions);
-        session_manifest_tool(&self.memory, params.0, extension, self.auth_enabled())
+        inspect::session_manifest_tool_output(
+            &self.memory,
+            params.0,
+            extension,
+            self.auth_enabled(),
+        )
+        .map(structured::call_tool_result)
     }
 
     #[tool(
@@ -360,9 +374,10 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
     async fn consolidation_status(
         &self,
         params: Parameters<ConsolidationStatusToolParams>,
-    ) -> Result<String, String> {
+    ) -> Result<CallToolResult, String> {
         let now = jiff::Zoned::now();
-        consolidation_status_tool(&self.memory, params.0, &now)
+        lifecycle::consolidation_status_tool_output(&self.memory, params.0, &now)
+            .map(structured::call_tool_result)
     }
 
     #[tool(
@@ -485,10 +500,11 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
         &self,
         params: Parameters<AuditHistoryToolParams>,
         context: RequestContext<RoleServer>,
-    ) -> Result<String, String> {
+    ) -> Result<CallToolResult, String> {
         let params = params.0;
         let extension = validated_principal_from_extensions(&context.extensions);
-        audit_history_tool(&self.memory, params, extension, self.auth_enabled())
+        lifecycle::audit_history_tool_output(&self.memory, params, extension, self.auth_enabled())
+            .map(structured::call_tool_result)
     }
 
     #[tool(
@@ -561,9 +577,10 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
         &self,
         params: Parameters<WorkTreeToolParams>,
         context: RequestContext<RoleServer>,
-    ) -> Result<String, String> {
+    ) -> Result<CallToolResult, String> {
         let extension = validated_principal_from_extensions(&context.extensions);
-        work_tree_tool(&self.memory, params.0, extension, self.auth_enabled())
+        work::work_tree_tool_output(&self.memory, params.0, extension, self.auth_enabled())
+            .map(structured::call_tool_result)
     }
 
     #[tool(
@@ -579,9 +596,10 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
         &self,
         params: Parameters<WorkQueryToolParams>,
         context: RequestContext<RoleServer>,
-    ) -> Result<String, String> {
+    ) -> Result<CallToolResult, String> {
         let extension = validated_principal_from_extensions(&context.extensions);
-        work_query_tool(&self.memory, params.0, extension, self.auth_enabled())
+        work::work_query_tool_output(&self.memory, params.0, extension, self.auth_enabled())
+            .map(structured::call_tool_result)
     }
 }
 
