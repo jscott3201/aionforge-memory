@@ -61,8 +61,9 @@ aionforge serve http --listen 127.0.0.1:3918
 
 If a client cannot read `AIONFORGE_AGENT_ID`, put the UUID in that client's
 standing instructions and have the skills use `agent:<uuid>` for recall and the
-raw UUID for capture. Keep the local HTTP endpoint on loopback; use an external
-OAuth resource-server verifier before exposing it remotely.
+raw UUID for capture. Keep auth-disabled HTTP on loopback; before exposing it
+remotely, enable built-in HTTP OAuth validation or use an OAuth-aware
+verifier/equivalent perimeter.
 
 ## Client Notes
 

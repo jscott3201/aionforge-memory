@@ -1,12 +1,11 @@
 //! The validated-principal request extension (PR4 of the OAuth workstream) and its lookup.
 //!
-//! PR5 will wire a Tower validator layer that maps a verified token to a [`Principal`]
-//! (via [`map_verified_claims_to_principal`](crate::map_verified_claims_to_principal)) and
-//! inserts the resolved identity into the request extensions as a [`ValidatedPrincipal`].
-//! PR4 is the **consumption** side: it defines that extension type, the helper that reads it
-//! back out of an rmcp request context, and the precedence rules the identity resolvers apply
-//! to it ([`crate::principal`]). PR4 is **dark** — no producer exists yet, so the lookup always
-//! returns `None` at runtime and every new path is exercised only by tests.
+//! The HTTP auth producer maps a verified token to a [`Principal`] (via
+//! [`map_verified_claims_to_principal`](crate::map_verified_claims_to_principal)) and inserts the
+//! resolved identity into request extensions as a [`ValidatedPrincipal`]. This module defines that
+//! extension type and the helper that reads it back out of an rmcp request context. When HTTP auth
+//! is disabled no producer inserts the extension, so the lookup returns `None` and the identity
+//! resolvers use the legacy explicit body fields.
 //!
 //! # Why a newtype, and why it carries the posture
 //!
@@ -24,7 +23,7 @@ use aionforge_engine::Principal;
 
 use crate::{TokenClass, WritePosture};
 
-/// The validated principal extracted from a request extension (PR4 reads it; PR5 inserts it).
+/// The validated principal extracted from a request extension.
 ///
 /// Carries the full resolved [`Principal`] (including the server-only operator bit) and the
 /// [`WritePosture`], so the write path can fail closed on a [`ReadOnly`](WritePosture::ReadOnly)

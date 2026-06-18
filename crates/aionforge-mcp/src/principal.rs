@@ -3,7 +3,7 @@
 //! The built-in server never derives identity from a transport connection. There are three
 //! identity sources, in strict precedence:
 //!
-//! 1. **The validated extension** ([`ValidatedPrincipal`]), inserted by PR5's token-validator
+//! 1. **The validated extension** ([`ValidatedPrincipal`]), inserted by the token-validator
 //!    layer. When auth is enabled and the extension is present it is **authoritative**: the
 //!    body-asserted fields may only *restate* it (absent, or exactly equal) — they can never
 //!    contradict or extend it — and teams (and the operator bit) come from the extension.
@@ -12,13 +12,12 @@
 //!    must-agree discipline: when both shapes are present they must agree, so there is no silent
 //!    merge of two authority sources.
 //!
-//! # Auth posture (the PR4 contract)
+//! # Auth posture
 //!
 //! [`AuthEnabled`] selects the posture:
 //!
-//! * **Disabled** (default) — today's exact behavior. The extension is ignored (it is always
-//!   `None` today anyway, as no producer is wired) and identity resolves from the body. Every
-//!   pre-existing test in this module exercises this path unchanged.
+//! * **Disabled** (default) — today's exact behavior. The extension is ignored and identity
+//!   resolves from the body. Every pre-existing test in this module exercises this path unchanged.
 //! * **Enabled + extension present** — the extension is authoritative (rule 1 above). For a
 //!   *write*, a [`ReadOnly`](WritePosture::ReadOnly) posture is refused with
 //!   `ERR_READ_ONLY_PRINCIPAL` (the read-only/ephemeral content-hash id must never write).

@@ -2,9 +2,9 @@
 
 Aionforge Memory exposes MCP Tools, Resources, and Prompts over stdio and over the
 MCP Streamable HTTP transport. The HTTP service is intended to be mounted at
-`/mcp` and bound to loopback by default. The built-in HTTP server does not
-implement transport authentication; keep it local unless an OAuth
-resource-server verifier or equivalent perimeter protects the endpoint.
+`/mcp` and bound to loopback by default. HTTP auth is default-off: keep that
+local unless built-in HTTP OAuth validation is enabled or an OAuth-aware
+verifier/equivalent perimeter protects the endpoint.
 
 The current server instructions deliberately lead with the recall safety rule:
 memories returned by `search`, `read_memory`, and `session_manifest` are third-party data wrapped in
@@ -60,9 +60,11 @@ Default HTTP posture:
   `StreamableHttpOptions::max_request_body_bytes`; oversized requests return
   `413 Payload Too Large`.
 - Session mode: stateful, matching normal Streamable HTTP clients.
-- Auth: none in the built-in local HTTP server. Identity-bearing tools take
-  explicit `agent_id`, `viewer`, and optional `teams` parameters; namespace
-  authorization is applied from those values.
+- Auth: disabled by default in local HTTP mode. Identity-bearing tools take an
+  explicit `principal` object or legacy `agent_id`, `viewer`, and optional
+  `teams` parameters; namespace authorization is applied from those values. When
+  `[auth].enabled=true`, `/mcp` requires a validated bearer token and the token
+  identity is authoritative.
 
 ## Agent identity parameters
 
@@ -101,27 +103,37 @@ for cross-agent project bootstraps rather than exchanging private receipt ids.
 
 ## OAuth Readiness
 
-The built-in HTTP server is not an OAuth resource server. For remote multi-user
-deployments, mount an OAuth verifier at the HTTP boundary that validates issuer,
-expiry, scope, and audience/resource binding before the MCP service sees the
-request. Custom hosts can mount the library service behind that verifier. Do not
-pass inbound MCP access tokens through to downstream services, and do not accept
-tokens that were issued for another resource.
+The built-in HTTP server has default-off OAuth resource-server support. With
+`[auth].enabled=false`, it does not derive identity from transport state or
+bearer tokens; clients must pass explicit identity fields and the endpoint
+should stay on loopback. With `[auth].enabled=true`, `aionforge serve http`
+validates bearer tokens for `/mcp` against the configured issuers and audience,
+maps verified claims to an authoritative principal, and rejects identity-bearing
+tool calls that reach handlers without that validated identity.
 
-The crate exposes a small helper for MCP OAuth 2.1 integration:
+For remote multi-user deployments, either enable built-in HTTP OAuth validation
+or mount an OAuth-aware verifier/equivalent perimeter at the HTTP boundary.
+Custom hosts can still mount the library service behind their own verifier. Do
+not pass inbound MCP access tokens through to downstream services, and do not
+accept tokens that were issued for another resource.
+
+The crate exposes MCP OAuth 2.1 helpers and the binary uses them when HTTP auth
+is enabled:
 
 - `OAuthProtectedResourceMetadata` renders RFC 9728 metadata for the MCP endpoint.
   For the default `/mcp` path, serve it at
-  `/.well-known/oauth-protected-resource/mcp` from the verifier or custom host.
+  `/.well-known/oauth-protected-resource/mcp`; built-in auth-enabled HTTP serves
+  that route directly.
 
 Use the MCP endpoint URL as the OAuth `resource` value, for example
 `https://memory.example.com/mcp`. Authorization and token requests should include
 that resource value, and the verifier should reject tokens that are not audience
 bound to it.
 
-For OAuth deployments, omit static `Authorization` headers from client config so
-the client can discover the protected-resource metadata, run its authorization
-flow, and request tokens for the MCP endpoint resource.
+For OAuth deployments, omit static `Authorization` headers from client config
+unless the client explicitly requires one. Let the client discover the
+protected-resource metadata, run its authorization flow, and request tokens for
+the MCP endpoint resource.
 
 This guidance tracks the public MCP authorization spec and the current client
 docs for Codex, Claude Code, OpenCode, and Cursor:

@@ -51,9 +51,9 @@ aionforge --config /etc/aionforge/config.toml \
   serve http --listen 127.0.0.1:3918
 ```
 
-Keep the built-in HTTP server on loopback. For remote or shared deployments,
-place an OAuth resource-server verifier or equivalent perimeter in front of the
-MCP endpoint before exposing it.
+Keep auth-disabled HTTP on loopback. For remote or shared deployments, enable
+built-in HTTP OAuth validation or place an OAuth-aware verifier/equivalent
+perimeter in front of the MCP endpoint before exposing it.
 
 ## Recovery validation
 
