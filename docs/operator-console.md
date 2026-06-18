@@ -2,8 +2,8 @@
 
 The tracked operator console lives in `ui/console`. It is a SvelteKit static SPA
 using `@sveltejs/adapter-static`, with production builds rooted at `/console`.
-The Rust HTTP server still exposes MCP at `/mcp`; serving the built console from
-Axum is a follow-up slice.
+The Rust HTTP server exposes MCP at `/mcp` and serves the built console under
+`/console` when a console build directory is available.
 
 The console opens directly to an operator dashboard. The current skeleton stages
 routes for records, retrieval, consolidation, audit, MCP, namespaces, embedding,
@@ -34,5 +34,23 @@ pnpm validate
 - `pnpm lint`
 - `pnpm check`
 - `pnpm build`
+- `pnpm e2e`
 
-CI runs the same gate whenever `ui/console/**` changes.
+CI runs the same gate whenever `ui/console/**` changes, including Chromium
+Playwright coverage for `/console` and a deep-linked console route.
+
+## Serving
+
+Build the console before starting the Rust HTTP server from the repository root:
+
+```bash
+cd ui/console
+pnpm build
+cd ../..
+aionforge serve http --listen 127.0.0.1:3918
+```
+
+By default the server looks for `ui/console/build/200.html`. Set
+`AIONFORGE_CONSOLE_DIST_DIR` to serve a packaged build directory from another
+location. If no shell is present, `/console` is not mounted and the server keeps
+returning the normal plain `404` for non-MCP paths.

@@ -21,6 +21,8 @@ fn serve_http_binary_answers_initialize_with_server_info() {
     let data_dir = temp_dir.path().join("data");
     fs::create_dir_all(&data_dir).expect("create smoke-test data directory");
     restrict_dir_permissions(&data_dir);
+    let console_dir = temp_dir.path().join("console");
+    write_console_dist(&console_dir);
 
     let config_path = temp_dir.path().join("config.toml");
     fs::write(
@@ -36,7 +38,7 @@ enabled = false
     .expect("write smoke-test config");
 
     let listen_addr = unused_loopback_addr();
-    let mut server = ServerProcess::spawn(&config_path, &data_dir, listen_addr);
+    let mut server = ServerProcess::spawn(&config_path, &data_dir, &console_dir, listen_addr);
     let initialize = match wait_for_initialize(&mut server, listen_addr, INITIALIZE_TIMEOUT) {
         Ok(initialize) => initialize,
         Err(error) => {
@@ -54,6 +56,22 @@ enabled = false
         .expect("initialize response must include result.serverInfo");
     assert_eq!(server_info["name"], "aionforge-memory");
     assert_eq!(server_info["version"], env!("CARGO_PKG_VERSION"));
+
+    assert_http_get(listen_addr, "/console", "200", "Aionforge console shell");
+    assert_http_get(
+        listen_addr,
+        "/console/records",
+        "200",
+        "Aionforge console shell",
+    );
+    assert_http_get(
+        listen_addr,
+        "/console/_app/immutable/app.js",
+        "200",
+        "console asset",
+    );
+    assert_http_get(listen_addr, "/console/_app/missing.js", "404", "Not Found");
+    assert_http_get(listen_addr, "/not-console", "404", "Not Found");
 
     let _ = server.terminate();
 }
@@ -90,7 +108,12 @@ struct ServerProcess {
 }
 
 impl ServerProcess {
-    fn spawn(config_path: &Path, data_dir: &Path, listen_addr: SocketAddr) -> Self {
+    fn spawn(
+        config_path: &Path,
+        data_dir: &Path,
+        console_dir: &Path,
+        listen_addr: SocketAddr,
+    ) -> Self {
         let child = Command::new(env!("CARGO_BIN_EXE_aionforge"))
             .arg("--config")
             .arg(config_path)
@@ -102,6 +125,7 @@ impl ServerProcess {
             .arg(listen_addr.to_string())
             .env("AIONFORGE_EMBEDDER__ENABLED", "false")
             .env("AIONFORGE_CONSOLIDATION__ENABLED", "false")
+            .env("AIONFORGE_CONSOLE_DIST_DIR", console_dir)
             .env("AIONFORGE_TRAFFIC_HEARTBEAT_SECS", "0")
             .env("RUST_LOG", "warn")
             .env_remove("AIONFORGE_ACTIVE_DEPLOYMENT")
@@ -141,6 +165,20 @@ impl Drop for ServerProcess {
             let _ = child.wait();
         }
     }
+}
+
+fn write_console_dist(console_dir: &Path) {
+    fs::create_dir_all(console_dir.join("_app/immutable")).expect("create console asset tree");
+    fs::write(
+        console_dir.join("200.html"),
+        "<!doctype html><title>Aionforge console shell</title>",
+    )
+    .expect("write console shell");
+    fs::write(
+        console_dir.join("_app/immutable/app.js"),
+        "console.log('console asset');",
+    )
+    .expect("write console asset");
 }
 
 fn wait_for_initialize(
@@ -246,6 +284,83 @@ fn parse_initialize_response(response: &[u8]) -> Result<Value, String> {
         .ok_or_else(|| {
             format!("initialize response body was neither SSE JSON-RPC nor JSON: {body}")
         })
+}
+
+fn assert_http_get(
+    listen_addr: SocketAddr,
+    path: &str,
+    expected_status: &str,
+    expected_body: &str,
+) {
+    let response =
+        http_get(listen_addr, path).unwrap_or_else(|error| panic!("GET {path} failed: {error}"));
+    assert!(
+        response.status_line.contains(expected_status),
+        "GET {path} returned {}; body: {}",
+        response.status_line,
+        response.body
+    );
+    assert!(
+        response.body.contains(expected_body),
+        "GET {path} body did not include {expected_body:?}: {}",
+        response.body
+    );
+}
+
+struct HttpGetResponse {
+    status_line: String,
+    body: String,
+}
+
+fn http_get(listen_addr: SocketAddr, path: &str) -> Result<HttpGetResponse, String> {
+    let mut stream = TcpStream::connect_timeout(&listen_addr, TCP_ATTEMPT_TIMEOUT)
+        .map_err(|error| format!("connect failed: {error}"))?;
+    stream
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .map_err(|error| format!("set read timeout failed: {error}"))?;
+    stream
+        .set_write_timeout(Some(Duration::from_secs(2)))
+        .map_err(|error| format!("set write timeout failed: {error}"))?;
+
+    let request = format!(
+        "GET {path} HTTP/1.1\r\n\
+         Host: {listen_addr}\r\n\
+         Connection: close\r\n\
+         \r\n"
+    );
+    stream
+        .write_all(request.as_bytes())
+        .map_err(|error| format!("write GET request failed: {error}"))?;
+
+    let mut response = Vec::new();
+    stream
+        .read_to_end(&mut response)
+        .map_err(|error| format!("read GET response failed: {error}"))?;
+    parse_http_get_response(&response)
+}
+
+fn parse_http_get_response(response: &[u8]) -> Result<HttpGetResponse, String> {
+    let header_end = response
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .ok_or_else(|| "HTTP response did not include a header/body split".to_owned())?;
+    let headers = String::from_utf8_lossy(&response[..header_end]);
+    let status_line = headers
+        .lines()
+        .next()
+        .ok_or_else(|| "HTTP response did not include a status line".to_owned())?
+        .to_owned();
+    let body = &response[header_end + 4..];
+    let body = if headers
+        .lines()
+        .any(|line| line.eq_ignore_ascii_case("transfer-encoding: chunked"))
+    {
+        decode_chunked_body(body)?
+    } else {
+        String::from_utf8(body.to_vec())
+            .map_err(|error| format!("GET response body was not utf-8: {error}"))?
+    };
+    Ok(HttpGetResponse { status_line, body })
 }
 
 fn parse_sse_json_rpc(body: &str) -> Option<Value> {

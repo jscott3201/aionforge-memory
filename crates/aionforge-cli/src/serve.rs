@@ -2,6 +2,7 @@
 
 use std::convert::Infallible;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use aionforge::{
@@ -24,6 +25,7 @@ use http_body_util::{BodyExt, Full, combinators::BoxBody};
 use tokio::net::TcpListener;
 
 use crate::cli::{ServeArgs, ServeTransport};
+use crate::console;
 use crate::error::CliError;
 use crate::host::{
     HostOptions, RuntimeEmbedder, StartupEmbedderStatus, check_startup_embedder, load_config,
@@ -228,9 +230,11 @@ async fn serve_http(
         inner: service,
         validators: validators.map(Arc::new),
     };
+    let console_dist = console::resolve_dist_dir();
+    console::report_startup(console_dist.as_deref());
 
     let listener = TcpListener::bind(resolved.listen).await?;
-    let app = http_router(state);
+    let app = http_router(state, console_dist);
     axum::serve(listener, app)
         .with_graceful_shutdown(async {
             if let Err(error) = shutdown_signal().await {
@@ -326,16 +330,21 @@ fn report_auth_startup(auth: &AuthConfig, validators: &Option<AuthValidators>) {
 /// Build the Axum router for MCP Streamable HTTP.
 ///
 /// Routes `/mcp` to rmcp's Streamable HTTP service and, when auth is enabled, mounts the RFC 9728
-/// well-known metadata route. The `/mcp` handler is the PR5 validator producer: it extracts and
+/// well-known metadata route. When a built console asset directory is present, `/console` serves
+/// the SvelteKit static SPA from that directory without letting the SPA fallback catch `/mcp` or
+/// the OAuth well-known path. The `/mcp` handler is the PR5 validator producer: it extracts and
 /// validates the Bearer token, maps the claims to a principal, and inserts the
 /// [`ValidatedPrincipal`](aionforge_mcp::ValidatedPrincipal) into the request's
 /// `http::request::Parts.extensions` — the two-level nesting PR4 reads back downstream. When
 /// `validators` is `None` (the DEFAULT-OFF path), `/mcp` delegates straight to the inner service
 /// and every other path 404s, with no validation, no extension insert, and no well-known route.
-fn http_router(state: HttpMcpState) -> Router {
-    let mut router = Router::new()
-        .route(STREAMABLE_HTTP_ENDPOINT, any(mcp_handler))
-        .fallback(not_found_handler);
+fn http_router(state: HttpMcpState, console_dist: Option<PathBuf>) -> Router {
+    let mut router = console::mount(
+        Router::new()
+            .route(STREAMABLE_HTTP_ENDPOINT, any(mcp_handler))
+            .fallback(not_found_handler),
+        console_dist,
+    );
     if let Some(validators) = state.validators.as_ref() {
         router = router.route(validators.well_known_path(), any(well_known_handler));
     }

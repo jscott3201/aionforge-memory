@@ -9,12 +9,13 @@
   "scripts": {
     "dev": "vite dev --host 127.0.0.1",
     "build": "vite build",
+    "e2e": "playwright test",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "eslint .",
     "preview": "vite preview --host 127.0.0.1",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
-    "validate": "pnpm format:check && pnpm lint && pnpm check && pnpm build"
+    "validate": "pnpm format:check && pnpm lint && pnpm check && pnpm build && pnpm e2e"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.29.0",
@@ -22,6 +23,7 @@
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
+    "@playwright/test": "1.61.0",
     "@sveltejs/adapter-static": "3.0.10",
     "@sveltejs/kit": "2.65.2",
     "@sveltejs/vite-plugin-svelte": "7.1.2",

@@ -1,5 +1,8 @@
 .svelte-kit/
 build/
 node_modules/
+blob-report/
+playwright-report/
+test-results/
 .env
 .env.*
