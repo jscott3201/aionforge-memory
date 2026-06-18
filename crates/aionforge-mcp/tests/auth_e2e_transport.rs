@@ -10,7 +10,7 @@
 //! 2. constructing the service with [`AuthPosture::enabled`] (so the resolver posture is auth-ON,
 //!    requiring the validated extension — the reject-on-absent path);
 //! 3. inserting a [`ValidatedPrincipal`] into the HTTP request's `http::request::Parts.extensions`
-//!    EXACTLY as the `HttpMcpRouter` producer does (`request.extensions_mut().insert(validated)`),
+//!    EXACTLY as the CLI Axum `/mcp` producer does (`request.extensions_mut().insert(validated)`),
 //!    then calling `.handle(request)`;
 //! 4. asserting the `read_memory` tool — reached only through rmcp carrying the whole `Parts` into
 //!    its `model::Extensions` bag and PR4's two-level `validated_principal_from_extensions` reading
@@ -200,8 +200,8 @@ fn read_memory_request(id: Id, include_system: bool) -> Request<Full<Bytes>> {
 }
 
 /// Insert the `ValidatedPrincipal` into the request's `http::request::Parts.extensions` EXACTLY as
-/// the `HttpMcpRouter` producer does (`request.extensions_mut().insert(validated)`), so the rest of
-/// the real transport stack carries it. This is the producer's load-bearing line, reproduced.
+/// the CLI Axum `/mcp` producer does (`request.extensions_mut().insert(validated)`), so the rest
+/// of the real transport stack carries it. This is the producer's load-bearing line, reproduced.
 fn insert_validated(request: &mut Request<Full<Bytes>>, validated: ValidatedPrincipal) {
     request.extensions_mut().insert(validated);
 }

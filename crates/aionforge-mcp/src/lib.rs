@@ -722,7 +722,7 @@ fn tool_span_outcome(result: &Result<CallToolResult, McpError>) -> (&'static str
 /// `auth_enabled` selects the OAuth resource-server posture exactly as
 /// [`AionforgeMcp::new_with_auth`]: `false` (the default-off path) reproduces today's body-only
 /// behavior, `true` requires a validated request extension on every identity-resolving tool. The
-/// stdio transport carries no HTTP request and so no Tower validator runs over it — an `auth_enabled`
+/// stdio transport carries no HTTP request and so no HTTP validator runs over it — an `auth_enabled`
 /// stdio server therefore rejects every identity-bearing tool with `ERR_PRINCIPAL_REQUIRED` until a
 /// stdio-side producer exists; the parameter is threaded for posture parity with the HTTP path.
 ///

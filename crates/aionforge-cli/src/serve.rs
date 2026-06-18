@@ -1,9 +1,7 @@
 //! MCP server command execution.
 
 use std::convert::Infallible;
-use std::future::Future;
 use std::net::SocketAddr;
-use std::pin::Pin;
 use std::sync::Arc;
 
 use aionforge::{
@@ -17,12 +15,13 @@ use aionforge_mcp::{
 };
 use axum::Router;
 use axum::body::Body;
+use axum::extract::State;
 use axum::http::header::AUTHORIZATION;
 use axum::http::{Method, Request, Response, StatusCode};
+use axum::routing::any;
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full, combinators::BoxBody};
 use tokio::net::TcpListener;
-use tower_service::Service;
 
 use crate::cli::{ServeArgs, ServeTransport};
 use crate::error::CliError;
@@ -52,7 +51,7 @@ pub(crate) async fn run(options: &HostOptions, args: ServeArgs) -> Result<(), Cl
         ServeTransport::Stdio => match check_startup_embedder(memory.as_ref()).await {
             Ok(startup) => {
                 report_startup_embedder(&startup);
-                // stdio carries no HTTP request, so no Tower validator can run over it; the flag is
+                // stdio carries no HTTP request, so no HTTP validator can run over it; the flag is
                 // threaded only for posture parity (an enabled stdio server has no producer yet).
                 // Auth-on over stdio therefore rejects EVERY identity-bearing tool with
                 // ERR_PRINCIPAL_REQUIRED (fail-closed, never a bypass). Warn LOUDLY at startup so the
@@ -225,13 +224,13 @@ async fn serve_http(
         auth_posture,
         config.consolidation.enabled,
     )?;
-    let service = HttpMcpRouter {
+    let state = HttpMcpState {
         inner: service,
         validators: validators.map(Arc::new),
     };
 
     let listener = TcpListener::bind(resolved.listen).await?;
-    let app = Router::new().fallback_service(service);
+    let app = http_router(state);
     axum::serve(listener, app)
         .with_graceful_shutdown(async {
             if let Err(error) = shutdown_signal().await {
@@ -324,45 +323,38 @@ fn report_auth_startup(auth: &AuthConfig, validators: &Option<AuthValidators>) {
     }
 }
 
-/// The hand-rolled MCP router (the PR5 Tower validator producer).
+/// Build the Axum router for MCP Streamable HTTP.
 ///
-/// Routes `/mcp` to the inner Streamable HTTP service and, when auth is enabled, gates it: it
-/// serves the RFC 9728 well-known metadata, extracts and validates the Bearer token, maps the
-/// claims to a principal, and inserts the [`ValidatedPrincipal`](aionforge_mcp::ValidatedPrincipal) into the request's
+/// Routes `/mcp` to rmcp's Streamable HTTP service and, when auth is enabled, mounts the RFC 9728
+/// well-known metadata route. The `/mcp` handler is the PR5 validator producer: it extracts and
+/// validates the Bearer token, maps the claims to a principal, and inserts the
+/// [`ValidatedPrincipal`](aionforge_mcp::ValidatedPrincipal) into the request's
 /// `http::request::Parts.extensions` — the two-level nesting PR4 reads back downstream. When
-/// `validators` is `None` (the DEFAULT-OFF path) it is byte-for-byte the pre-PR5 router: `/mcp`
-/// delegates straight to the inner service and every other path 404s, with no validation, no
-/// extension insert, and no well-known route.
+/// `validators` is `None` (the DEFAULT-OFF path), `/mcp` delegates straight to the inner service
+/// and every other path 404s, with no validation, no extension insert, and no well-known route.
+fn http_router(state: HttpMcpState) -> Router {
+    let mut router = Router::new()
+        .route(STREAMABLE_HTTP_ENDPOINT, any(mcp_handler))
+        .fallback(not_found_handler);
+    if let Some(validators) = state.validators.as_ref() {
+        router = router.route(validators.well_known_path(), any(well_known_handler));
+    }
+    router.with_state(state)
+}
+
 #[derive(Clone)]
-struct HttpMcpRouter {
+struct HttpMcpState {
     inner: AionforgeStreamableHttpService<RuntimeEmbedder>,
     /// The OAuth resource-server producer, present only when `auth.enabled`. `None` is the
     /// default-off path: no validator runs, no extension is inserted, no well-known route exists.
     validators: Option<Arc<AuthValidators>>,
 }
 
-impl HttpMcpRouter {
-    async fn handle(&mut self, mut request: Request<Body>) -> Result<HttpResponse, Infallible> {
-        // DEFAULT-OFF fast path: with no producer the router is byte-for-byte the pre-PR5 router —
-        // `/mcp` delegates to the inner service, every other path 404s, nothing else runs.
-        let Some(validators) = self.validators.clone() else {
-            if request.uri().path() != STREAMABLE_HTTP_ENDPOINT {
-                return Ok(not_found_response());
-            }
-            return self.inner.call(request).await;
-        };
-
-        // Auth-enabled. The RFC 9728 well-known route is served first (a GET that lets a client
-        // discover the authorization servers BEFORE it has a token).
-        if request.method() == Method::GET && request.uri().path() == validators.well_known_path() {
-            return Ok(validators.oauth_metadata_response());
-        }
-
-        // Every other path that is not `/mcp` 404s, exactly as the default-off router.
-        if request.uri().path() != STREAMABLE_HTTP_ENDPOINT {
-            return Ok(not_found_response());
-        }
-
+async fn mcp_handler(
+    State(state): State<HttpMcpState>,
+    mut request: Request<Body>,
+) -> HttpResponse {
+    if let Some(validators) = state.validators {
         // Authenticate the `/mcp` request. On any failure the producer returns the secret-free
         // 401/403 response (with the WWW-Authenticate challenge) to send verbatim.
         let validated = match validators
@@ -370,7 +362,7 @@ impl HttpMcpRouter {
             .await
         {
             Ok(validated) => validated,
-            Err(response) => return Ok(*response),
+            Err(response) => return *response,
         };
 
         // THE CRUX: insert the ValidatedPrincipal into the http::request::Parts.extensions (one
@@ -380,26 +372,25 @@ impl HttpMcpRouter {
         // finds it here and nowhere else — inserting into any other bag would yield None at the
         // handler and a total auth-on outage.
         request.extensions_mut().insert(validated);
-        self.inner.call(request).await
+    }
+    state.inner.handle(request).await
+}
+
+async fn well_known_handler(
+    State(state): State<HttpMcpState>,
+    request: Request<Body>,
+) -> HttpResponse {
+    if request.method() == Method::GET
+        && let Some(validators) = state.validators
+    {
+        validators.oauth_metadata_response()
+    } else {
+        not_found_response()
     }
 }
 
-impl Service<Request<Body>> for HttpMcpRouter {
-    type Response = HttpResponse;
-    type Error = Infallible;
-    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
-
-    fn poll_ready(
-        &mut self,
-        _cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Result<(), Self::Error>> {
-        std::task::Poll::Ready(Ok(()))
-    }
-
-    fn call(&mut self, request: Request<Body>) -> Self::Future {
-        let mut service = self.clone();
-        Box::pin(async move { service.handle(request).await })
-    }
+async fn not_found_handler() -> HttpResponse {
+    not_found_response()
 }
 
 fn not_found_response() -> HttpResponse {

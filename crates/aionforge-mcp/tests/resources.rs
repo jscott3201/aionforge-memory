@@ -269,7 +269,7 @@ async fn mcp_transport_lists_client_policy_resources() -> TestResult {
     let oauth = read_text_resource(&client, CLIENT_OAUTH_GUIDE_RESOURCE_URI).await?;
     assert!(oauth.contains("resource_metadata"));
     assert!(oauth.contains("codex mcp login aionforge_memory"));
-    assert!(oauth.contains("does not validate OAuth tokens"));
+    assert!(oauth.contains("Local loopback"));
     assert!(oauth.contains("omit Authorization headers"));
 
     let plugin = read_text_resource(&client, PLUGIN_PACKAGE_GUIDE_RESOURCE_URI).await?;
