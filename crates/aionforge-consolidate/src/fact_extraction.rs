@@ -31,9 +31,13 @@ use aionforge_domain::time::{BiTemporal, Timestamp};
 use aionforge_domain::value::ObjectValue;
 use aionforge_store::{CandidateSet, FactKey, MaterializedFact, MaterializedNote};
 
-use crate::config::{DetectionConfig, PassConfig, SummarizationConfig};
+use crate::config::{DetectionConfig, ExtractionConfig, PassConfig, SummarizationConfig};
 use crate::detect::{CurrentFact, detect};
-use crate::pass::{ConsolidationPass, PassContext, PassError, PassOutput};
+use crate::pass::{ConsolidationPass, PassContext, PassError, PassOutput, PassRun};
+use crate::profile::{
+    PassProfile, STAGE_DETECTION, STAGE_EXTRACTION, STAGE_RESOLUTION, STAGE_SUMMARIZATION,
+    StageProfile,
+};
 use crate::resolve::{CorefTable, Resolution, resolve_surface};
 use crate::summarize::{build_clusters, check_detail_retention, note_id};
 
@@ -48,6 +52,7 @@ pub struct FactExtractionPass<X, E, S> {
     extractor: Arc<X>,
     embedder: Arc<E>,
     summarizer: Arc<S>,
+    extraction: ExtractionConfig,
     resolution: crate::config::ResolutionConfig,
     detection: DetectionConfig,
     summarization: SummarizationConfig,
@@ -80,6 +85,7 @@ where
             extractor,
             embedder,
             summarizer,
+            extraction: config.extraction,
             resolution: config.resolution,
             detection: config.detection,
             summarization: config.summarization,
@@ -102,8 +108,9 @@ where
     /// Summarize the subjects this episode touched: cluster each touched subject's facts
     /// (the just-extracted ones plus the committed current support), condense via the
     /// summarizer, gate on the detail-retention guard, and emit a note per surviving
-    /// cluster with `DERIVED_FROM` lineage to its source facts. Returns the notes and the
-    /// `summarize` audit events (one per cluster, written-or-skipped).
+    /// cluster with `DERIVED_FROM` lineage to its source facts. Returns the notes, the
+    /// `summarize` audit events (one per cluster, written-or-skipped), and the content-free
+    /// stage counts for the verbose profile.
     async fn summarize_subjects(
         &self,
         store: &aionforge_store::Store,
@@ -112,9 +119,9 @@ where
         namespace: &Namespace,
         episode: &Episode,
         now: &Timestamp,
-    ) -> Result<(Vec<MaterializedNote>, Vec<AuditEvent>), PassError> {
+    ) -> Result<SummarizationRun, PassError> {
         if !self.summarization.enabled || new_facts.is_empty() {
-            return Ok((Vec::new(), Vec::new()));
+            return Ok(SummarizationRun::default());
         }
 
         // Subjects this episode touched, and every fact about them: the just-extracted ones
@@ -156,8 +163,13 @@ where
 
         let name_of = self.name_entities(store, &facts, resolutions)?;
         let clusters = build_clusters(&facts, &name_of, &self.summarization);
+        // The clusters considered are the summarization stage's candidates; track how many
+        // the detail-retention guard turns away so the verbose profile can explain a
+        // "considered clusters, wrote no note" outcome.
+        let candidates_considered = clusters.len() as u64;
+        let mut rejected_by_guard: u64 = 0;
         if clusters.is_empty() {
-            return Ok((Vec::new(), Vec::new()));
+            return Ok(SummarizationRun::default());
         }
 
         let rule_version = self.summarizer.identity().rule_version.clone();
@@ -185,6 +197,7 @@ where
                 &retention,
             ));
             if !retention.passed {
+                rejected_by_guard += 1;
                 continue; // over-summarized — skip the note, keep the raw facts
             }
             let id = note_id(namespace, &cluster, &rule_version);
@@ -219,7 +232,12 @@ where
                 source_facts,
             });
         }
-        Ok((notes, audits))
+        Ok(SummarizationRun {
+            notes,
+            audits,
+            candidates_considered,
+            rejected_by_guard,
+        })
     }
 
     /// Name every entity the cluster facts reference (subjects and entity-typed objects):
@@ -282,10 +300,13 @@ where
         // 3: M2.T06b added conservative summary-note output to this pass.
         // 4: M6.T02 skips system-role episodes so a system directive cannot launder
         //    into a role-less fact (the gate is version-keyed for replay determinism).
-        4
+        // 5: extraction-precision — subject/connective/pronoun gating + confidence floor
+        //    (rule-v2) and the derived-fact trust discount change the derived output, so the
+        //    version is bumped to signal "reprocess".
+        5
     }
 
-    async fn apply(&self, cx: &PassContext<'_>) -> Result<PassOutput, PassError> {
+    async fn apply(&self, cx: &PassContext<'_>) -> Result<PassRun, PassError> {
         let episode = cx.episode;
 
         // System-role episodes never produce facts (07 §4, M6.T02). A Fact carries no
@@ -299,7 +320,7 @@ where
         // system-role episode on a pre-gate build are not retracted — a one-time backfill
         // that quarantines them is an owner gap (07 §4).
         if episode.role == Role::System {
-            return Ok(PassOutput::default());
+            return Ok(PassRun::unprofiled(PassOutput::default()));
         }
 
         let extracted = self
@@ -308,7 +329,13 @@ where
             .await
             .map_err(|error| PassError::Transient(format!("extractor failed: {error}")))?;
         if extracted.is_empty() {
-            return Ok(PassOutput::default());
+            // Nothing extracted: every stage ran (gates aside) but had no candidate. Report
+            // each enabled stage with zero counts so a verbose receipt distinguishes "ran,
+            // saw nothing" from a disabled stage.
+            return Ok(PassRun {
+                output: PassOutput::default(),
+                profile: self.empty_profile(),
+            });
         }
 
         // Embed each distinct surface TEXT once. The embedder is a pure function of the
@@ -336,6 +363,10 @@ where
         let mut coref = CorefTable::default();
         let mut resolutions: HashMap<(String, String), Resolution> = HashMap::new();
         let mut audit_events = Vec::new();
+        // The resolution stage's candidates are the distinct surfaces; a surface that matched
+        // a committed entity is `merged`, a fresh one feeds the `derived` new-entity count.
+        let resolution_candidates = surfaces.len() as u64;
+        let mut resolution_merged: u64 = 0;
         for surface in &surfaces {
             let embedding = embedding_of
                 .get(surface.surface.as_str())
@@ -349,6 +380,9 @@ where
                 &mut coref,
             )
             .map_err(|error| PassError::Transient(format!("entity resolution failed: {error}")))?;
+            if !resolution.is_new {
+                resolution_merged += 1;
+            }
             audit_events.push(crate::audit::canonicalize_audit(
                 &self.actor_id,
                 &episode.identity.id,
@@ -418,10 +452,16 @@ where
                 extraction_rule_version: Some(rule_version.clone()),
             };
             statements.push(extracted_fact.statement.clone());
+            // A derived FACT is weaker evidence than its source episode: discount the inherited
+            // episode trust by `derived_trust_factor` (< 1) so the fact ranks strictly below the
+            // episode (entities/notes keep the undiscounted `derived_stats` trust). Trust is not
+            // part of `fact_id`, so this never affects idempotency.
+            let mut fact_stats = derived_stats(episode, &cx.now);
+            fact_stats.trust *= self.extraction.derived_trust_factor;
             facts.push(MaterializedFact {
                 fact: Fact {
                     identity: identity(fact_id, namespace, &cx.now),
-                    stats: derived_stats(episode, &cx.now),
+                    stats: fact_stats,
                     subject_id: subject.id,
                     predicate: extracted_fact.predicate.clone(),
                     object,
@@ -444,8 +484,19 @@ where
         }
 
         // Detect supersession/contradiction of the new facts against the committed current
-        // set (read-only); the store materializes the resulting edges in the flip txn.
+        // set (read-only); the store materializes the resulting edges in the flip txn. The
+        // detection stage's candidates are the new facts it checks (only when enabled).
+        let detection_candidates = if self.detection.enabled {
+            facts.len() as u64
+        } else {
+            0
+        };
         let detection = self.detect_conflicts(store, &facts, namespace, episode, &cx.now)?;
+        let quarantined = detection
+            .contradictions
+            .iter()
+            .filter(|c| c.quarantine_source)
+            .count() as u64;
 
         // The canonicalize decisions (one per resolved surface) plus the quarantine
         // reconcile signals from detection.
@@ -454,26 +505,93 @@ where
         // Summarize the touched subjects' facts (committed current plus the just-extracted
         // ones) into conservative notes; the detail-retention guard skips any summary that
         // would drop too much specificity. Raw facts are untouched (non-lossy).
-        let (notes, summary_audits) = self
+        let summarization = self
             .summarize_subjects(store, &facts, &resolutions, namespace, episode, &cx.now)
             .await?;
-        audit_events.extend(summary_audits);
 
+        // Build the content-free per-stage profile before the artifacts move into `out`.
+        // Resolution always ran (it has no config gate); detection/summarization carry their
+        // config gate so the receipt can tell a disabled stage from one that saw no input.
+        let profile = PassProfile::from_stages(vec![
+            // The raw rule-extraction yield for this one episode: `considered=1` (the episode
+            // examined), `derived` the facts the SVO ruleset pulled. Makes "the extractor ran
+            // and found N facts" an explicit, content-free signal upstream of resolution.
+            StageProfile::enabled(STAGE_EXTRACTION, 1, extracted.len() as u64, 0, 0, 0),
+            StageProfile::enabled(
+                STAGE_RESOLUTION,
+                resolution_candidates,
+                new_entities.len() as u64,
+                resolution_merged,
+                0,
+                0,
+            ),
+            self.detection_stage(
+                detection_candidates,
+                detection.supersessions.len() as u64,
+                quarantined,
+            ),
+            self.summarization_stage(&summarization),
+        ]);
+
+        audit_events.extend(summarization.audits);
         let mut out = PassOutput::default();
         out.new_entities = new_entities;
         out.facts = facts;
         out.mentioned_entities = mentioned;
         out.supersessions = detection.supersessions;
         out.contradictions = detection.contradictions;
-        out.notes = notes;
+        out.notes = summarization.notes;
         out.audit_events = audit_events;
         emit_detection_metrics(&out);
         emit_summarization_metrics(&out);
-        Ok(out)
+        Ok(PassRun {
+            output: out,
+            profile,
+        })
     }
 }
 
 impl<X, E, S> FactExtractionPass<X, E, S> {
+    /// The stage profile for an episode the extractor examined but pulled nothing from: the
+    /// extraction stage reports `considered=1,derived=0` (so the receipt shows the episode WAS
+    /// scanned and yielded no SVO triple — narrative prose, the common case — never a silent
+    /// gap), resolution always ran (it has no config gate) but had no surfaces, and
+    /// detection/summarization are reported enabled-or-not per their config so the receipt can
+    /// tell a disabled stage from one that saw no input.
+    fn empty_profile(&self) -> PassProfile {
+        PassProfile::from_stages(vec![
+            StageProfile::enabled(STAGE_EXTRACTION, 1, 0, 0, 0, 0),
+            StageProfile::enabled(STAGE_RESOLUTION, 0, 0, 0, 0, 0),
+            self.detection_stage(0, 0, 0),
+            self.summarization_stage(&SummarizationRun::default()),
+        ])
+    }
+
+    /// The detection stage profile, gated on [`DetectionConfig::enabled`].
+    fn detection_stage(&self, candidates: u64, derived: u64, quarantined: u64) -> StageProfile {
+        if self.detection.enabled {
+            StageProfile::enabled(STAGE_DETECTION, candidates, derived, 0, quarantined, 0)
+        } else {
+            StageProfile::disabled(STAGE_DETECTION)
+        }
+    }
+
+    /// The summarization stage profile, gated on [`SummarizationConfig::enabled`].
+    fn summarization_stage(&self, run: &SummarizationRun) -> StageProfile {
+        if self.summarization.enabled {
+            StageProfile::enabled(
+                STAGE_SUMMARIZATION,
+                run.candidates_considered,
+                run.notes.len() as u64,
+                0,
+                0,
+                run.rejected_by_guard,
+            )
+        } else {
+            StageProfile::disabled(STAGE_SUMMARIZATION)
+        }
+    }
+
     /// Detect supersession/contradiction of the new facts against the committed current
     /// set (read-only). Reads `current_support_facts`, scopes it to the `(subject,
     /// predicate)` pairs the new facts touch, then runs the pure [`detect`] decision.
@@ -561,6 +679,19 @@ impl<X, E, S> FactExtractionPass<X, E, S> {
             &self.actor_id,
         ))
     }
+}
+
+/// The summarization stage's output plus its content-free counts for the verbose profile.
+///
+/// `candidates_considered` is the number of fact clusters examined; `rejected_by_guard` is
+/// how many the detail-retention guard turned away (the `!retention.passed` arm), which is
+/// what lets a verbose receipt explain a "clusters considered, no note written" outcome.
+#[derive(Default)]
+struct SummarizationRun {
+    notes: Vec<MaterializedNote>,
+    audits: Vec<AuditEvent>,
+    candidates_considered: u64,
+    rejected_by_guard: u64,
 }
 
 /// Emit per-tick detection counters so supersession/quarantine rates are observable.

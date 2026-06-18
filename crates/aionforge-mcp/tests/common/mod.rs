@@ -124,5 +124,7 @@ pub fn search_params(
         limit: None,
         verbose: Some(verbose),
         include_superseded: None,
+        fanout: None,
+        min_relevance: None,
     }
 }

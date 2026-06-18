@@ -33,6 +33,8 @@ const CHARS_PER_TOKEN: u64 = 4;
 pub(crate) fn record_recall_served(tool: &'static str, response: &str) {
     let bytes = response.len() as u64;
     ::metrics::counter!("aionforge_mcp_recall_bytes_served_total", "tool" => tool).increment(bytes);
+    // Fold into the process-global OUT total that the periodic traffic heartbeat reports.
+    crate::traffic::record_out(bytes);
     ::tracing::debug!(
         target: "aionforge_mcp::telemetry",
         tool,

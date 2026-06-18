@@ -1,18 +1,94 @@
 # Observability
 
-Aionforge emits metrics through the `metrics` facade and spans through the `tracing`
-facade. If a host installs no recorder or subscriber, these calls are no-ops. Metric
-labels and span fields are deliberately low-cardinality: no query text, memory
-content, namespace ids, agent ids, file paths, request ids, or model names are used.
-Use audit reads and `aionforge doctor --json` for high-detail inspection.
+Aionforge emits spans/events through the [`tracing`](https://docs.rs/tracing) facade and metrics
+through the `metrics` facade. The **`aionforge` binary installs a tracing subscriber** (see
+[Logging](#logging) below), so events reach stderr out of the box; the **metrics** facade stays a
+no-op until a host installs a recorder (a deliberate follow-up wired with the operator console).
+Metric labels and span fields are deliberately low-cardinality: no query text, memory content,
+namespace ids, agent ids, file paths, request ids, or model names are used. Use audit reads and
+`aionforge doctor --json` for high-detail inspection.
+
+## Logging
+
+The library crates only *emit* through `tracing`; the binary owns the **subscriber** (the sink).
+It is installed once in `main`, before any subcommand runs, so `serve`, `doctor`, and `recover`
+are all covered.
+
+```sh
+aionforge serve http                     # text on stderr, level `info` (defaults)
+aionforge serve http --log-format json   # structured JSON (or AIONFORGE_LOG_FORMAT=json)
+RUST_LOG=aionforge_store=debug,aionforge_mcp=info aionforge doctor
+```
+
+- **Format** — `--log-format text|json` is a global flag. Precedence: flag → `AIONFORGE_LOG_FORMAT`
+  env → default `text`. An unparseable value falls back to the default; logging setup never fails
+  the process.
+- **Level/filter** — standard `tracing` `EnvFilter` via `RUST_LOG` (default `info`).
+- **stderr only (invariant)** — the subscriber writes to **stderr**. The MCP **stdio** transport
+  owns **stdout** for the JSON-RPC protocol, so logging there would corrupt the stream. CLI report
+  output (`doctor`/`recover`) stays on stdout; diagnostics stay on stderr.
+
+### Levels
+
+| Level | Use for |
+|---|---|
+| `error` | A failure the operator must act on. |
+| `warn` | Degraded/misconfigured but still serving (auth health, unanchored writer, stdio-auth-unsupported, link-evolution skips). |
+| `info` | Lifecycle: startup embedder check, auth posture, shutdown, index-kind reconciliation, the traffic heartbeat. |
+| `debug` | Per-request detail: recall served, induction gates, discovery anomalies. |
+| `trace` | Deep diagnostics; off by default. |
+
+Events carry an explicit `target:` (`aionforge::serve`, `aionforge::traffic`, `aionforge_mcp::auth`,
+`aionforge_mcp::telemetry`, …) so `RUST_LOG` can filter by subsystem; library events without one
+inherit their module path (`aionforge_store::…`).
+
+### PII / secret hygiene — the load-bearing rule
+
+This is a **memory store**: the wrong log line is a data leak.
+
+> **Log identifiers, kinds, counts, latencies, and outcomes — never memory content, embeddings,
+> tokens, keys, or raw claim values.**
+
+Log a memory by its `id`, never its `content`/`statement`; log sizes/estimates, never the bytes
+themselves; auth advisories name only the non-secret issuer **origin**. A CI gate
+(`.github/scripts/check-no-log-leakage.sh`) is a tripwire against interpolating a sensitive field
+into a `tracing`/`log` macro; a genuinely-safe flagged line can carry a `// log-leak-ok`
+justification, but for `content`/`embedding` there should be none. The gate is line-based, so it
+cannot catch a field split across the lines of a multi-line macro, nor one pre-formatted into a
+string and logged later (`let m = format!("{}", x.secret); info!("{m}")`). **Don't pre-format
+sensitive fields into log strings** — pass structured `tracing` fields directly so the gate (and a
+reviewer) can see them. Real safety rests on this convention plus review; the gate is the tripwire.
+
+## Traffic heartbeat & token estimation
+
+The server logs a periodic in/out **traffic heartbeat** at `info` on the `aionforge::traffic`
+target (default every 5 minutes), plus a final summary (`phase=shutdown`) on graceful shutdown:
+
+```
+INFO aionforge::traffic: memory traffic phase=heartbeat
+     bytes_in_total=… bytes_out_total=… bytes_in_delta=… bytes_out_delta=…
+     est_tokens_in_total=… est_tokens_out_total=… est_tokens_in_delta=… est_tokens_out_delta=…
+```
+
+- **IN** = `content` bytes clients push via `capture`/`batch_capture` (memory text being stored).
+  **OUT** = rendered recall responses of `search`/`read_memory`/`session_manifest`/the `work_*`
+  readers (the dominant outbound payload). Small control traffic (query params, receipts) is not
+  counted — this is a memory-throughput signal, not a wire-level byte meter. Counts are
+  process-cumulative and reset on restart; only HTTP/stdio tool traffic is counted.
+- **Bytes are authoritative; tokens are an estimate.** The server cannot run the calling client's
+  tokenizer, so `est_tokens` is a deliberately coarse proxy — **bytes ÷ 4** (≈4 characters/token).
+  Use it for order-of-magnitude capacity/cost intuition, never as an exact count or billing source.
+  The same divisor backs the per-recall `est_tokens` debug line in `aionforge_mcp::telemetry`.
+- **Cadence** — `AIONFORGE_TRAFFIC_HEARTBEAT_SECS` (whole seconds; `0` disables; unset → 300).
 
 ## Tracing
 
-Trace spans cover the capture, recall, and consolidation pipeline. They use stable
-operation names and bounded fields only:
+Trace spans cover the MCP tool-call boundary plus the capture, recall, and
+consolidation pipeline. They use stable operation names and bounded fields only:
 
 | Span | Fields | Meaning |
 |---|---|---|
+| `aionforge.mcp.tool` | `tool`, `authenticated`, `outcome`, `error`, `latency_ms` | One MCP tool call, wrapping every tool at the dispatch choke point (the per-area spans below nest under it). `tool` is the low-cardinality tool name; `authenticated` is a bool for whether a validated principal rode the request — never an agent/session id, the arguments, or the response body. `error` is `none`, `tool_error` (a tool's own error result), or `dispatch_error` (an rmcp-level failure such as an unknown tool). |
 | `aionforge.capture` | `role`, `namespace`, `trusted`, `signed`, `outcome`, `verdict`, `embedding`, `error` | One capture request. `namespace` is the namespace kind (`agent`, `team`, `global`, `system`), never the namespace id. |
 | `aionforge.capture.stage` | `stage` | Fixed capture stages: `filter`, `embed`, and `commit`. |
 | `aionforge.recall` | `class`, `temporal`, `sensitive`, `include_expired`, `include_system`, `mode_override`, `deadline`, `fanout`, `limit`, `outcome`, `embedder`, `error`, `returned`, `candidates_considered`, `signals_run` | One recall request. The query text and principal id are never fields. |
@@ -21,12 +97,29 @@ operation names and bounded fields only:
 | `aionforge.consolidation.tick` | `batch_size`, `outcome`, `error`, `consolidated`, `retried`, `failed`, `pending_after` | One foreground or background consolidation tick. |
 | `aionforge.consolidation.episode` | `role`, `namespace`, `state`, `outcome`, `error` | One episode processed inside a tick. The episode id and content are never fields. |
 | `aionforge.consolidation.pass` | `pass`, `version`, `outcome`, `error` | One enabled consolidation pass applied to one episode. Pass names are stable rule identifiers from the registered pass set. |
+| `aionforge.forgetting.sweep` | `scanned`, `forgotten`, `spared`, `more`, `outcome`, `error` | One swept candidate page, mirroring `consolidation.tick`. The tally is counts only; `more` is a bool for whether a next cursor exists — never a candidate id or content. |
+| `aionforge.forgetting.point_forget` | `outcome`, `spare_reason`, `error` | One point-forget by id. `outcome` is `forgotten`, `already_forgotten`, `not_found`, or `protected`; `spare_reason` names the protection axis that held on `protected` (otherwise `none`), surfacing live what was previously only in the audit trail. |
+| `aionforge.forgetting.point_unforget` | `outcome`, `spare_reason`, `error` | One point-unforget by id. `outcome` is `restored`, `not_forgotten`, `not_found`, or `protected`; `spare_reason` as above. |
+| `aionforge.forgetting.erase` | `outcome`, `namespace`, `cascade_depth`, `cascade_nodes`, `error` | One right-to-erasure cascade. `outcome` is `erased`, `not_found`, `cascade_too_large`, or `unauthorized`. `cascade_depth`/`cascade_nodes` carry the purged shape when `erased` and the observed-at-cap shape when `cascade_too_large`; `namespace` is the refused namespace KIND on `unauthorized` — never the seed id, the principal, or content. |
+
+The forgetting spans honor the off-switch: when forgetting or erasure is **disabled**,
+the engine facade short-circuits before the forget crate is reached, so the `disabled`
+outcome stays a metric (`aionforge_forgetting_sweeps_total{outcome="disabled"}`) and no
+span is emitted — there is no work to instrument.
 
 Error fields reuse the metric vocabulary where possible: capture errors use
 `filter`, `store`, `unauthorized`, `invalid_signature`, `clock_skew`,
 `provenance_unavailable`, or `system_role_not_writable`; recall errors use `store`
 or `deadline_exceeded`; consolidation tick errors use `store` or `timeout`; pass
-errors use `transient` or `fatal`.
+errors use `transient` or `fatal`; forgetting spans use `store`.
+
+The store lifecycle also emits events on the `aionforge::store` target (complementing
+the `aionforge_store_open_*` metrics): `store opened` / `store open failed`
+(`mode` = `fresh`|`recover`, `outcome`, `elapsed_ms`) and, from `migrate` (previously
+silent), `schema migrated` at `info` (`from_version`, `to_version`, `applied` type
+count) when migrations run, plus a `debug` no-op event (`from_version`) when the
+schema is already current. All fields are low-cardinality integers/labels; no path
+or data.
 
 ## Capture
 

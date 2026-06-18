@@ -135,3 +135,62 @@ pub fn fuse(rankings: &[WeightedRanking], k_const: f64) -> Vec<FusedCandidate> {
     fused.sort_by(|a, b| b.score.total_cmp(&a.score).then(a.node.cmp(&b.node)));
     fused
 }
+
+/// A pluggable way to fuse weighted signal rankings into one ranked list.
+///
+/// The default and diagnostic baseline is [`WeightedRrf`], a thin wrapper over the
+/// free [`fuse`] function. The trait exists so alternative fusion strategies can be
+/// A/B'd behind a single seam — the one production call site dispatches through it —
+/// without the retriever knowing which strategy is in play, and with RRF always
+/// available as the reference baseline to measure against.
+///
+/// Scope note (deliberate): this seam carries *only* rank information — the same
+/// `WeightedRanking` inputs `fuse` consumes — because RRF fuses by rank, not score
+/// (03 §2). It is therefore **not** where off-topic rejection is solved: that is the
+/// dense absolute-relevance floor in `select()`, which reads signal *magnitude* the
+/// fuse seam discards. A future magnitude-aware strategy would need a wider input
+/// than this trait exposes; widening it is an explicit, separate decision, not an
+/// accident of this refactor. Implementations must preserve fusion's determinism and
+/// permutation-invariance contract (03 §6).
+pub trait FusionStrategy {
+    /// Fuse the weighted rankings into one list, score descending, node id ascending
+    /// on ties.
+    fn fuse(&self, rankings: &[WeightedRanking]) -> Vec<FusedCandidate>;
+}
+
+/// Weighted Reciprocal Rank Fusion — the default [`FusionStrategy`] and the baseline
+/// every alternative is measured against (03 §2).
+///
+/// This is a zero-cost wrapper: [`FusionStrategy::fuse`] delegates straight to the
+/// free [`fuse`] function, so the determinism and permutation-invariance contract
+/// (03 §6) and every existing fusion test apply unchanged.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WeightedRrf {
+    /// The RRF smoothing constant; the validated default is [`DEFAULT_RRF_K`].
+    pub k_const: f64,
+}
+
+impl WeightedRrf {
+    /// A strategy with an explicit RRF constant. Callers pass a positive `k_const`
+    /// (the tuned default is [`DEFAULT_RRF_K`]); the same `debug_assert!` contract as
+    /// [`fuse`] applies when it runs.
+    #[must_use]
+    pub fn new(k_const: f64) -> Self {
+        Self { k_const }
+    }
+}
+
+impl Default for WeightedRrf {
+    /// The validated low-tuning default, `k = `[`DEFAULT_RRF_K`].
+    fn default() -> Self {
+        Self {
+            k_const: DEFAULT_RRF_K,
+        }
+    }
+}
+
+impl FusionStrategy for WeightedRrf {
+    fn fuse(&self, rankings: &[WeightedRanking]) -> Vec<FusedCandidate> {
+        fuse(rankings, self.k_const)
+    }
+}

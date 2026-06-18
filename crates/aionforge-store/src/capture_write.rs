@@ -7,13 +7,14 @@
 //! private graph through the `pub(crate)` [`Store::graph`] accessor, never the field.
 
 use aionforge_domain::edges::{Audit, HasProvenance};
+use aionforge_domain::ids::Id;
 use aionforge_domain::nodes::episodic::Episode;
 use aionforge_domain::nodes::forensic::{AuditEvent, ProvenanceRecord};
 use selene_core::{NodeId, PropertyMap, db_string};
 
 use crate::error::StoreError;
 use crate::store::Store;
-use crate::{audit, episode, provenance};
+use crate::{audit, convert, episode, provenance};
 
 impl Store {
     /// Commit a capture bundle through the single mutation funnel (04 §1).
@@ -126,6 +127,36 @@ impl Store {
         id: NodeId,
     ) -> Result<Option<ProvenanceRecord>, StoreError> {
         match self.graph().read().node_properties(id) {
+            Some(props) => Ok(Some(provenance::from_properties(props)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Read the signed creation provenance attached to a captured episode by its **external**
+    /// id, walking `Episode -HAS_PROVENANCE-> ProvenanceRecord`. This is the agent-facing
+    /// "who wrote this" proof (`writer_agent_id` + model + `trust_at_write` + write instant),
+    /// distinct from the System-namespace capture `AuditEvent` (governance forensics), which
+    /// stays host-only.
+    ///
+    /// Only captured episodes carry a provenance edge, so a non-episode id — or an episode
+    /// written without provenance — returns `None`. One read snapshot, matching the by-id read
+    /// contract of [`Store::resolved_memory_by_id`].
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the stored provenance cannot be decoded.
+    pub fn provenance_for(&self, episode_id: &Id) -> Result<Option<ProvenanceRecord>, StoreError> {
+        let snapshot = self.graph().read();
+        let Some(episode_node) = convert::node_by_id(&snapshot, Episode::LABEL, episode_id)? else {
+            return Ok(None);
+        };
+        let has_provenance = db_string(HasProvenance::LABEL)?;
+        let Some(adjacency) = snapshot.outgoing_edges(episode_node) else {
+            return Ok(None);
+        };
+        let Some(edge) = adjacency.iter_label(&has_provenance).next() else {
+            return Ok(None);
+        };
+        match snapshot.node_properties(edge.neighbor) {
             Some(props) => Ok(Some(provenance::from_properties(props)?)),
             None => Ok(None),
         }

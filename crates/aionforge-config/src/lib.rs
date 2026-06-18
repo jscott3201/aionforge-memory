@@ -37,8 +37,9 @@
 //! api_key_env = "AIONFORGE_API_KEY"
 //!
 //! [retrieval]
-//! default_k = 12
+//! default_k = 200
 //! fusion_constant = 60
+//! recall_deadline_ms = 5000
 //!
 //! [security]
 //! signed_writes = true
@@ -50,6 +51,7 @@
 
 mod auth;
 mod config;
+mod consolidation;
 mod core_block;
 mod deployment;
 mod drift;
@@ -63,6 +65,10 @@ pub use auth::{AuthConfig, IssuerConfig};
 pub use config::{
     CategoryPromotionRule, Config, DecayConfig, EmbedderConfig, PersistenceConfig, PromotionConfig,
     ReliabilityConfig, RetrievalConfig, SecurityConfig, endpoint_transport_is_allowed,
+};
+pub use consolidation::{
+    ConsolidationConfig, DetectionSettings, ExtractionSettings, InductionSettings,
+    ResolutionSettings, SummarizationSettings,
 };
 pub use core_block::{CoreBlockConfig, CoreEditRuleConfig};
 pub use deployment::DeploymentConfig;

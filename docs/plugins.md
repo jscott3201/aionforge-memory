@@ -1,7 +1,7 @@
 # Agent Plugin
 
 Aionforge Memory ships a plugin package at
-[`plugins/aionforge-memory`](../plugins/aionforge-memory). It bundles five Agent
+[`plugins/aionforge-memory`](../plugins/aionforge-memory). It bundles six Agent
 Skills plus a Claude Code steward agent, commands, and a SessionStart nudge hook.
 
 The plugin is meant to make the existing MCP service easier to use. It does not
@@ -11,6 +11,10 @@ approval hints.
 
 ## What It Includes
 
+- `memory-bootstrap`: one-time, idempotent cold-start setup that seeds a
+  foundational substrate for a fresh project — identity, conventions,
+  architecture decisions, and a work-item backlog skeleton — so the next session
+  recalls real context instead of an empty store.
 - `memory-loop`: use memory through a whole task: recall first, capture useful
   state during work, and finish with a handoff.
 - `memory-recall`: search durable memory before planning, coding, review,
@@ -28,9 +32,10 @@ approval hints.
 - Claude Code SessionStart hook: re-seeds the capture/work-tracking cadence into a
   fresh context after a startup, resume, or context compaction. (`PreCompact` is
   not used: it is blocking-only and cannot inject context.)
-- Claude Code commands `/aionforge-memory:memory-session` and
-  `/aionforge-memory:memory-handoff`: explicit workflows for starting a
-  memory-backed task and ending with a durable handoff.
+- Claude Code commands `/aionforge-memory:memory-bootstrap`,
+  `/aionforge-memory:memory-session`, and `/aionforge-memory:memory-handoff`:
+  explicit workflows for one-time project setup, starting a memory-backed task,
+  and ending with a durable handoff.
 - Cursor always-apply rule `rules/aionforge-memory.mdc` (`alwaysApply: true`):
   declared by the Cursor manifest's `rules` field. On Cursor builds that surface
   plugin-bundled rules it registers as an always-apply rule (confirm or adjust it under

@@ -36,7 +36,8 @@ use aionforge_store::InducedSkillWrite;
 
 use crate::audit::{induce_skill_audit, induced_deprecate_audit, induction_actor_id};
 use crate::config::InductionConfig;
-use crate::pass::{ConsolidationPass, PassContext, PassError, PassOutput};
+use crate::pass::{ConsolidationPass, PassContext, PassError, PassOutput, PassRun};
+use crate::profile::{PassProfile, STAGE_INDUCTION, StageProfile};
 
 /// The importance a freshly induced skill starts at: the neutral mid-point, so it neither
 /// dominates nor is buried before it earns a track record.
@@ -180,25 +181,26 @@ impl<I: SkillInducer + 'static> ConsolidationPass for SkillInductionPass<I> {
         self.config.enabled
     }
 
-    async fn apply(&self, cx: &PassContext<'_>) -> Result<PassOutput, PassError> {
+    async fn apply(&self, cx: &PassContext<'_>) -> Result<PassRun, PassError> {
         let episode = cx.episode;
 
         // Gate 1: a produced procedure only — never a user question or a system message.
-        if !matches!(episode.role, Role::Assistant | Role::Tool) {
-            return Ok(PassOutput::default());
+        // Gate 2: private-namespace precondition — induced skills are confined to the agent's
+        // own namespace and never derived from team/global/system memory. Neither gate makes
+        // the episode an induction *candidate*; the stage runs but considered nothing.
+        if !matches!(episode.role, Role::Assistant | Role::Tool)
+            || !episode.identity.namespace.is_private()
+        {
+            return Ok(induction_run(PassOutput::default(), 0, 0, 0));
         }
-        // Gate 2: private-namespace precondition — induced skills are confined to the agent's own
-        // namespace and never derived from team/global/system memory.
-        if !episode.identity.namespace.is_private() {
-            return Ok(PassOutput::default());
-        }
-        // Gate 3: the lexical-structure floor — trivial or noise content is not a skill.
+        // From here the episode is a candidate the stage considered.
+        // Gate 3: the lexical-structure floor — trivial or noise content is not a skill (a guard).
         if !structure_ok(&episode.content, &self.config) {
             tracing::debug!(
                 episode = %episode.identity.id,
                 "induction: content below the structure floor; not inducing"
             );
-            return Ok(PassOutput::default());
+            return Ok(induction_run(PassOutput::default(), 1, 0, 1));
         }
         // Gate 4: reuse evidence — the exact content must have recurred enough in this namespace.
         // The probe's window caps the count, so it must be able to reach the threshold; clamp it up
@@ -217,7 +219,8 @@ impl<I: SkillInducer + 'static> ConsolidationPass for SkillInductionPass<I> {
             )
             .map_err(|e| PassError::Transient(format!("recurrence probe failed: {e}")))?;
         if recurrence_count < self.config.repetition_threshold {
-            return Ok(PassOutput::default());
+            // Below the reuse-evidence threshold: a candidate the guard rejected.
+            return Ok(induction_run(PassOutput::default(), 1, 0, 1));
         }
 
         // Render via the seam. `None` is a conservative decline; a real error retries next tick.
@@ -232,7 +235,8 @@ impl<I: SkillInducer + 'static> ConsolidationPass for SkillInductionPass<I> {
                     episode = %episode.identity.id,
                     "induction: inducer declined; not inducing"
                 );
-                return Ok(PassOutput::default());
+                // The inducer conservatively declined: a candidate rejected by the seam's guard.
+                return Ok(induction_run(PassOutput::default(), 1, 0, 1));
             }
             Err(e) => return Err(PassError::Transient(format!("inducer failed: {e}"))),
         };
@@ -240,7 +244,32 @@ impl<I: SkillInducer + 'static> ConsolidationPass for SkillInductionPass<I> {
         let write = self.build_write(cx, induced, recurrence_count)?;
         let mut out = PassOutput::default();
         out.induced_skills.push(write);
-        Ok(out)
+        Ok(induction_run(out, 1, 1, 0))
+    }
+}
+
+/// Build the induction [`PassRun`]: the artifacts plus the single-stage induction profile.
+///
+/// The induction stage is reported `enabled` here because [`apply`](ConsolidationPass::apply)
+/// only runs when the pass itself is enabled (a disabled induction pass is skipped by the
+/// scheduler and contributes no stage line). `candidates` is `1` once the episode clears the
+/// role/namespace eligibility filters; `derived`/`rejected` are mutually exclusive (`1`/`0`).
+fn induction_run(
+    output: PassOutput,
+    candidates: u64,
+    derived: u64,
+    rejected_by_guard: u64,
+) -> PassRun {
+    PassRun {
+        output,
+        profile: PassProfile::from_stages(vec![StageProfile::enabled(
+            STAGE_INDUCTION,
+            candidates,
+            derived,
+            0,
+            0,
+            rejected_by_guard,
+        )]),
     }
 }
 

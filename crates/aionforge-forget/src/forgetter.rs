@@ -260,17 +260,47 @@ impl Forgetter {
         limit: usize,
         now: &Timestamp,
     ) -> Result<ForgetSweepPage, StoreError> {
+        // Real-time, request-level visibility of one swept page, mirroring
+        // `aionforge.consolidation.tick`. The page tally is the whole signal: counts and
+        // a has-more bool — never a candidate id or content. Nests under the active MCP
+        // tool span when a host drives the sweep through the facade.
+        let span = tracing::info_span!(
+            "aionforge.forgetting.sweep",
+            scanned = tracing::field::Empty,
+            forgotten = tracing::field::Empty,
+            spared = tracing::field::Empty,
+            more = tracing::field::Empty,
+            outcome = tracing::field::Empty,
+            error = tracing::field::Empty,
+        );
+        // Enter the span around the work (sync idiom, matching capturer.rs `in_scope`)
+        // so the store's diagnostic events nest under it, not just inherit it as parent.
+        let result = span.in_scope(|| self.sweep_page_inner(after, limit, now));
+        record_sweep_span(&span, &result);
+        result
+    }
+
+    fn sweep_page_inner(
+        &self,
+        after: Option<&ForgetCursor>,
+        limit: usize,
+        now: &Timestamp,
+    ) -> Result<ForgetSweepPage, StoreError> {
         let limit = limit.min(self.policy.batch_cap).max(1);
         let page = self.store.forgettable_candidates(after, limit)?;
         let mut report = ForgetSweepPage {
             next: page.next,
             ..ForgetSweepPage::default()
         };
+        // The sweep is substrate-driven — no agent asked for it — so every row it writes names
+        // the deterministic substrate actor, not an agent. Bound once for the whole page.
+        let substrate = substrate_actor();
         for candidate in &page.candidates {
             report.scanned += 1;
             match self.evaluate(candidate, now)? {
                 ForgetDecision::Forget => {
-                    let audit = self.forget_audit(candidate, now, "active_forgetting_sweep");
+                    let audit =
+                        self.forget_audit(candidate, now, "active_forgetting_sweep", &substrate);
                     match self.store.soft_forget(candidate.node, now, &audit)? {
                         ForgetWrite::Applied => report.forgotten += 1,
                         ForgetWrite::Noop | ForgetWrite::RefusedStatus => report.spared += 1,
@@ -288,7 +318,27 @@ impl Forgetter {
     ///
     /// # Errors
     /// Returns [`StoreError`] if a read, probe, or write fails.
-    pub fn forget(&self, id: &Id, now: &Timestamp) -> Result<PointForget, StoreError> {
+    pub fn forget(&self, id: &Id, now: &Timestamp, actor: &Id) -> Result<PointForget, StoreError> {
+        // The point-op outcome (and the protection that held, when spared) is otherwise
+        // only in the audit trail; the span surfaces it live. `spare_reason` is the axis
+        // label, never the memory's id or content.
+        let span = tracing::info_span!(
+            "aionforge.forgetting.point_forget",
+            outcome = tracing::field::Empty,
+            spare_reason = tracing::field::Empty,
+            error = tracing::field::Empty,
+        );
+        let result = span.in_scope(|| self.forget_inner(id, now, actor));
+        record_point_forget_span(&span, &result);
+        result
+    }
+
+    fn forget_inner(
+        &self,
+        id: &Id,
+        now: &Timestamp,
+        actor: &Id,
+    ) -> Result<PointForget, StoreError> {
         let Some(candidate) = self.store.memory_by_id(id, &ALL_MEMORY_LABELS)? else {
             return Ok(PointForget::NotFound);
         };
@@ -301,7 +351,7 @@ impl Forgetter {
         match self.evaluate(&candidate, now)? {
             ForgetDecision::Spare(reason) => Ok(PointForget::Protected(reason)),
             ForgetDecision::Forget => {
-                let audit = self.forget_audit(&candidate, now, "manual");
+                let audit = self.forget_audit(&candidate, now, "manual", actor);
                 match self.store.soft_forget(candidate.node, now, &audit)? {
                     ForgetWrite::Applied => Ok(PointForget::Forgotten),
                     ForgetWrite::Noop => Ok(PointForget::AlreadyForgotten),
@@ -319,7 +369,29 @@ impl Forgetter {
     ///
     /// # Errors
     /// Returns [`StoreError`] if a read or write fails.
-    pub fn unforget(&self, id: &Id, now: &Timestamp) -> Result<PointUnforget, StoreError> {
+    pub fn unforget(
+        &self,
+        id: &Id,
+        now: &Timestamp,
+        actor: &Id,
+    ) -> Result<PointUnforget, StoreError> {
+        let span = tracing::info_span!(
+            "aionforge.forgetting.point_unforget",
+            outcome = tracing::field::Empty,
+            spare_reason = tracing::field::Empty,
+            error = tracing::field::Empty,
+        );
+        let result = span.in_scope(|| self.unforget_inner(id, now, actor));
+        record_point_unforget_span(&span, &result);
+        result
+    }
+
+    fn unforget_inner(
+        &self,
+        id: &Id,
+        now: &Timestamp,
+        actor: &Id,
+    ) -> Result<PointUnforget, StoreError> {
         let Some(candidate) = self.store.memory_by_id(id, &ALL_MEMORY_LABELS)? else {
             return Ok(PointUnforget::NotFound);
         };
@@ -334,7 +406,8 @@ impl Forgetter {
             ),
             kind: AuditKind::Unforget,
             subject_id: *id,
-            actor_id: substrate_actor(),
+            // Unforget is manual-only — the agent that asked for the restore.
+            actor_id: *actor,
             payload: serde_json::json!({
                 "reason": "manual_unforget",
                 "kind": candidate.label,
@@ -356,13 +429,15 @@ impl Forgetter {
     }
 
     /// The forget audit event: one fresh row per applied transition, in the memory's own
-    /// namespace, recording
-    /// the decision basis so the reversible window is explainable.
+    /// namespace, attributed to `actor` — the acting agent on the manual point-forget, the
+    /// substrate actor on the sweep — recording the decision basis so the reversible window
+    /// is explainable.
     fn forget_audit(
         &self,
         candidate: &ForgetCandidate,
         now: &Timestamp,
         reason: &str,
+        actor: &Id,
     ) -> AuditEvent {
         let tier = match tier_for_label(&candidate.label) {
             Some(Tier::Episodic) => "episodic",
@@ -388,7 +463,7 @@ impl Forgetter {
             ),
             kind: AuditKind::Forget,
             subject_id: candidate.identity.id,
-            actor_id: substrate_actor(),
+            actor_id: *actor,
             payload: serde_json::json!({
                 "reason": reason,
                 "kind": candidate.label,
@@ -404,11 +479,119 @@ impl Forgetter {
     }
 }
 
+fn record_sweep_span(span: &tracing::Span, result: &Result<ForgetSweepPage, StoreError>) {
+    match result {
+        Ok(page) => {
+            span.record("outcome", "success");
+            span.record("error", "none");
+            span.record("scanned", page.scanned as u64);
+            span.record("forgotten", page.forgotten as u64);
+            span.record("spared", page.spared as u64);
+            span.record("more", page.next.is_some());
+        }
+        Err(_) => {
+            span.record("outcome", "error");
+            span.record("error", "store");
+        }
+    }
+}
+
+fn record_point_forget_span(span: &tracing::Span, result: &Result<PointForget, StoreError>) {
+    match result {
+        Ok(outcome) => {
+            span.record("outcome", point_forget_outcome_label(outcome));
+            span.record("spare_reason", point_forget_spare_reason(outcome));
+            span.record("error", "none");
+        }
+        Err(_) => {
+            span.record("outcome", "error");
+            span.record("spare_reason", "none");
+            span.record("error", "store");
+        }
+    }
+}
+
+fn record_point_unforget_span(span: &tracing::Span, result: &Result<PointUnforget, StoreError>) {
+    match result {
+        Ok(outcome) => {
+            span.record("outcome", point_unforget_outcome_label(outcome));
+            span.record("spare_reason", point_unforget_spare_reason(outcome));
+            span.record("error", "none");
+        }
+        Err(_) => {
+            span.record("outcome", "error");
+            span.record("spare_reason", "none");
+            span.record("error", "store");
+        }
+    }
+}
+
+/// The bounded outcome vocabulary of a point-forget. `disabled` is intentionally absent:
+/// the engine's off-switch short-circuits before the forgetter is reached, so it stays a
+/// metric, never a span here.
+fn point_forget_outcome_label(outcome: &PointForget) -> &'static str {
+    match outcome {
+        PointForget::Forgotten => "forgotten",
+        PointForget::AlreadyForgotten => "already_forgotten",
+        PointForget::NotFound => "not_found",
+        PointForget::Protected(_) => "protected",
+        PointForget::Disabled => "disabled",
+    }
+}
+
+/// The protection that held on a spared point-forget, or `none` for any other outcome.
+fn point_forget_spare_reason(outcome: &PointForget) -> &'static str {
+    match outcome {
+        PointForget::Protected(reason) => spare_reason_label(reason),
+        _ => "none",
+    }
+}
+
+/// The bounded outcome vocabulary of a point-unforget. `disabled` is absent for the same
+/// reason as point-forget (the off-switch is an engine concern).
+fn point_unforget_outcome_label(outcome: &PointUnforget) -> &'static str {
+    match outcome {
+        PointUnforget::Restored => "restored",
+        PointUnforget::NotForgotten => "not_forgotten",
+        PointUnforget::NotFound => "not_found",
+        PointUnforget::Protected(_) => "protected",
+        PointUnforget::Disabled => "disabled",
+    }
+}
+
+/// The protection that held on a refused point-unforget, or `none` for any other outcome.
+fn point_unforget_spare_reason(outcome: &PointUnforget) -> &'static str {
+    match outcome {
+        PointUnforget::Protected(reason) => spare_reason_label(reason),
+        _ => "none",
+    }
+}
+
+/// The stable, low-cardinality label for a spare reason — the axis or exemption that
+/// held, never an id or value.
+fn spare_reason_label(reason: &SpareReason) -> &'static str {
+    match reason {
+        SpareReason::ProtectedKind => "protected_kind",
+        SpareReason::Pinned => "pinned",
+        SpareReason::PromotionLineage => "promotion_lineage",
+        SpareReason::Attested => "attested",
+        SpareReason::ImportanceHolds => "importance_holds",
+        SpareReason::TrustHolds => "trust_holds",
+        SpareReason::Referenced => "referenced",
+        SpareReason::TooYoung => "too_young",
+        SpareReason::StatusOwned => "status_owned",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use aionforge_domain::nodes::work::{Tag, WorkItem};
 
-    use super::{ALL_MEMORY_LABELS, POINT_LABELS};
+    use super::{
+        ALL_MEMORY_LABELS, POINT_LABELS, PointForget, PointUnforget, SpareReason,
+        point_forget_outcome_label, point_forget_spare_reason, point_unforget_outcome_label,
+        point_unforget_spare_reason, spare_reason_label,
+    };
 
     /// The exemption-by-omission keystone, locked directly at the const level: the
     /// work-tracking kinds must never appear in the forget resolution sets. The integration
@@ -427,5 +610,91 @@ mod tests {
                 "{label} must not be point-forgettable",
             );
         }
+    }
+
+    /// Every spare reason maps to a stable, snake_case, low-cardinality label. Locks the
+    /// span vocabulary so a new `SpareReason` variant forces a deliberate label choice
+    /// (the match is exhaustive) rather than silently shipping an unlabeled axis.
+    #[test]
+    fn spare_reason_labels_are_stable_and_exhaustive() {
+        let cases = [
+            (SpareReason::ProtectedKind, "protected_kind"),
+            (SpareReason::Pinned, "pinned"),
+            (SpareReason::PromotionLineage, "promotion_lineage"),
+            (SpareReason::Attested, "attested"),
+            (SpareReason::ImportanceHolds, "importance_holds"),
+            (SpareReason::TrustHolds, "trust_holds"),
+            (SpareReason::Referenced, "referenced"),
+            (SpareReason::TooYoung, "too_young"),
+            (SpareReason::StatusOwned, "status_owned"),
+        ];
+        for (reason, label) in cases {
+            assert_eq!(spare_reason_label(&reason), label);
+        }
+    }
+
+    #[test]
+    fn point_forget_outcome_and_spare_reason_labels_cover_every_variant() {
+        assert_eq!(
+            point_forget_outcome_label(&PointForget::Forgotten),
+            "forgotten"
+        );
+        assert_eq!(
+            point_forget_outcome_label(&PointForget::AlreadyForgotten),
+            "already_forgotten"
+        );
+        assert_eq!(
+            point_forget_outcome_label(&PointForget::NotFound),
+            "not_found"
+        );
+        assert_eq!(
+            point_forget_outcome_label(&PointForget::Protected(SpareReason::Pinned)),
+            "protected"
+        );
+        assert_eq!(
+            point_forget_outcome_label(&PointForget::Disabled),
+            "disabled"
+        );
+
+        // spare_reason carries the axis only on the protected outcome; otherwise `none`.
+        assert_eq!(
+            point_forget_spare_reason(&PointForget::Protected(SpareReason::ImportanceHolds)),
+            "importance_holds"
+        );
+        assert_eq!(point_forget_spare_reason(&PointForget::Forgotten), "none");
+        assert_eq!(point_forget_spare_reason(&PointForget::NotFound), "none");
+    }
+
+    #[test]
+    fn point_unforget_outcome_and_spare_reason_labels_cover_every_variant() {
+        assert_eq!(
+            point_unforget_outcome_label(&PointUnforget::Restored),
+            "restored"
+        );
+        assert_eq!(
+            point_unforget_outcome_label(&PointUnforget::NotForgotten),
+            "not_forgotten"
+        );
+        assert_eq!(
+            point_unforget_outcome_label(&PointUnforget::NotFound),
+            "not_found"
+        );
+        assert_eq!(
+            point_unforget_outcome_label(&PointUnforget::Protected(SpareReason::StatusOwned)),
+            "protected"
+        );
+        assert_eq!(
+            point_unforget_outcome_label(&PointUnforget::Disabled),
+            "disabled"
+        );
+
+        assert_eq!(
+            point_unforget_spare_reason(&PointUnforget::Protected(SpareReason::StatusOwned)),
+            "status_owned"
+        );
+        assert_eq!(
+            point_unforget_spare_reason(&PointUnforget::Restored),
+            "none"
+        );
     }
 }

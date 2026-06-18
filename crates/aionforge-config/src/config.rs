@@ -8,6 +8,7 @@ use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 
 use crate::auth::AuthConfig;
+use crate::consolidation::ConsolidationConfig;
 use crate::core_block::CoreBlockConfig;
 use crate::deployment::DeploymentConfig;
 use crate::drift::DriftConfig;
@@ -76,6 +77,13 @@ pub struct Config {
     /// the declared consolidating family the startup single-family check reads.
     /// Always-on policy, inert until an inference-backed consolidation rule runs.
     pub consolidation_guard: ConsolidationGuardConfig,
+    /// Deterministic consolidation-pass posture (write-and-consolidation §2-§3): the
+    /// scheduler's pacing/bounds and the four pass-level tunings (resolution, detection,
+    /// summarization, induction). **Always live** — the shipped consolidation path always
+    /// runs; the all-default block is today's behavior exactly (induction off, the
+    /// conservative summarization floors, the 5s/32-episode scheduler). The host maps these
+    /// primitives into the engine's `aionforge_consolidate::{ConsolidationConfig, PassConfig}`.
+    pub consolidation: ConsolidationConfig,
     /// OAuth resource-server posture: the master switch and trusted token issuers.
     /// **Default-off** — when [`AuthConfig::enabled`] is `false` (the default) the
     /// server derives no identity from a connection. Config only in this PR; JWT
@@ -132,6 +140,16 @@ pub struct EmbedderConfig {
     /// The embedding dimension. Binding (data-model §13.5): every vector index is built
     /// at this dimension and a change is a migration.
     pub dimension: u32,
+    /// The model's **native** output dimension, when it differs from [`dimension`](Self::dimension).
+    ///
+    /// `None` (the default) means the API returns vectors at exactly `dimension`, which is
+    /// hard-checked. `Some(native)` enables **Matryoshka truncation**: the model returns
+    /// `native`-dimension vectors (the request carries no `dimensions` field), and the client
+    /// truncates each to the configured `dimension` (first-N components) and renormalizes.
+    /// This serves a reduced-dimension store (e.g. gemini at 1536) from a model whose native
+    /// output is larger (3072) without a per-request `dimensions` parameter. Must be strictly
+    /// greater than `dimension` when set — truncation only reduces.
+    pub native_dimension: Option<u32>,
     /// The **name** of the environment variable that holds the endpoint's API key, or
     /// none for an unauthenticated (e.g. local) endpoint. The key itself never lives in
     /// the config; see [`Config::resolve_api_key`].
@@ -147,6 +165,7 @@ impl Default for EmbedderConfig {
             endpoint: "http://127.0.0.1:1234/v1".to_owned(),
             model: "codestral-embed-2505".to_owned(),
             dimension: DEFAULT_EMBEDDING_DIMENSION,
+            native_dimension: None,
             api_key_env: None,
             timeout_ms: 30_000,
         }
@@ -154,23 +173,60 @@ impl Default for EmbedderConfig {
 }
 
 /// Retrieval defaults.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+// No `Eq`: `min_relevance` is an `f64` (the absolute relevance floor), which only implements
+// `PartialEq` — matching the other float-bearing config structs in this file.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RetrievalConfig {
-    /// Default number of results when a query does not specify one.
+    /// Default per-signal candidate fan-out when a query does not set its own (the host
+    /// maps this to `RetrieverConfig::default_fanout`). This is the recall ceiling: each
+    /// retrieval signal generates at most this many candidates before fusion, so too small
+    /// a value silently caps recall (a relevant memory ranked past it is never retrieved).
+    /// It is NOT the returned-result count — the bundle is still bounded by the query's
+    /// `limit`; a generous fan-out with a modest limit gives fusion a deep pool to rank.
     pub default_k: u32,
     /// The reciprocal-rank-fusion constant (the conventional default is 60).
     pub fusion_constant: u32,
     /// The default retrieval mode label (e.g. `hybrid`, `lexical`, `vector`).
     pub default_mode: String,
+    /// The wall-clock budget, in milliseconds, applied to a recall whose caller did not set
+    /// its own deadline (the host maps this to `RetrieverConfig::default_recall_budget`).
+    /// `0` disables the default — a recall then runs unbounded unless the caller sets one.
+    ///
+    /// This is the live cost guard for the namespace-scoped episode scans: with a generous
+    /// `default_k` the scoped lexical/dense passes sweep the reader's whole visible scope, so
+    /// the engine's per-block cancellation only bites if some deadline is set. A non-zero
+    /// default ensures a pathological scope (a large team namespace) aborts the recall rather
+    /// than running it open-ended (03 §6, §8).
+    pub recall_deadline_ms: u64,
+    /// An OPT-IN absolute relevance floor in `[0.0, 1.0]` on the dense cosine similarity (the
+    /// host maps this to `RetrieverConfig::min_relevance`). `0.0` (the default) is OFF: the
+    /// floor never fires and recall is byte-identical. When positive, a hit whose dense
+    /// similarity falls below the floor — or which has no dense score at all (a
+    /// lexical/BM25-only hit) — is dropped, so an all-below-floor query may legitimately
+    /// return an empty bundle (the honest off-topic answer). A per-query MCP `min_relevance`
+    /// overrides this. Validated to `[0.0, 1.0]` so a typo (e.g. `50` meaning 50%) fails
+    /// loudly rather than silently emptying recall.
+    pub min_relevance: f64,
 }
 
 impl Default for RetrievalConfig {
     fn default() -> Self {
         Self {
-            default_k: 12,
+            // A deep default fan-out: with namespace-scoped episode generation the budget is
+            // spent on the reader's own memories, so a generous pool is cheap and keeps
+            // recall from silently capping on a busy store (was 12 — far too tight; see the
+            // search-recall investigation). The bundle is still limited by the query's limit.
+            default_k: 200,
             fusion_constant: 60,
             default_mode: "hybrid".to_owned(),
+            // A generous safety ceiling: a normal recall finishes in milliseconds, so 5s never
+            // trips a healthy query, but it bounds the scoped scans on a busy store so a recall
+            // cannot run open-ended. Set 0 to disable.
+            recall_deadline_ms: 5_000,
+            // OFF by default: the absolute relevance floor never fires, so recall is
+            // byte-identical to a pre-P0a one. Raise it in [0.0, 1.0] to drop off-topic hits.
+            min_relevance: 0.0,
         }
     }
 }
@@ -493,6 +549,14 @@ impl Config {
                 "must be greater than zero",
             ));
         }
+        if let Some(native) = self.embedder.native_dimension
+            && native <= self.embedder.dimension
+        {
+            return Err(ConfigError::invalid(
+                "embedder.native_dimension",
+                "must be strictly greater than embedder.dimension (truncation only reduces)",
+            ));
+        }
         if self.embedder.enabled {
             if self.embedder.endpoint.trim().is_empty() {
                 return Err(ConfigError::missing("embedder.endpoint"));
@@ -529,6 +593,16 @@ impl Config {
             return Err(ConfigError::invalid(
                 "retrieval.fusion_constant",
                 "must be greater than zero",
+            ));
+        }
+        // The absolute relevance floor is a fraction of the dense cosine similarity in [0, 1];
+        // a value outside that range is almost certainly a typo (e.g. 50 meaning 50%) that would
+        // silently empty every recall, so it is rejected loudly. The `!(…)` form also rejects a
+        // NaN, which fails every ordered comparison.
+        if !(0.0..=1.0).contains(&self.retrieval.min_relevance) {
+            return Err(ConfigError::invalid(
+                "retrieval.min_relevance",
+                "must be in the range [0.0, 1.0]",
             ));
         }
         // The skew window is validated unconditionally: signed writes and promotion gate
@@ -656,6 +730,7 @@ impl Config {
         self.core_block.validate()?;
         self.drift.validate()?;
         self.consolidation_guard.validate()?;
+        self.consolidation.validate()?;
         self.auth.validate()?;
         self.server.validate()?;
         // Validate every DECLARED deployment — active or not — so a broken inactive profile is

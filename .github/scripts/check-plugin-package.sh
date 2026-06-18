@@ -124,16 +124,19 @@ require_file "$plugin_dir/README.md"
 require_file "$plugin_dir/NUDGE.md"
 # Keep the published plugin reference doc from silently dropping a packaged skill.
 require_grep "docs/plugins.md" 'work-tracking' "docs/plugins.md work-tracking skill"
+require_grep "docs/plugins.md" 'memory-bootstrap' "docs/plugins.md memory-bootstrap skill"
 validate_skill "memory-loop"
 validate_skill "memory-recall"
 validate_skill "memory-capture"
 validate_skill "work-tracking"
 validate_skill "memory-maintenance"
+validate_skill "memory-bootstrap"
 validate_agent "aionforge-memory-steward"
 validate_command "memory-session"
 validate_command "memory-handoff"
+validate_command "memory-bootstrap"
 
-for skill in memory-loop memory-recall memory-capture work-tracking memory-maintenance; do
+for skill in memory-loop memory-recall memory-capture work-tracking memory-maintenance memory-bootstrap; do
   metadata="$plugin_dir/skills/$skill/agents/openai.yaml"
   require_file "$metadata"
   [ -f "$metadata" ] || continue

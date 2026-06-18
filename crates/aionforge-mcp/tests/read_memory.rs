@@ -350,9 +350,9 @@ fn the_distinct_id_cap_is_measured_after_dedup() {
 fn verbose_widens_the_snippet_cap_between_default_and_full() {
     let memory = memory();
     let alice = Id::generate();
-    // MID sits past the 240-char default cap but within the 2000-char verbose cap; TAIL sits
+    // MID sits past the default snippet cap but within the 2000-char verbose cap; TAIL sits
     // past the verbose cap so only full reveals it.
-    let body = format!("HEAD_{}_MID_{}_TAIL", "x".repeat(300), "x".repeat(2000));
+    let body = format!("HEAD_{}_MID_{}_TAIL", "x".repeat(600), "x".repeat(2000));
     let id = seed(
         &memory,
         &body,
@@ -390,6 +390,264 @@ fn verbose_widens_the_snippet_cap_between_default_and_full() {
     full.full = Some(true);
     let whole = read_memory_tool(&memory, full, None, AuthEnabled(false)).expect("read");
     assert!(whole.contains("_TAIL"), "full reveals the tail: {whole}");
+}
+
+// ----- Team-namespace by-id authorization (parity with search) -----
+//
+// A by-id read gates on the SAME per-call asserted teams as `search`/`session_manifest`: it
+// never auto-widens to a team namespace the caller did not assert in this call. These tests pin
+// that contract end-to-end and prove an unauthorized-but-existing team id is indistinguishable
+// from a wholly missing one — read_memory is no existence oracle.
+
+#[test]
+fn a_team_memory_is_not_returned_without_an_asserted_team() {
+    let memory = memory();
+    let alice = Id::generate();
+    let team = "aionforge-memory-team";
+    let own = seed(
+        &memory,
+        "alice own body",
+        Namespace::Agent(alice.to_string()),
+        Role::Assistant,
+    );
+    let shared = seed(
+        &memory,
+        "team shared body",
+        Namespace::Team(team.to_string()),
+        Role::Assistant,
+    );
+
+    // Alice reads both ids but asserts NO team. Her own memory resolves; the team memory is not
+    // in her visible set (she did not assert the team this call), so it drops out exactly like a
+    // missing id — found is one short, and the team body never appears.
+    let out = read_memory_tool(
+        &memory,
+        read_params(&[own, shared], alice),
+        None,
+        AuthEnabled(false),
+    )
+    .expect("read");
+    assert!(
+        out.starts_with("[read_memory] requested=2 found=1"),
+        "{out}"
+    );
+    assert!(out.contains("alice own body"), "{out}");
+    assert!(
+        !out.contains("team shared body"),
+        "a team memory is not auto-widened without an asserted team: {out}"
+    );
+    assert!(
+        !out.contains(&shared.to_string()),
+        "the unresolved team id is not echoed: {out}"
+    );
+}
+
+#[test]
+fn a_team_memory_is_returned_when_the_team_is_asserted_in_the_same_call() {
+    let memory = memory();
+    let alice = Id::generate();
+    let team = "aionforge-memory-team";
+    let shared = seed(
+        &memory,
+        "team shared body",
+        Namespace::Team(team.to_string()),
+        Role::Assistant,
+    );
+
+    // Same id, same caller — but now Alice asserts membership in the team on this very call. The
+    // team namespace enters her visible set, so the by-id read resolves it (parity with search).
+    let out = read_memory_tool(
+        &memory,
+        read_params_with_teams(&[shared], alice, &[team]),
+        None,
+        AuthEnabled(false),
+    )
+    .expect("read");
+    assert!(
+        out.starts_with("[read_memory] requested=1 found=1"),
+        "{out}"
+    );
+    assert!(
+        out.contains("team shared body"),
+        "asserting the team in the same call resolves the team memory: {out}"
+    );
+}
+
+#[test]
+fn asserting_a_team_the_caller_does_not_own_does_not_widen() {
+    let memory = memory();
+    let alice = Id::generate();
+    let owned = "aionforge-memory-team";
+    let foreign = "some-other-team";
+    let shared = seed(
+        &memory,
+        "foreign team body",
+        Namespace::Team(foreign.to_string()),
+        Role::Assistant,
+    );
+
+    // Alice asserts only `owned`; the memory lives in `foreign`. Asserting a team you belong to
+    // never reaches a sibling team you did not assert — the foreign memory stays unresolved.
+    let out = read_memory_tool(
+        &memory,
+        read_params_with_teams(&[shared], alice, &[owned]),
+        None,
+        AuthEnabled(false),
+    )
+    .expect("read");
+    assert!(
+        out.starts_with("[read_memory] requested=1 found=0"),
+        "{out}"
+    );
+    assert!(
+        !out.contains("foreign team body"),
+        "an asserted team does not widen to a sibling team: {out}"
+    );
+}
+
+#[test]
+fn an_unauthorized_team_id_is_indistinguishable_from_a_missing_one() {
+    let memory = memory();
+    let alice = Id::generate();
+    let team = "aionforge-memory-team";
+    let shared = seed(
+        &memory,
+        "team shared body",
+        Namespace::Team(team.to_string()),
+        Role::Assistant,
+    );
+    let never_stored = Id::generate();
+
+    // No existence oracle: reading an EXISTING team id the caller has not authorized must look
+    // byte-identical to reading a wholly NON-EXISTENT id. Both yield requested=1 found=0 with no
+    // body and no echoed id, so the caller cannot tell "exists but forbidden" from "missing".
+    let unauthorized = read_memory_tool(
+        &memory,
+        read_params(&[shared], alice),
+        None,
+        AuthEnabled(false),
+    )
+    .expect("read");
+    let missing = read_memory_tool(
+        &memory,
+        read_params(&[never_stored], alice),
+        None,
+        AuthEnabled(false),
+    )
+    .expect("read");
+    assert!(
+        unauthorized.starts_with("[read_memory] requested=1 found=0"),
+        "{unauthorized}"
+    );
+    assert!(
+        missing.starts_with("[read_memory] requested=1 found=0"),
+        "{missing}"
+    );
+    assert_eq!(
+        first_line(&unauthorized),
+        first_line(&missing),
+        "an unauthorized team id and a missing id share the same header: indistinguishable"
+    );
+    assert!(
+        !unauthorized.contains("team shared body"),
+        "no body leaks for the unauthorized id: {unauthorized}"
+    );
+    assert!(
+        !unauthorized.contains(&shared.to_string()),
+        "the unauthorized id is not echoed: {unauthorized}"
+    );
+}
+
+/// The header line (everything up to the first newline) — the only count-bearing surface, used
+/// to prove unauthorized and missing reads are byte-identical there.
+fn first_line(out: &str) -> &str {
+    out.split('\n').next().unwrap_or(out)
+}
+
+#[test]
+fn creation_provenance_surfaces_only_under_verbose_or_full() {
+    let memory = memory();
+    let alice = Id::generate();
+    let writer = Id::generate();
+    let id = seed_with_provenance(
+        &memory,
+        "a captured assistant turn",
+        Namespace::Agent(alice.to_string()),
+        writer,
+        "claude",
+        Some("opus-4.8"),
+        0.9,
+    );
+
+    // Default compact read: NO provenance attributes — the default path stays one store hop per
+    // id and "who wrote this" is detail you opt into.
+    let compact = read_memory_tool(&memory, read_params(&[id], alice), None, AuthEnabled(false))
+        .expect("read");
+    assert!(
+        !compact.contains("writer=") && !compact.contains("trust_at_write="),
+        "the default read omits provenance: {compact}"
+    );
+
+    // Verbose: the signed creation provenance is projected — writer agent, model family/version,
+    // the write-time trust snapshot, and the write instant.
+    let mut verbose = read_params(&[id], alice);
+    verbose.verbose = Some(true);
+    let out = read_memory_tool(&memory, verbose, None, AuthEnabled(false)).expect("read");
+    assert!(
+        out.contains(&format!("writer=\"{writer}\"")),
+        "the writer agent id surfaces: {out}"
+    );
+    assert!(out.contains("model_family=\"claude\""), "{out}");
+    assert!(out.contains("model_version=\"opus-4.8\""), "{out}");
+    assert!(
+        out.contains("trust_at_write=\"0.90\""),
+        "the write-time trust snapshot surfaces, distinct from search's rank trust: {out}"
+    );
+    assert!(
+        out.contains("written_at=\""),
+        "the write instant surfaces: {out}"
+    );
+
+    // Spec boundary: the System-namespace capture AuditEvent (governance forensics — the dedup
+    // verdict, redaction count, injection flags) must NEVER leak into an agent-side read. The
+    // seed committed one (payload {"verdict":"new"}) via the capture funnel, so a future refactor
+    // that walked the AUDIT edge instead of HAS_PROVENANCE would surface "verdict" here and trip.
+    assert!(
+        !out.contains("verdict") && !out.contains("injection") && !out.contains("redact"),
+        "the capture audit (governance forensics) never surfaces on a read: {out}"
+    );
+
+    // full=true also surfaces provenance (the other detail mode).
+    let mut full = read_params(&[id], alice);
+    full.full = Some(true);
+    let whole = read_memory_tool(&memory, full, None, AuthEnabled(false)).expect("read");
+    assert!(
+        whole.contains(&format!("writer=\"{writer}\"")),
+        "full also projects provenance: {whole}"
+    );
+}
+
+#[test]
+fn an_episode_without_a_provenance_record_renders_none_even_under_detail() {
+    let memory = memory();
+    let alice = Id::generate();
+    // A bare insert_episode (no capture funnel) has no HAS_PROVENANCE edge.
+    let id = seed(
+        &memory,
+        "a directly-inserted turn",
+        Namespace::Agent(alice.to_string()),
+        Role::Assistant,
+    );
+
+    let mut verbose = read_params(&[id], alice);
+    verbose.verbose = Some(true);
+    let out = read_memory_tool(&memory, verbose, None, AuthEnabled(false)).expect("read");
+    assert!(out.contains("a directly-inserted turn"), "{out}");
+    // No fabricated provenance: absence is honest, never a placeholder writer.
+    assert!(
+        !out.contains("writer="),
+        "an episode with no provenance record renders no provenance attributes: {out}"
+    );
 }
 
 #[test]

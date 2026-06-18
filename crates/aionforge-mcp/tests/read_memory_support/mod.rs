@@ -21,7 +21,7 @@ use aionforge_domain::ids::ContentHash;
 use aionforge_domain::nodes::associative::Note;
 use aionforge_domain::nodes::core::CoreBlock;
 use aionforge_domain::nodes::episodic::{ConsolidationState, Episode};
-use aionforge_domain::nodes::forensic::{AuditEvent, AuditKind};
+use aionforge_domain::nodes::forensic::{AuditEvent, AuditKind, ProvenanceRecord};
 use aionforge_domain::nodes::procedural::{BadPattern, Skill};
 use aionforge_domain::nodes::semantic::{Entity, Fact};
 use aionforge_domain::nodes::work::WorkItem;
@@ -164,6 +164,16 @@ pub fn read_params(ids: &[Id], agent: Id) -> ReadMemoryToolParams {
     }
 }
 
+/// Like [`read_params`] but with the reader asserting the given `teams` on this same call —
+/// the per-call team assertion a by-id read of a team-namespace memory requires (parity with
+/// `search`). `teams` are bare slugs; the resolver maps each to `Namespace::Team(<slug>)`.
+pub fn read_params_with_teams(ids: &[Id], agent: Id, teams: &[&str]) -> ReadMemoryToolParams {
+    ReadMemoryToolParams {
+        teams: teams.iter().map(ToString::to_string).collect(),
+        ..read_params(ids, agent)
+    }
+}
+
 fn stats() -> Stats {
     Stats {
         importance: 0.5,
@@ -211,6 +221,61 @@ pub fn seed(memory: &Memory<FakeEmbedder>, content: &str, namespace: Namespace, 
         .store()
         .insert_episode(&episode)
         .expect("seed episode");
+    id
+}
+
+/// Seed one episode WITH its signed creation provenance through the capture commit funnel, so it
+/// carries the `Episode -HAS_PROVENANCE-> ProvenanceRecord` edge that `read_memory` projects under
+/// verbose/full. Unlike [`seed`] (a bare `insert_episode`, no provenance), this is the only way to
+/// exercise the provenance read surface. The provenance fields are caller-fixed so a test can
+/// assert exact rendered values; returns the episode id.
+pub fn seed_with_provenance(
+    memory: &Memory<FakeEmbedder>,
+    content: &str,
+    namespace: Namespace,
+    writer_agent_id: Id,
+    model_family: &str,
+    model_version: Option<&str>,
+    trust_at_write: f64,
+) -> Id {
+    let id = Id::generate();
+    let episode = Episode {
+        identity: ident(id, namespace.clone(), false),
+        stats: stats(),
+        content: content.to_string(),
+        role: Role::Assistant,
+        captured_at: now(),
+        agent_id: writer_agent_id,
+        session_id: None,
+        content_hash: ContentHash::of(content.as_bytes()),
+        embedding: Some(Embedding::new(vec![1.0, 0.0, 0.0, 0.0]).expect("finite")),
+        embedder_model: None,
+        consolidation_state: ConsolidationState::Raw,
+        origin: None,
+    };
+    let provenance = ProvenanceRecord {
+        identity: ident(Id::generate(), namespace.clone(), false),
+        subject_id: id,
+        writer_agent_id,
+        signature: String::new(),
+        source_episode_ids: Vec::new(),
+        model_family: model_family.to_string(),
+        model_version: model_version.map(str::to_string),
+        trust_at_write,
+    };
+    let audit = AuditEvent {
+        identity: ident(Id::generate(), namespace, false),
+        kind: AuditKind::Capture,
+        subject_id: id,
+        actor_id: writer_agent_id,
+        payload: serde_json::json!({ "verdict": "new" }),
+        signature: String::new(),
+        occurred_at: now(),
+    };
+    memory
+        .store()
+        .commit_capture(&episode, &provenance, &audit)
+        .expect("seed episode with provenance");
     id
 }
 

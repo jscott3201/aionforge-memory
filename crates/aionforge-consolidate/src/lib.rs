@@ -28,6 +28,7 @@ mod lag;
 mod link_evolution;
 mod merge;
 mod pass;
+mod profile;
 mod resolve;
 mod rule_extractor;
 mod rule_inducer;
@@ -40,8 +41,8 @@ mod summarize;
 pub use audit::CONTRADICTION_QUARANTINE_REASON;
 pub use clock::{Clock, SystemClock};
 pub use config::{
-    ConsolidationConfig, DetectionConfig, InductionConfig, PassConfig, PredicateRule,
-    ResolutionConfig, SummarizationConfig,
+    ConsolidationConfig, DetectionConfig, ExtractionConfig, InductionConfig, PassConfig,
+    PredicateRule, ResolutionConfig, SummarizationConfig,
 };
 pub use error::ConsolidationError;
 pub use fact_extraction::FactExtractionPass;
@@ -49,8 +50,15 @@ pub use lag::ConsolidationLag;
 pub use link_evolution::{
     LinkEvolveConfig, LinkEvolveError, LinkEvolvePass, LinkEvolveReport, RELATIONSHIP_VOCABULARY,
 };
-pub use pass::{ConsolidationPass, NoopPass, PassContext, PassError, PassOutput};
-pub use rule_extractor::{ObjectRule, Rule, RuleExtractor};
+pub use pass::{ConsolidationPass, NoopPass, PassContext, PassError, PassOutput, PassRun};
+pub use profile::{
+    ConsolidationProfile, PassProfile, STAGE_DETECTION, STAGE_EXTRACTION, STAGE_INDUCTION,
+    STAGE_ORDER, STAGE_RESOLUTION, STAGE_SUMMARIZATION, StageProfile,
+};
+pub use rule_extractor::{
+    MAX_SUBJECT_CHARS, MAX_SUBJECT_TOKENS, ObjectRule, Rule, RuleExtractor, SUBJECT_BARE_PRONOUNS,
+    SUBJECT_LEADING_STOPWORDS, is_plausible_subject,
+};
 pub use rule_inducer::RuleInducer;
 pub use rule_link_evolver::{RULE_LINK_EVOLVE_VERSION, RuleLinkEvolver};
 pub use rule_summarizer::RuleSummarizer;

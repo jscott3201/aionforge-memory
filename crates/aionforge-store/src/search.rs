@@ -15,12 +15,15 @@
 //! higher-is-better. Either way the returned list is ordered best-first, which is all
 //! rank fusion (M1.T05) needs.
 
+use std::collections::HashSet;
 use std::time::Instant;
 
 use aionforge_domain::Embedding;
-use selene_core::{NodeId, Value};
+use aionforge_domain::namespace::Namespace;
+use aionforge_domain::nodes::episodic::Episode;
+use selene_core::{NodeId, Value, db_string};
 
-use crate::convert::{as_f64, as_node_ref, embedding_value};
+use crate::convert::{as_f64, as_node_ref, embedding_value, namespace_value};
 use crate::error::StoreError;
 use crate::gql::{BoundQuery, QueryResult};
 use crate::store::Store;
@@ -225,6 +228,44 @@ impl Store {
         let query = BoundQuery::new(source)
             .bind("query", embedding_value(query)?)?
             .bind("k", k_value(k))?;
+        extract_hits(self.execute_within(&query, deadline)?, "distance")
+    }
+
+    /// ANN vector search scoped to the reader's visible namespaces, by pushing a
+    /// `namespace IN $namespaces` predicate into the ANN traversal (03 §1, §6; selene-db 1.3
+    /// `filter_property`/`filter_values`). The namespace-filtered counterpart of
+    /// [`Self::vector_search_ann_within`]: the engine admits only namespace-matching nodes
+    /// during the HNSW/IVF traversal and reranks the survivors with exact cosine, so the
+    /// fan-out lands on visible nodes without first materializing the scope node-set. An empty
+    /// `namespaces` short-circuits to an empty result (the reader has no visible scope), the
+    /// way the node-list path short-circuited on an empty candidate list.
+    ///
+    /// `ef_search` is left at the engine default (`NULL`); the trailing
+    /// `filter_property`/`filter_values` carry the namespace predicate. `deadline` bounds the
+    /// traversal the same way [`Self::vector_search_ann_within`] does.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if a namespace fails to encode, or the query vector, the binds,
+    /// execution, or the deadline fails.
+    pub fn vector_search_ann_in_namespaces(
+        &self,
+        kind: SearchKind,
+        query: &Embedding,
+        namespaces: &[Namespace],
+        k: usize,
+        deadline: Option<Instant>,
+    ) -> Result<Vec<SearchHit>, StoreError> {
+        if namespaces.is_empty() {
+            return Ok(Vec::new());
+        }
+        let (label, prop) = (kind.label(), kind.vector_property());
+        let source = format!(
+            "CALL selene.vector_search_nodes_ann('{label}', '{prop}', $query, $k, 'cosine', NULL, 'namespace', $ns) YIELD node_id, distance"
+        ); // gql-ident-ok
+        let query = BoundQuery::new(source)
+            .bind("query", embedding_value(query)?)?
+            .bind("k", k_value(k))?
+            .bind("ns", namespace_filter_values(namespaces)?)?;
         extract_hits(self.execute_within(&query, deadline)?, "distance")
     }
 
@@ -434,17 +475,61 @@ impl Store {
         extract_hits(self.execute_within(&query, deadline)?, "score")
     }
 
-    /// BM25-score an explicit candidate set over the text index (03 §2 scoped lexical).
+    /// BM25-search a kind's text index scoped to the reader's visible namespaces, by pushing a
+    /// `namespace IN $namespaces` predicate into the BM25 scan (03 §2, §6; selene-db 1.3
+    /// `filter_property`/`filter_values`). The namespace-filtered counterpart of
+    /// [`Self::text_search_within`]: the engine admits only namespace-matching nodes inside the
+    /// posting walk and returns the top `k`, so the fan-out is spent on visible nodes without
+    /// first materializing the scope node-set — and the BM25 score is exact either way (the
+    /// predicate narrows which nodes are scored, not how). An empty `namespaces` short-circuits
+    /// to an empty result (no visible scope).
+    ///
+    /// `deadline` bounds the scan the same way [`Self::text_search_within`] does.
     ///
     /// # Errors
     /// Returns [`StoreError::Search`] if `kind` maintains no text index, or another
-    /// [`StoreError`] if the binds or execution fails.
+    /// [`StoreError`] if a namespace fails to encode, or the binds, execution, or the deadline
+    /// fails.
+    pub fn text_search_in_namespaces(
+        &self,
+        kind: SearchKind,
+        query: &str,
+        namespaces: &[Namespace],
+        k: usize,
+        deadline: Option<Instant>,
+    ) -> Result<Vec<SearchHit>, StoreError> {
+        if namespaces.is_empty() {
+            return Ok(Vec::new());
+        }
+        let label = kind.label();
+        let prop = text_property(kind)?;
+        let source = format!(
+            "CALL selene.text_search_nodes('{label}', '{prop}', $query, $k, 'namespace', $ns) YIELD node_id, score"
+        ); // gql-ident-ok
+        let query = BoundQuery::new(source)
+            .bind_str("query", query)?
+            .bind("k", k_value(k))?
+            .bind("ns", namespace_filter_values(namespaces)?)?;
+        extract_hits(self.execute_within(&query, deadline)?, "score")
+    }
+
+    /// BM25-score an explicit candidate set over the text index (03 §2 scoped lexical).
+    ///
+    /// `deadline` bounds the scan the same way [`Self::text_search_within`] bounds the
+    /// unscoped index search: the engine checks cancellation per node block, so a large
+    /// candidate list (an episode scope spanning a busy namespace, 03 §6) cannot run the
+    /// recall past its budget. `None` leaves the scan uninterrupted.
+    ///
+    /// # Errors
+    /// Returns [`StoreError::Search`] if `kind` maintains no text index, or another
+    /// [`StoreError`] if the binds, execution, or the deadline fails.
     pub fn text_score_nodes(
         &self,
         kind: SearchKind,
         query: &str,
         candidates: &[NodeId],
         k: usize,
+        deadline: Option<Instant>,
     ) -> Result<Vec<SearchHit>, StoreError> {
         let label = kind.label();
         let prop = text_property(kind)?;
@@ -455,7 +540,48 @@ impl Store {
             .bind_str("query", query)?
             .bind("nodes", node_list_value(candidates))?
             .bind("k", k_value(k))?;
-        extract_hits(self.execute(&query)?, "score")
+        extract_hits(self.execute_within(&query, deadline)?, "score")
+    }
+
+    /// The `NodeId` handles of every episode in any of `namespaces` (03 §1, §6).
+    ///
+    /// The namespace-scoped candidate set a recall generates episode candidates over, so
+    /// the per-signal fan-out is spent on episodes the reader may actually see rather than
+    /// the whole cross-namespace label index (the post-fusion visible-set filter then
+    /// becomes a cheap near-no-op for episodes). Reads the indexed `namespace` scalar (§11),
+    /// so it is an index probe per namespace, not a full scan, and returns ids without
+    /// decoding the episodes. De-duplicates across namespaces.
+    ///
+    /// Includes soft-forgotten (`expired_at`-stamped) nodes: the recall path's
+    /// `include_expired` gate decides their fate post-fusion, exactly as it did for the
+    /// unscoped scans this replaces — scoping must not silently change expiry semantics.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if a namespace value fails to encode.
+    pub fn episode_nodes_in_namespaces(
+        &self,
+        namespaces: &[Namespace],
+    ) -> Result<Vec<NodeId>, StoreError> {
+        let snapshot = self.graph().read();
+        let label = db_string(Episode::LABEL)?;
+        let prop = db_string("namespace")?;
+        let mut nodes: Vec<NodeId> = Vec::new();
+        let mut seen: HashSet<NodeId> = HashSet::new();
+        for namespace in namespaces {
+            let value = namespace_value(namespace)?;
+            let Some(rows) = snapshot.nodes_with_property_eq(&label, &prop, &value) else {
+                continue;
+            };
+            for row in rows.iter() {
+                let Some(node) = snapshot.node_id_for_row(selene_graph::RowIndex::new(row)) else {
+                    continue;
+                };
+                if seen.insert(node) {
+                    nodes.push(node);
+                }
+            }
+        }
+        Ok(nodes)
     }
 }
 
@@ -473,6 +599,17 @@ pub(crate) fn k_value(k: usize) -> Value {
 /// A candidate node list as a bound `LIST<NODE>` parameter value.
 fn node_list_value(nodes: &[NodeId]) -> Value {
     Value::List(nodes.iter().copied().map(Value::NodeRef).collect())
+}
+
+/// The `filter_values` list for a `namespace IN [...]` predicate: each visible namespace as
+/// the same encoded scalar value the `namespace` index stores (§11), so the engine matches it
+/// against the indexed property. Callers pass a non-empty `namespaces`.
+fn namespace_filter_values(namespaces: &[Namespace]) -> Result<Value, StoreError> {
+    let mut values = Vec::with_capacity(namespaces.len());
+    for namespace in namespaces {
+        values.push(namespace_value(namespace)?);
+    }
+    Ok(Value::List(values))
 }
 
 /// Read `(node_id, <score_col>)` rows from a search result into best-first hits.

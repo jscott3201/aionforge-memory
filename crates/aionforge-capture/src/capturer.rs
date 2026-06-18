@@ -323,7 +323,16 @@ where
             trust_at_write: trust,
         };
 
-        // 6. The capture audit event lives in the system namespace (02 §11).
+        // 6. The capture audit event lives in the system namespace (02 §11): it is
+        //    governance forensics (the dedup verdict, redaction count, and injection flags
+        //    of the screened write), not creation provenance. Being `system`-scoped it is
+        //    deliberately absent from the agent-facing `audit_history` (06 §1) and never
+        //    surfaces on a read path. The actor here is still the writing agent, so the
+        //    host's L0 forensic reads attribute the screening correctly. Creation attribution
+        //    ("who wrote this") is instead carried by the `ProvenanceRecord.writer_agent_id`
+        //    written above, which `read_memory` now projects under verbose/full
+        //    (writer_agent_id + model + trust_at_write + write instant) — sourced ONLY from
+        //    the provenance record, never from this system-scoped audit event.
         let audit = AuditEvent {
             identity: Identity {
                 id: Id::generate(),

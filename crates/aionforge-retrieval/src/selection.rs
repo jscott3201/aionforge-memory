@@ -11,7 +11,7 @@ use aionforge_domain::nodes::episodic::{Episode, Role};
 use aionforge_domain::nodes::semantic::Fact;
 use aionforge_domain::time::Timestamp;
 use aionforge_store::{
-    CandidateSet, ExpandDirection, ExpandEdge, NodeId, SearchKind, SetOp, Store,
+    CandidateSet, ExpandDirection, ExpandEdge, NodeId, SearchHit, SearchKind, SetOp, Store,
 };
 
 use crate::bundle::{CoreBlockEntry, EpisodeEntry, FactEntry, StructuredEntry};
@@ -28,13 +28,35 @@ use crate::temporal::{fact_passes_temporal, fact_serialization_id};
 /// The serialization-id kind tag for an episode (02 §10).
 const EPISODE_KIND_TAG: &str = "episode";
 
+/// The rank ceiling for a dense-floor exemption (M3 hybrid admission). A candidate below the
+/// dense floor is admitted only if an exempting signal ranked it in its top
+/// `FLOOR_EXEMPT_MAX_RANK + 1` — a generous safety ceiling so graph (Personalized PageRank)
+/// deep-tail spread cannot slip the floor. The precise value is calibratable once a
+/// graph-bearing labeled corpus exists (the population-leak validation deferred from the M1
+/// `multihop_entity_floor_probe`).
+const FLOOR_EXEMPT_MAX_RANK: usize = 32;
+
+/// Whether a candidate scoring below the dense floor is nonetheless admitted by the
+/// "dense-OR-signal" hybrid (M3): one of the class's `floor_exempt_signals` ranked it within
+/// [`FLOOR_EXEMPT_MAX_RANK`]. `exempt` is empty for the dense-only classes (factual, temporal,
+/// quote), so this is always `false` there and the floor stays byte-identical. For `MultiHop`
+/// and `Entity` it admits graph/support-recovered associative gold whose direct dense cosine is
+/// below the floor (legitimately FAR in vector space), the recall those classes exist for.
+fn floor_exempt_admits(candidate: &FusedCandidate, exempt: &[Signal]) -> bool {
+    candidate
+        .contributions
+        .iter()
+        .any(|c| exempt.contains(&c.signal) && c.rank <= FLOOR_EXEMPT_MAX_RANK)
+}
+
 /// The serialization-id kind tag for a core block (02 §10, 05 §4).
 const CORE_KIND_TAG: &str = "core";
 
-/// The chosen entries plus how many candidates were considered.
+/// The chosen entries. The "candidates considered" count for the explanation is the
+/// fused-pool size, computed by the caller before selection attrition (03 §6) — selection
+/// reports only what it kept, not a misleading post-attrition count.
 pub(crate) struct Selection {
     pub(crate) entries: Vec<StructuredEntry>,
-    pub(crate) considered: usize,
 }
 
 enum ResolvedCandidate {
@@ -43,6 +65,18 @@ enum ResolvedCandidate {
         candidate: FusedCandidate,
         episode: Box<Episode>,
     },
+}
+
+impl ResolvedCandidate {
+    /// The store node id this candidate resolved from — its key for the community-diversity
+    /// lookup, regardless of kind.
+    fn node(&self) -> NodeId {
+        match self {
+            ResolvedCandidate::Fact(candidate) | ResolvedCandidate::Episode { candidate, .. } => {
+                candidate.node
+            }
+        }
+    }
 }
 
 /// Build the factual lexical-anchor ranking from the highest lexical hits.
@@ -109,13 +143,17 @@ pub(crate) fn effective_fanout(query: &RecallQuery, config: &RetrieverConfig) ->
     base.max(query.limit).max(1)
 }
 
-/// Resolve fused candidates to authorized entries, applying the session-diversity
-/// cap and filling from the spill only when the bundle is under-filled (03 §6).
+/// Resolve fused candidates to authorized entries, applying the session- and community-
+/// diversity caps and filling from the spill only when the bundle is under-filled (03 §6).
 ///
-/// A candidate is a fact iff a fact search produced it (`fact_nodes`), else it is
-/// resolved as an episode. The session-diversity cap is an episode notion — it
-/// demotes a conversation that dominates the bundle — so facts, which have no
-/// session, always go straight to the primary set in fused order.
+/// A candidate is a fact iff a fact search produced it (`fact_nodes`), else it is resolved as an
+/// episode. The session-diversity cap is an episode notion — it demotes a conversation that
+/// dominates the bundle — so facts, which have no session, are never subject to it. The
+/// community-diversity cap (R2) is structural — it demotes an associative cluster that dominates
+/// the bundle — so it applies to facts and episodes alike; it is OFF unless
+/// `community_diversity_cap > 0`, in which case the Louvain labels are computed once here. An
+/// entry is admitted only if it is under both active caps; otherwise it spills.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn select(
     store: &Store,
     query: &RecallQuery,
@@ -123,23 +161,49 @@ pub(crate) fn select(
     surface_system: bool,
     fused: Vec<FusedCandidate>,
     fact_nodes: &HashSet<NodeId>,
+    dense_similarity: &HashMap<NodeId, f64>,
+    min_relevance: f64,
+    floor_exempt: &[Signal],
     limit: usize,
+    deadline: Option<Instant>,
 ) -> Result<Selection, RetrievalError> {
     if limit == 0 {
         return Ok(Selection {
             entries: Vec::new(),
-            considered: 0,
         });
     }
     let cap = query.options.session_diversity_cap;
+    let community_cap = query.options.community_diversity_cap;
     let mut primary: Vec<StructuredEntry> = Vec::new();
     let mut spill: Vec<StructuredEntry> = Vec::new();
     let mut per_session: HashMap<Option<String>, usize> = HashMap::new();
-    let mut considered = 0usize;
     let mut resolved = Vec::new();
     let mut episode_ids = Vec::new();
 
     for candidate in fused {
+        // The opt-in absolute relevance floor (P0a): when active, a candidate must have an
+        // honest dense similarity at or above the floor to be admitted. A lexical/BM25-only hit
+        // (absent from the dense map) has no absolute relevance proxy, so it is dropped under an
+        // active floor — the floor is defined only against the dense signal. `min_relevance == 0.0`
+        // (the default) skips the lookup entirely, so the default path is byte-identical and an
+        // unrelated query can now legitimately return empty (the bundle's considered/returned gap
+        // then explains the attrition honestly).
+        //
+        // The "dense-OR-signal" hybrid (M3) exempts a below-floor candidate when one of the
+        // class's `floor_exempt` signals ranked it within the cap — so the graph-expansion
+        // classes (MultiHop, Entity) keep their graph/support-recovered associative gold, which
+        // is legitimately FAR in dense space. `floor_exempt` is empty for the dense-only classes,
+        // leaving their floor byte-identical.
+        if min_relevance > 0.0
+            && dense_similarity
+                .get(&candidate.node)
+                .copied()
+                .unwrap_or(0.0)
+                < min_relevance
+            && !floor_exempt_admits(&candidate, floor_exempt)
+        {
+            continue;
+        }
         if fact_nodes.contains(&candidate.node) {
             resolved.push(ResolvedCandidate::Fact(candidate));
             continue;
@@ -159,36 +223,81 @@ pub(crate) fn select(
 
     let superseded_by = store.live_episode_superseded_by_many(episode_ids.iter())?;
 
+    // The community-diversity labels (R2), computed once over the resolved candidate nodes — but
+    // only when the cap is active. `community_cap == 0` (the default) skips the Louvain pass
+    // entirely, so the labels are empty, the per-community gate below is inert, and selection is
+    // byte-identical and zero-cost. (Louvain has no GQL pushdown, so the store labels the whole
+    // projection and filters to these nodes — see `Store::community_labels`.)
+    let community: HashMap<NodeId, NodeId> = if community_cap > 0 {
+        let nodes: Vec<NodeId> = resolved.iter().map(ResolvedCandidate::node).collect();
+        store.community_labels(&nodes, deadline)?
+    } else {
+        HashMap::new()
+    };
+    let mut per_community: HashMap<NodeId, usize> = HashMap::new();
+
     for candidate in resolved {
         if primary.len() >= limit {
             break;
         }
-        match candidate {
+        let node = candidate.node();
+        // Resolve to an entry; `session` is `Some(bucket)` for an episode (the session-diversity
+        // cap applies, `bucket` is its session id or `None` for a sessionless episode) and `None`
+        // for a fact (no session notion, so the session cap never applies to it).
+        let (entry, session): (StructuredEntry, Option<Option<String>>) = match candidate {
             ResolvedCandidate::Fact(candidate) => {
-                let Some(entry) = resolve_fact(store, query, visible, &candidate)? else {
+                let similarity = dense_similarity.get(&candidate.node).copied();
+                let Some(entry) = resolve_fact(store, query, visible, &candidate, similarity)?
+                else {
                     continue;
                 };
-                considered += 1;
-                primary.push(entry);
-                continue;
+                (entry, None)
             }
             ResolvedCandidate::Episode { candidate, episode } => {
                 let replacement = superseded_by.get(&episode.identity.id).copied();
                 if !query.options.include_superseded && replacement.is_some() {
                     continue;
                 }
-                considered += 1;
-                let entry =
-                    StructuredEntry::Episode(episode_entry(&episode, &candidate, replacement));
-                let session = episode.session_id.as_ref().map(|id| id.to_string());
-                let seen = per_session.entry(session).or_insert(0);
-                if cap == 0 || *seen < cap {
-                    *seen += 1;
-                    primary.push(entry);
-                } else {
-                    spill.push(entry);
-                }
+                let similarity = dense_similarity.get(&candidate.node).copied();
+                let entry = StructuredEntry::Episode(episode_entry(
+                    &episode,
+                    &candidate,
+                    replacement,
+                    similarity,
+                ));
+                (
+                    entry,
+                    Some(episode.session_id.as_ref().map(|id| id.to_string())),
+                )
             }
+        };
+
+        // Diversity admission: the entry joins the primary bundle only if it is under BOTH the
+        // session cap (episodes) and the community cap (any labeled node). The per-bucket counters
+        // advance only on admission, so a spilled entry never consumes a slot. Either cap at 0 (or
+        // a node with no community label) makes that gate always-pass, so a spill is driven only
+        // by a genuinely over-represented session or community.
+        let community_key = community.get(&node).copied();
+        let under_session = match &session {
+            Some(bucket) => cap == 0 || per_session.get(bucket).copied().unwrap_or(0) < cap,
+            None => true,
+        };
+        let under_community = match community_key {
+            Some(c) => {
+                community_cap == 0 || per_community.get(&c).copied().unwrap_or(0) < community_cap
+            }
+            None => true,
+        };
+        if under_session && under_community {
+            if let Some(bucket) = session {
+                *per_session.entry(bucket).or_insert(0) += 1;
+            }
+            if let Some(c) = community_key {
+                *per_community.entry(c).or_insert(0) += 1;
+            }
+            primary.push(entry);
+        } else {
+            spill.push(entry);
         }
     }
 
@@ -202,10 +311,7 @@ pub(crate) fn select(
         }
     }
 
-    Ok(Selection {
-        entries: primary,
-        considered,
-    })
+    Ok(Selection { entries: primary })
 }
 
 /// The always-include identity pre-pass (05 §4): every live core block in the
@@ -251,11 +357,14 @@ pub(crate) fn fact_lexical_ranking(
     k: usize,
     deadline: Option<Instant>,
 ) -> Result<SignalRanking, RetrievalError> {
-    // The deadline bounds only the unscoped full-index BM25 fallback; the scoped
-    // `text_score_nodes` runs over a bounded current-support member set (fast).
+    // The deadline bounds both scoped and unscoped BM25: the scoped `text_score_nodes`
+    // runs over the (small, fast) current-support member set, but it carries the same
+    // budget as the unscoped fallback so no fact lexical path is left uninterruptible.
     let hits = match current {
         Some([]) => Vec::new(),
-        Some(members) => store.text_score_nodes(SearchKind::Fact, &query.text, members, k)?,
+        Some(members) => {
+            store.text_score_nodes(SearchKind::Fact, &query.text, members, k, deadline)?
+        }
         None => store.text_search_within(SearchKind::Fact, &query.text, k, deadline)?,
     };
     Ok(ranking_from_hits(Signal::Lexical, hits))
@@ -357,18 +466,10 @@ pub(crate) fn fact_support_ranking(
 
 /// The graph (PageRank) fact ranking, scoped by `current` (03 §1, §5).
 ///
-/// PageRank spreads associatively across the whole graph, so — unlike the lexical and
-/// dense fact searches, which the engine bounds to the current-support set — its hits
-/// are not current by construction. In Current mode (`current` is `Some`) they are
-/// intersected with the live support membership here, so graph expansion can never
-/// surface a fact the support provider excludes: `fact_passes_temporal` checks only
-/// `status == active` in Current mode (it trusts the search to have scoped the set), so
-/// a contradicted-but-active fact would otherwise leak in. No current fact is *lost* to
-/// this filter — the lexical fact signal already covers the whole support set, so graph
-/// expansion only adds associative weight to facts the other signals also reach. `None`
-/// (any non-Current mode) leaves every reached fact, with the per-candidate window test
-/// applied later in `resolve_fact`. Hits are filtered before they are numbered, so the
-/// surviving ranks stay dense (0, 1, 2, …) for fusion.
+/// Facts rank over the whole projection (`result_nodes` = `None`): the graph fact reach is
+/// bounded to the live support set by [`current_scoped`], not by a visible-namespace node scope
+/// the way the episode side is. `None` (any non-Current mode) leaves every reached fact, with
+/// the per-candidate window test applied later in `resolve_fact`.
 pub(crate) fn fact_graph_ranking(
     store: &Store,
     seeds: &[NodeId],
@@ -376,8 +477,47 @@ pub(crate) fn fact_graph_ranking(
     k: usize,
     deadline: Option<Instant>,
 ) -> Result<SignalRanking, RetrievalError> {
-    let hits = store.personalized_pagerank_within(SearchKind::Fact, seeds, k, deadline)?;
-    let hits = match current {
+    let hits = store.personalized_pagerank_within(SearchKind::Fact, seeds, k, None, deadline)?;
+    Ok(ranking_from_hits(
+        Signal::Graph,
+        current_scoped(hits, current),
+    ))
+}
+
+/// The global-authority (seedless PageRank) fact ranking, scoped by `current` (R1).
+///
+/// The seedless complement to [`fact_graph_ranking`]: it ranks the globally most-connected
+/// facts rather than those near a query entity, but is otherwise identical — it ranks over the
+/// whole projection (`result_nodes` = `None`) and is bounded to the live support set by
+/// [`current_scoped`] in Current mode, so authority can never surface a non-current fact.
+pub(crate) fn fact_authority_ranking(
+    store: &Store,
+    current: Option<&[NodeId]>,
+    k: usize,
+    deadline: Option<Instant>,
+) -> Result<SignalRanking, RetrievalError> {
+    let hits = store.graph_authority(SearchKind::Fact, k, None, deadline)?;
+    Ok(ranking_from_hits(
+        Signal::Authority,
+        current_scoped(hits, current),
+    ))
+}
+
+/// Intersect PageRank fact hits with the live current-support set in Current mode (`Some`), or
+/// leave them untouched in any other temporal mode (`None`). Shared by the graph and authority
+/// fact rankings.
+///
+/// PageRank spreads associatively across the whole graph, so — unlike the lexical and dense fact
+/// searches, which the engine bounds to the current-support set — its hits are not current by
+/// construction. Intersecting with the live support membership here means graph/authority
+/// expansion can never surface a fact the support provider excludes: `fact_passes_temporal`
+/// checks only `status == active` in Current mode (it trusts the search to have scoped the set),
+/// so a contradicted-but-active fact would otherwise leak in. No current fact is *lost* to this
+/// filter — the lexical fact signal already covers the whole support set, so graph/authority
+/// expansion only adds weight to facts the other signals also reach. Hits are filtered before
+/// they are numbered, so the surviving ranks stay dense (0, 1, 2, …) for fusion.
+fn current_scoped(hits: Vec<SearchHit>, current: Option<&[NodeId]>) -> Vec<SearchHit> {
+    match current {
         Some(members) => {
             let set: HashSet<NodeId> = members.iter().copied().collect();
             hits.into_iter()
@@ -385,8 +525,7 @@ pub(crate) fn fact_graph_ranking(
                 .collect()
         }
         None => hits,
-    };
-    Ok(ranking_from_hits(Signal::Graph, hits))
+    }
 }
 
 /// Build the per-kind trust re-rankings over the candidates the search signals already
@@ -466,6 +605,7 @@ fn episode_entry(
     episode: &Episode,
     candidate: &FusedCandidate,
     superseded_by: Option<aionforge_domain::ids::Id>,
+    dense_similarity: Option<f64>,
 ) -> EpisodeEntry {
     EpisodeEntry {
         id: episode.identity.id,
@@ -481,6 +621,7 @@ fn episode_entry(
         superseded_by,
         trust: episode.stats.trust,
         score: candidate.score,
+        dense_similarity,
         contributions: candidate.contributions.clone(),
         content: episode.content.clone(),
     }
@@ -507,7 +648,12 @@ fn core_block_entry(block: &CoreBlock) -> CoreBlockEntry {
     }
 }
 
-fn fact_entry(fact: &Fact, about: &About, candidate: &FusedCandidate) -> FactEntry {
+fn fact_entry(
+    fact: &Fact,
+    about: &About,
+    candidate: &FusedCandidate,
+    dense_similarity: Option<f64>,
+) -> FactEntry {
     FactEntry {
         id: fact.identity.id,
         serialization_id: fact_serialization_id(fact),
@@ -518,6 +664,7 @@ fn fact_entry(fact: &Fact, about: &About, candidate: &FusedCandidate) -> FactEnt
         status: fact.status,
         trust: fact.stats.trust,
         score: candidate.score,
+        dense_similarity,
         contributions: candidate.contributions.clone(),
         statement: fact.statement.clone(),
         ingested_at: about.temporal.ingested_at.clone(),
@@ -535,6 +682,7 @@ fn resolve_fact(
     query: &RecallQuery,
     visible: &VisibleSet,
     candidate: &FusedCandidate,
+    dense_similarity: Option<f64>,
 ) -> Result<Option<StructuredEntry>, RetrievalError> {
     let Some(fact) = store.fact_by_node_id(candidate.node)? else {
         return Ok(None);
@@ -561,6 +709,9 @@ fn resolve_fact(
         return Ok(None);
     }
     Ok(Some(StructuredEntry::Fact(fact_entry(
-        &fact, &about, candidate,
+        &fact,
+        &about,
+        candidate,
+        dense_similarity,
     ))))
 }

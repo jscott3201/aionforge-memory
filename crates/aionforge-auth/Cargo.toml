@@ -10,7 +10,7 @@ homepage.workspace = true
 description = "OIDC discovery + RS256-pinned JWT validation with JWKS caching and kid rotation"
 
 [dependencies]
-aionforge-config = { path = "../aionforge-config", version = "0.2.2" }
+aionforge-config = { path = "../aionforge-config", version = "0.3.0" }
 reqwest = { workspace = true }
 rustls = { workspace = true }
 serde = { workspace = true }

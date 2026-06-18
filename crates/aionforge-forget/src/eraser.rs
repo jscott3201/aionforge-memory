@@ -155,6 +155,33 @@ impl Eraser {
         id: &Id,
         now: &Timestamp,
     ) -> Result<PointErase, StoreError> {
+        // The one destructive, principal-driven path on the forgetting side: surface its
+        // outcome and shape (cascade depth/node count, or the refused namespace KIND on an
+        // authority denial) live. Counts and a namespace KIND only — never an id, a
+        // principal, or content. `disabled` is the engine off-switch's concern (a metric),
+        // so it never reaches this span.
+        let span = tracing::info_span!(
+            "aionforge.forgetting.erase",
+            outcome = tracing::field::Empty,
+            namespace = tracing::field::Empty,
+            cascade_depth = tracing::field::Empty,
+            cascade_nodes = tracing::field::Empty,
+            error = tracing::field::Empty,
+        );
+        // Enter the span around the work (sync idiom, matching capturer.rs `in_scope`)
+        // so the closure walk and purge's diagnostic events nest under it.
+        let result = span.in_scope(|| self.erase_inner(principal, authorizer, id, now));
+        record_erase_span(&span, &result);
+        result
+    }
+
+    fn erase_inner(
+        &self,
+        principal: &Principal,
+        authorizer: &dyn Authorizer,
+        id: &Id,
+        now: &Timestamp,
+    ) -> Result<PointErase, StoreError> {
         let Some(candidate) = self.store.memory_by_id(id, &ALL_MEMORY_LABELS)? else {
             return Ok(PointErase::NotFound);
         };
@@ -251,5 +278,120 @@ fn purge_audit(
         }),
         signature: String::new(),
         occurred_at: now.clone(),
+    }
+}
+
+fn record_erase_span(span: &tracing::Span, result: &Result<PointErase, StoreError>) {
+    match result {
+        Ok(erase) => {
+            span.record("outcome", point_erase_outcome_label(erase));
+            span.record("error", "none");
+            match erase {
+                PointErase::Erased(report) => {
+                    span.record("cascade_depth", report.cascade_depth as u64);
+                    span.record("cascade_nodes", report.purged_nodes as u64);
+                }
+                PointErase::CascadeTooLarge {
+                    nodes_observed,
+                    depth_observed,
+                } => {
+                    span.record("cascade_depth", *depth_observed as u64);
+                    span.record("cascade_nodes", *nodes_observed as u64);
+                }
+                PointErase::Unauthorized { namespace } => {
+                    span.record("namespace", namespace_label(namespace));
+                }
+                PointErase::NotFound | PointErase::Disabled => {}
+            }
+        }
+        Err(_) => {
+            span.record("outcome", "error");
+            span.record("error", "store");
+        }
+    }
+}
+
+/// The bounded outcome vocabulary of a point-erase. `disabled` is included for
+/// exhaustiveness, but the engine's off-switch short-circuits before the eraser is
+/// reached, so in practice it stays a metric rather than a span value.
+fn point_erase_outcome_label(outcome: &PointErase) -> &'static str {
+    match outcome {
+        PointErase::Erased(_) => "erased",
+        PointErase::NotFound => "not_found",
+        PointErase::CascadeTooLarge { .. } => "cascade_too_large",
+        PointErase::Unauthorized { .. } => "unauthorized",
+        PointErase::Disabled => "disabled",
+    }
+}
+
+/// The stable, low-cardinality KIND label for a namespace — never the namespace id.
+fn namespace_label(namespace: &Namespace) -> &'static str {
+    match namespace {
+        Namespace::Agent(_) => "agent",
+        Namespace::Team(_) => "team",
+        Namespace::Global => "global",
+        Namespace::System => "system",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use aionforge_domain::ids::Id;
+    use aionforge_domain::namespace::Namespace;
+
+    use super::{
+        EraseReport, PointErase, ResidualRetention, namespace_label, point_erase_outcome_label,
+    };
+
+    fn sample_report() -> EraseReport {
+        EraseReport {
+            seed: Id::from_content_hash(b"seed"),
+            purged_nodes: 3,
+            purged_node_ids: vec![Id::from_content_hash(b"seed")],
+            purged_edges: 2,
+            cascade_depth: 1,
+            purged_provenance: 1,
+            spared_multiparent: Vec::new(),
+            promoted_shadows: Vec::new(),
+            residual_retention: ResidualRetention {
+                live_until_compact: true,
+                wal_archive_until_snapshot: true,
+            },
+            purge_audit_id: Id::from_content_hash(b"audit"),
+        }
+    }
+
+    #[test]
+    fn point_erase_outcome_labels_cover_every_variant() {
+        assert_eq!(
+            point_erase_outcome_label(&PointErase::Erased(sample_report())),
+            "erased"
+        );
+        assert_eq!(
+            point_erase_outcome_label(&PointErase::NotFound),
+            "not_found"
+        );
+        assert_eq!(
+            point_erase_outcome_label(&PointErase::CascadeTooLarge {
+                nodes_observed: 9,
+                depth_observed: 4,
+            }),
+            "cascade_too_large"
+        );
+        assert_eq!(
+            point_erase_outcome_label(&PointErase::Unauthorized {
+                namespace: Namespace::Global,
+            }),
+            "unauthorized"
+        );
+        assert_eq!(point_erase_outcome_label(&PointErase::Disabled), "disabled");
+    }
+
+    #[test]
+    fn namespace_labels_are_kinds_only() {
+        assert_eq!(namespace_label(&Namespace::Global), "global");
+        assert_eq!(namespace_label(&Namespace::System), "system");
+        assert_eq!(namespace_label(&Namespace::Agent("a".to_owned())), "agent");
+        assert_eq!(namespace_label(&Namespace::Team("t".to_owned())), "team");
     }
 }

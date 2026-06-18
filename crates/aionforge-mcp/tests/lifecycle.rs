@@ -97,6 +97,8 @@ fn search_params(query: &str, agent: Id) -> SearchToolParams {
         limit: None,
         verbose: None,
         include_superseded: None,
+        fanout: None,
+        min_relevance: None,
     }
 }
 
@@ -417,6 +419,91 @@ async fn capture_consolidate_search_forget_cycle_is_client_visible() -> TestResu
         AuthEnabled(false),
     )?;
     assert!(forgotten.contains("outcome=forgotten"), "{forgotten}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn verbose_consolidate_receipt_carries_the_per_stage_profile() -> TestResult {
+    // A verbose consolidate that actually consolidates an episode must append a per-stage
+    // profile of counts/outcomes only, so an operator can answer "why did 0 notes appear?".
+    let memory = memory();
+    let agent = Id::generate();
+    capture_tool(
+        &memory,
+        capture_params("Ada works at Acme and lives in Paris.", &agent.to_string()),
+        &now(),
+        None,
+        AuthEnabled(false),
+    )
+    .await?;
+
+    let run = consolidate_tool(
+        &memory,
+        ConsolidationRunToolParams {
+            max_ticks: Some(3),
+            verbose: Some(true),
+        },
+    )
+    .await?;
+
+    assert!(run.starts_with("[consolidate] "), "{run}");
+    assert!(run.contains("consolidated=1"), "{run}");
+    // The existing token a downstream test pins on must survive.
+    assert!(run.contains("rule_set=deterministic_defaults"), "{run}");
+    // The per-stage profile is appended (counts only), with every stage.
+    assert!(run.contains(" stages="), "stages line present: {run}");
+    // The extraction stage makes the raw rule-extractor yield explicit: `considered=<episodes>`
+    // and `derived=<facts>`, so "the extractor ran but found no SVO triple" is a visible signal
+    // rather than an all-zero profile that reads as "nothing happened" (P0b clarity).
+    assert!(run.contains("extraction:enabled=true,considered="), "{run}");
+    assert!(
+        run.contains("resolution:enabled=true,considered="),
+        "resolution profiled with counts: {run}"
+    );
+    assert!(run.contains("detection:enabled="), "{run}");
+    assert!(run.contains("summarization:enabled="), "{run}");
+    // The profile is content-free: no captured words leak into the receipt.
+    assert!(
+        !run.contains("Ada") && !run.contains("Paris"),
+        "no content leaks into the profile: {run}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn non_verbose_consolidate_receipt_omits_the_profile() -> TestResult {
+    // The profile is verbose-only: a default (non-verbose) receipt stays compact and carries
+    // neither the stages line nor the verbose mode/rule_set tokens.
+    let memory = memory();
+    let agent = Id::generate();
+    capture_tool(
+        &memory,
+        capture_params("Ada works at Acme.", &agent.to_string()),
+        &now(),
+        None,
+        AuthEnabled(false),
+    )
+    .await?;
+
+    let run = consolidate_tool(
+        &memory,
+        ConsolidationRunToolParams {
+            max_ticks: Some(3),
+            verbose: Some(false),
+        },
+    )
+    .await?;
+
+    assert!(run.starts_with("[consolidate] "), "{run}");
+    assert!(run.contains("consolidated=1"), "{run}");
+    assert!(
+        !run.contains(" stages="),
+        "non-verbose receipt omits the profile: {run}"
+    );
+    assert!(
+        !run.contains("rule_set=deterministic_defaults"),
+        "non-verbose receipt stays compact: {run}"
+    );
     Ok(())
 }
 

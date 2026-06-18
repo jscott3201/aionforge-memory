@@ -17,9 +17,9 @@ use aionforge_domain::nodes::procedural::{BadPattern, Skill};
 use aionforge_domain::nodes::semantic::{Entity, Fact};
 use aionforge_domain::time::Timestamp;
 use aionforge_engine::{
-    AuditCursor, AuditPage, AuditRecord, AuditVerification, ConsolidationConfig, Memory,
-    PassConfig, PointForget, PointPin, PointUnforget, PointUnpin, RuleExtractor, RuleInducer,
-    RuleSummarizer, TickReport,
+    AuditCursor, AuditPage, AuditRecord, AuditVerification, ConsolidationProfile, Memory,
+    PointForget, PointPin, PointUnforget, PointUnpin, RuleExtractor, RuleInducer, RuleSummarizer,
+    StageProfile, TickReport,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -142,6 +142,10 @@ struct WritableMemory {
     id: Id,
     label: String,
     namespace: Namespace,
+    /// The acting agent id resolved from the request principal — recorded as the audit
+    /// actor on the manual lifecycle ops (pin/unpin/forget/unforget), so the audit trail
+    /// names the agent that asked, not the substrate.
+    actor: Id,
 }
 
 /// Render the current consolidation backlog.
@@ -194,11 +198,18 @@ pub async fn consolidate_tool<E: Embedder + 'static>(
     for _ in 0..max_ticks {
         let report = memory
             .consolidate_once(
-                RuleExtractor::with_default_rules(),
+                // Build the rule extractor WITH the deployment's extraction config so the
+                // `[consolidation.extraction] min_confidence` floor is genuinely live: the
+                // extractor reads its own `config.min_confidence`, so the parameterless
+                // `with_default_rules()` would silently pin it at the hardcoded default and
+                // make the deployment knob inert. `pass_config().extraction` is the same
+                // config `consolidate_once` threads into the derivation step, so the floor and
+                // the derived-trust discount come from one source.
+                RuleExtractor::with_default_rules_and_config(memory.pass_config().extraction),
                 RuleSummarizer::with_default_rules(),
                 RuleInducer::with_default_rules(),
-                ConsolidationConfig::default(),
-                PassConfig::default(),
+                memory.consolidation_config(),
+                memory.pass_config(),
             )
             .await
             .map_err(|error| format!("ERR_CONSOLIDATE: {error}"))?;
@@ -207,6 +218,8 @@ pub async fn consolidate_tool<E: Embedder + 'static>(
         total.retried += report.retried;
         total.failed += report.failed;
         total.pending_after = report.pending_after;
+        // Fold each tick's per-stage profile into the run total (deterministic, count-only).
+        total.profile.merge_profile(&report.profile);
 
         if report.pending_after == 0
             || report.retried > 0
@@ -223,8 +236,43 @@ pub async fn consolidate_tool<E: Embedder + 'static>(
     );
     if params.verbose.unwrap_or(false) {
         out.push_str(" mode=foreground rule_set=deterministic_defaults");
+        out.push_str(&render_stage_profile(&total.profile));
     }
     Ok(out)
+}
+
+/// Render the per-stage consolidation profile as a single appended `key=value` line of
+/// counts only (no content, ids, or arguments). Each stage contributes one token of the form
+/// `stage:enabled=<bool>,considered=<n>,derived=<n>,merged=<n>,quarantined=<n>,rejected=<n>`,
+/// so an operator can read why a stage produced nothing (disabled vs saw-nothing vs all
+/// rejected) straight from the verbose receipt. An empty profile (no episode consolidated)
+/// renders nothing, keeping the receipt compact.
+fn render_stage_profile(profile: &ConsolidationProfile) -> String {
+    if profile.is_empty() {
+        return String::new();
+    }
+    let mut line = String::from(" stages=");
+    for (i, stage) in profile.stages().iter().enumerate() {
+        if i > 0 {
+            line.push(' ');
+        }
+        line.push_str(&render_stage(stage));
+    }
+    line
+}
+
+/// Render one stage profile as a compact, content-free `key=value` token.
+fn render_stage(stage: &StageProfile) -> String {
+    format!(
+        "{}:enabled={},considered={},derived={},merged={},quarantined={},rejected={}",
+        stage.stage,
+        stage.enabled,
+        stage.candidates_considered,
+        stage.derived,
+        stage.merged,
+        stage.quarantined,
+        stage.rejected_by_guard,
+    )
 }
 
 /// Soft-forget one writable memory by id.
@@ -249,7 +297,7 @@ pub fn forget_tool<E: Embedder>(
         auth_enabled,
     )?;
     let outcome = memory
-        .forget(&target.id, now)
+        .forget(&target.id, now, &target.actor)
         .map_err(|error| format!("ERR_FORGET: {error}"))?;
     Ok(format!(
         "[forget] {} kind={} ns={} outcome={}",
@@ -282,7 +330,7 @@ pub fn unforget_tool<E: Embedder>(
         auth_enabled,
     )?;
     let outcome = memory
-        .unforget(&target.id, now)
+        .unforget(&target.id, now, &target.actor)
         .map_err(|error| format!("ERR_UNFORGET: {error}"))?;
     Ok(format!(
         "[unforget] {} kind={} ns={} outcome={}",
@@ -320,7 +368,7 @@ pub fn pin_tool<E: Embedder>(
         auth_enabled,
     )?;
     let outcome = memory
-        .pin(&target.id, now)
+        .pin(&target.id, now, &target.actor)
         .map_err(|error| format!("ERR_PIN: {error}"))?;
     Ok(format!(
         "[pin] {} kind={} ns={} outcome={}",
@@ -357,7 +405,7 @@ pub fn unpin_tool<E: Embedder>(
         auth_enabled,
     )?;
     let outcome = memory
-        .unpin(&target.id, now)
+        .unpin(&target.id, now, &target.actor)
         .map_err(|error| format!("ERR_UNPIN: {error}"))?;
     Ok(format!(
         "[unpin] {} kind={} ns={} outcome={}",
@@ -476,6 +524,7 @@ fn writable_memory<E: Embedder>(
         id,
         label: candidate.label,
         namespace: candidate.identity.namespace,
+        actor: principal.agent_id,
     })
 }
 

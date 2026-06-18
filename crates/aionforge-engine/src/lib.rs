@@ -43,10 +43,12 @@ pub use aionforge_capture::{
     SignedProvenance, WriterContext,
 };
 pub use aionforge_consolidate::{
-    ConsolidationConfig, ConsolidationHandle, ConsolidationLag, DetectionConfig, InductionConfig,
-    LinkEvolveConfig, LinkEvolveError, LinkEvolveReport, ObjectRule, PassConfig, PredicateRule,
-    RELATIONSHIP_VOCABULARY, RULE_LINK_EVOLVE_VERSION, ResolutionConfig, Rule, RuleExtractor,
-    RuleInducer, RuleLinkEvolver, RuleSummarizer, SummarizationConfig, TickReport,
+    ConsolidationConfig, ConsolidationHandle, ConsolidationLag, ConsolidationProfile,
+    DetectionConfig, ExtractionConfig, InductionConfig, LinkEvolveConfig, LinkEvolveError,
+    LinkEvolveReport, ObjectRule, PassConfig, PassProfile, PredicateRule, RELATIONSHIP_VOCABULARY,
+    RULE_LINK_EVOLVE_VERSION, ResolutionConfig, Rule, RuleExtractor, RuleInducer, RuleLinkEvolver,
+    RuleSummarizer, STAGE_DETECTION, STAGE_INDUCTION, STAGE_ORDER, STAGE_RESOLUTION,
+    STAGE_SUMMARIZATION, StageProfile, SummarizationConfig, TickReport,
 };
 pub use aionforge_domain::authz::{
     AuthorizationError, Authorizer, DefaultAuthorizer, DenyReason, OperatorAwareAuthorizer,
@@ -150,6 +152,17 @@ pub struct MemoryConfig {
     /// `aionforge-config`'s `ConsolidationGuardConfig` into this
     /// [`ConsolidationGuardPolicy`] field-for-field.
     pub consolidation_guard: ConsolidationGuardPolicy,
+    /// Deterministic consolidation scheduler pacing/bounds (write-and-consolidation §3).
+    /// The host maps `aionforge-config`'s `[consolidation]` block into this; a foreground
+    /// pass ([`Memory::consolidate_once`]) reads it via [`Memory::consolidation_config`]
+    /// instead of `ConsolidationConfig::default()`, so a deployment's tuning reaches the
+    /// consolidate path. Default is the engine default — today's behavior exactly.
+    pub consolidation: ConsolidationConfig,
+    /// Deterministic consolidation pass-level tuning (resolution/detection/summarization/
+    /// induction, write-and-consolidation §2). The host maps `aionforge-config`'s
+    /// `[consolidation]` sub-tables into this; read via [`Memory::pass_config`]. Default is
+    /// the engine default (induction off), so an absent block changes nothing.
+    pub pass: PassConfig,
 }
 
 /// The engine's signed-write gating posture (06 §3, M4.T03).
@@ -259,6 +272,14 @@ pub struct Memory<E> {
     /// core editor it has no disabled state; the facade applies it to every
     /// inference-calling consolidation rule (today `evolve_links`).
     consolidation_guard: ConsolidationGuardPolicy,
+    /// The deterministic consolidation scheduler config a foreground pass uses, retained
+    /// from [`MemoryConfig::consolidation`] so [`Memory::consolidate_once`] reads the
+    /// host-configured pacing/bounds instead of `ConsolidationConfig::default()`.
+    consolidation_config: ConsolidationConfig,
+    /// The deterministic consolidation pass-level tuning, retained from
+    /// [`MemoryConfig::pass`] so a foreground pass reads the host-configured
+    /// resolution/detection/summarization/induction knobs instead of `PassConfig::default()`.
+    pass_config: PassConfig,
     /// Conditions surfaced at construction for the host to log (07 §3, M6.T01):
     /// today only the single-family deployment warning. Audited at construction;
     /// read via [`Memory::startup_warnings`].
@@ -485,6 +506,8 @@ impl<E: Embedder> Memory<E> {
             audit_verifier,
             startup_warnings,
             consolidation_guard: config.consolidation_guard,
+            consolidation_config: config.consolidation,
+            pass_config: config.pass,
         })
     }
 
@@ -500,6 +523,23 @@ impl<E: Embedder> Memory<E> {
     /// The audit-signature verifier, when audit signing is enabled (M4.T06).
     pub(crate) fn audit_verifier(&self) -> Option<&AuditVerifier> {
         self.audit_verifier.as_ref()
+    }
+
+    /// The host-configured deterministic consolidation scheduler config (set at construction
+    /// from [`MemoryConfig::consolidation`]). A foreground consolidate pass reads this so a
+    /// deployment's `[consolidation]` tuning reaches [`Memory::consolidate_once`] rather than
+    /// the engine `ConsolidationConfig::default()`.
+    #[must_use]
+    pub fn consolidation_config(&self) -> ConsolidationConfig {
+        self.consolidation_config.clone()
+    }
+
+    /// The host-configured deterministic consolidation pass-level tuning (set at construction
+    /// from [`MemoryConfig::pass`]). Read by a foreground consolidate pass so the deployment's
+    /// resolution/detection/summarization/induction knobs reach the consolidate path.
+    #[must_use]
+    pub fn pass_config(&self) -> PassConfig {
+        self.pass_config.clone()
     }
 
     /// Open an in-memory memory: a fresh store sized to the embedder's dimension,

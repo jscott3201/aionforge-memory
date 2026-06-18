@@ -1,0 +1,13 @@
+interface:
+  display_name: "Memory Bootstrap"
+  short_description: "Seed a foundational memory substrate for a fresh project"
+  default_prompt: "Bootstrap Aionforge Memory for this project once: resolve identity, recall first so re-runs do not duplicate, then capture verified conventions and architecture decisions and stand up a work-item backlog skeleton (work_create). Seed only facts from the repo or the user, never invented ones. Tasks are work items, not memory episodes; there is no note to store directly."
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "aionforge_memory"
+      description: "Aionforge Memory MCP server"
+      transport: "streamable_http"
+      url: "http://127.0.0.1:3918/mcp"
+policy:
+  allow_implicit_invocation: true

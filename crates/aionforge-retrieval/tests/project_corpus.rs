@@ -272,6 +272,10 @@ async fn recall(
         options: RecallOptions {
             fanout: 10,
             now: Some(ts(RECALL_NOW)),
+            // Floor off: this fixed corpus pins recall/ranking precision (including
+            // lexical-only and low-dense expected hits) independent of the factual class's
+            // default dense floor, which is covered by min_relevance_floor.rs.
+            min_relevance: Some(0.0),
             ..RecallOptions::default()
         },
     })

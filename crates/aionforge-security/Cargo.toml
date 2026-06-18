@@ -10,8 +10,8 @@ homepage.workspace = true
 description = "Capture-side privacy/injection filtering, recall-side untrusted-data tagging, and the cross-family consolidation guard."
 
 [dependencies]
-aionforge-domain = { path = "../aionforge-domain", version = "0.2.2" }
-aionforge-store = { path = "../aionforge-store", version = "0.2.2" }
+aionforge-domain = { path = "../aionforge-domain", version = "0.3.0" }
+aionforge-store = { path = "../aionforge-store", version = "0.3.0" }
 regex = { workspace = true }
 thiserror = { workspace = true }
 miette = { workspace = true }

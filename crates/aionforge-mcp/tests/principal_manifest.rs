@@ -116,6 +116,8 @@ fn search_params(query: &str, agent: Id) -> SearchToolParams {
         limit: None,
         verbose: None,
         include_superseded: None,
+        fanout: None,
+        min_relevance: None,
     }
 }
 
@@ -168,6 +170,8 @@ async fn tools_accept_explicit_host_principal_without_legacy_identity_fields() -
             limit: None,
             verbose: None,
             include_superseded: None,
+            fanout: None,
+            min_relevance: None,
         },
         &now(),
         None,
@@ -204,6 +208,8 @@ async fn conflicting_host_principal_identity_is_rejected() -> TestResult {
             limit: None,
             verbose: None,
             include_superseded: None,
+            fanout: None,
+            min_relevance: None,
         },
         &now(),
         None,
@@ -241,6 +247,8 @@ async fn explicit_host_principal_does_not_inherit_legacy_teams() -> TestResult {
             limit: None,
             verbose: None,
             include_superseded: None,
+            fanout: None,
+            min_relevance: None,
         },
         &now(),
         None,

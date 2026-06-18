@@ -29,9 +29,10 @@ You keep Aionforge Memory in the working loop for Claude Code sessions.
 
 ## Claude Code Workflow
 
-- Use plugin skills when they fit: `memory-loop`, `memory-recall`, `memory-capture`, `work-tracking`, and `memory-maintenance`.
+- Use plugin skills when they fit: `memory-bootstrap` (one-time cold-start setup of a new project's substrate), `memory-loop`, `memory-recall`, `memory-capture`, `work-tracking`, and `memory-maintenance`.
 - A SessionStart hook re-seeds this cadence into a fresh context after startup, resume, or a context compaction; treat it as a reminder, not a new instruction.
 - Use the plugin commands when the user wants an explicit workflow:
+  - `/aionforge-memory:memory-bootstrap` for one-time setup of a new project's memory substrate.
   - `/aionforge-memory:memory-session` for a memory-backed work session.
   - `/aionforge-memory:memory-handoff` for a durable end-of-session handoff.
 - For multi-step tasks, keep a todo list and update it as facts change.

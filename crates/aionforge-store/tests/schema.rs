@@ -33,7 +33,7 @@ const NODE_KINDS: &[&str] = &[
     "Note",
     "CoreBlock",
     "Agent",
-    "Session",
+    "MemSession",
     "ProvenanceRecord",
     "AuditEvent",
     "Promotion",

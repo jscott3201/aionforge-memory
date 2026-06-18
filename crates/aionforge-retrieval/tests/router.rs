@@ -195,6 +195,58 @@ fn entity_seeds_graph_and_drops_recency() {
 }
 
 #[test]
+fn the_calibrated_classes_floor_off_topic_and_quote_stays_off() {
+    // The four dense-bearing classes all floor at 0.60 — off-topic-rejection wins measured
+    // independently on the eval harness: SingleHopFactual (#282, floor_sweep), Temporal
+    // (beam_temporal_floor), MultiHop + Entity (beam_multihop_floor). All three runs converge
+    // on 0.60 because it is the gemini embedder's natural on-topic/off-topic boundary on
+    // BEAM-shaped queries. Pinning the exact values guards against an accidental change (they
+    // are gemini-cosine-calibrated; re-measure if the embedder changes).
+    for class in [
+        QueryClass::SingleHopFactual,
+        QueryClass::Temporal,
+        QueryClass::MultiHop,
+        QueryClass::Entity,
+    ] {
+        assert!(
+            (profile_for(class).min_relevance - 0.60).abs() < 1e-12,
+            "{class:?} floors off-topic hits at 0.60",
+        );
+    }
+    // Quote stays OFF on its own merits — its dense weight is 0, so a dense floor is meaningless.
+    assert_eq!(
+        profile_for(QueryClass::Quote).min_relevance,
+        0.0,
+        "Quote keeps its dense-relevance floor OFF (dense weight is 0)",
+    );
+}
+
+#[test]
+fn only_the_associative_classes_exempt_graph_recovered_gold_from_the_floor() {
+    // MultiHop + Entity carry the "dense-OR-signal" hybrid exemption: graph/support-recovered
+    // gold (legitimately FAR in vector space) survives the 0.60 floor via Support/Graph. The
+    // dense-only classes carry an EMPTY exemption set, so their floor behaviour is byte-identical
+    // to the pre-hybrid dense-only gate.
+    for class in [QueryClass::MultiHop, QueryClass::Entity] {
+        assert_eq!(
+            profile_for(class).floor_exempt_signals,
+            &[Signal::Support, Signal::Graph],
+            "{class:?} exempts graph-recovered gold from the dense floor",
+        );
+    }
+    for class in [
+        QueryClass::SingleHopFactual,
+        QueryClass::Temporal,
+        QueryClass::Quote,
+    ] {
+        assert!(
+            profile_for(class).floor_exempt_signals.is_empty(),
+            "{class:?} is dense-only — no floor exemption",
+        );
+    }
+}
+
+#[test]
 fn signal_weights_accessor_maps_each_signal() {
     let p = profile_for(QueryClass::MultiHop);
     assert_eq!(p.weights.weight(Signal::Lexical), p.weights.lexical);
@@ -205,7 +257,31 @@ fn signal_weights_accessor_maps_each_signal() {
     assert_eq!(p.weights.weight(Signal::Dense), p.weights.dense);
     assert_eq!(p.weights.weight(Signal::Support), p.weights.support);
     assert_eq!(p.weights.weight(Signal::Graph), p.weights.graph);
+    assert_eq!(p.weights.weight(Signal::Authority), p.weights.authority);
     assert_eq!(p.weights.weight(Signal::Recency), p.weights.recency);
     assert_eq!(p.weights.weight(Signal::Importance), p.weights.importance);
     assert_eq!(p.weights.weight(Signal::Trust), p.weights.trust);
+}
+
+#[test]
+fn the_global_authority_prior_is_staged_off_in_every_profile() {
+    // R1 ships the global-authority fusion signal as inert plumbing: the mechanism (a seedless
+    // PageRank Store method + the Signal + the gated retriever block) is wired, but every class
+    // weights it at 0.0, so it is elided from fusion and never computed. Per the prove-before-flip
+    // directive (store memory 019ed336), the per-class weight is flipped on only once a
+    // graph-bearing benchmark shows a marginal lift — BEAM is episode-only and cannot measure it.
+    // This guard locks the OFF posture so an accidental flip is caught until that follow-up.
+    for class in [
+        QueryClass::SingleHopFactual,
+        QueryClass::MultiHop,
+        QueryClass::Temporal,
+        QueryClass::Entity,
+        QueryClass::Quote,
+    ] {
+        assert_eq!(
+            profile_for(class).weights.authority,
+            0.0,
+            "{class:?} stages the global-authority weight OFF pending a graph-bearing benchmark",
+        );
+    }
 }

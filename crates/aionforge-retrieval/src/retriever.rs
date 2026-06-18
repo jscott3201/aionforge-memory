@@ -13,10 +13,10 @@
 //! importance, and recency re-rank the surfaced set, the latter two only when the
 //! caller supplies a clock (05 §2).
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use aionforge_domain::authz::{Authorizer, DefaultAuthorizer};
 use aionforge_domain::contracts::{Embedder, Retriever};
@@ -26,16 +26,20 @@ use tracing::Instrument;
 
 use crate::bundle::{RecallBundle, RecallExplanation, StageTimings, render};
 use crate::error::RetrievalError;
-use crate::fusion::{DEFAULT_RRF_K, WeightedRanking, fuse};
+use crate::fusion::{FusionStrategy, WeightedRanking, WeightedRrf};
 use crate::precision::{derive_graph_seed, resolve_seed_entities};
 use crate::query::{RecallQuery, TemporalMode};
 use crate::rerank;
 use crate::router::{looks_like_source_anchor, profile_for, route};
 use crate::selection::{
-    bail_if_past, core_block_entries, effective_fanout, fact_dense_ranking, fact_graph_ranking,
-    fact_lexical_ranking, fact_support_ranking, lexical_anchor_ranking, select, trust_rankings,
+    bail_if_past, core_block_entries, effective_fanout, fact_authority_ranking, fact_dense_ranking,
+    fact_graph_ranking, fact_lexical_ranking, fact_support_ranking, lexical_anchor_ranking, select,
+    trust_rankings,
 };
-use crate::signals::{Signal, dense_ranking_for, embed_query, graph_ranking_for, lexical_ranking};
+use crate::signals::{
+    Signal, authority_ranking_for, dense_ranking_in_namespaces, embed_query, graph_ranking_for,
+    lexical_ranking_in_namespaces,
+};
 use crate::trace;
 
 /// The hard ceiling on [`RetrieverConfig::support_expansion_depth`] — the "bounded" half
@@ -78,6 +82,30 @@ pub struct RetrieverConfig {
     /// window, when cooling is enabled. In `(0, 1]`; out-of-range values are inert
     /// (the domain guard never zeroes a rank on misconfiguration).
     pub cooling_factor: f64,
+    /// The wall-clock budget applied to a recall whose caller left `RecallOptions::deadline`
+    /// unset (03 §8). `None` leaves an un-budgeted recall unbounded. This is the live cost
+    /// guard for the namespace-scoped episode scans: the scoped lexical/dense passes sweep
+    /// the reader's whole visible scope, and the engine's per-block cancellation only fires
+    /// when some deadline exists — so a deployment default here is what bounds a recall over a
+    /// large team namespace. An explicit per-query deadline always takes precedence (03 §6).
+    pub default_recall_budget: Option<Duration>,
+    /// An OPT-IN absolute relevance floor in `[0, 1]` on the dense cosine similarity (P0a).
+    /// `0.0` (the default) is OFF: no clamped similarity is below `0.0`, so the floor never
+    /// fires and the default recall path is byte-identical. When positive, a hit whose dense
+    /// similarity is below the floor — or which has no dense score at all (lexical/BM25-only)
+    /// — is dropped from the bundle, so an unrelated query may legitimately return empty. A
+    /// per-query [`RecallOptions::min_relevance`](crate::RecallOptions) overrides this. A soft knob: an out-of-range
+    /// value is inert (a floor `> 1` empties recall, a floor `< 0` never fires), matching the
+    /// `cooling_factor` posture — the user-facing config validates the range loudly instead.
+    pub min_relevance: f64,
+    /// An experiment/A-B override for the global-authority signal weight (R1). `None` (the
+    /// default) uses each class's profile weight — which is `0.0` everywhere until R1 is
+    /// activated, so the signal stays off and recall is byte-identical. `Some(w)` forces weight
+    /// `w` for the authority signal across classes, so a benchmark can sweep authority ON vs OFF
+    /// without editing the per-class profiles (the seam the graph-bearing benchmark and the
+    /// eventual R1 activation A/B use). Plays the same measurement-override role for the
+    /// authority weight that [`min_relevance`](Self::min_relevance) plays for the dense floor.
+    pub authority_weight: Option<f64>,
 }
 
 impl Default for RetrieverConfig {
@@ -90,8 +118,34 @@ impl Default for RetrieverConfig {
             semantic_half_life_secs: 31_536_000.0,
             cooling_enabled: false,
             cooling_factor: 0.5,
+            // A generous safety ceiling, not a tuning target: a healthy recall finishes in
+            // milliseconds, so 5s never trips a normal query but bounds the scoped scans on a
+            // busy store. The host overrides this from `[retrieval] recall_deadline_ms`.
+            default_recall_budget: Some(Duration::from_secs(5)),
+            // OFF by default: the floor never fires (no clamped similarity is below 0.0), so the
+            // default recall path is byte-identical. The host overrides this from
+            // `[retrieval] min_relevance`.
+            min_relevance: 0.0,
+            // None: use each class's profile authority weight (0.0 until R1 is activated), so the
+            // authority signal stays off by default. An experiment seam, not a host config knob.
+            authority_weight: None,
         }
     }
+}
+
+/// The honest absolute relevance for a dense hit: a cosine `distance` (lower = nearer) mapped to
+/// similarity `(1.0 - distance)` clamped to `[0, 1]`. The clamp keeps it in range whether the
+/// engine returns `1 - cos` (`[0, 2]`) or an already-normalized distance.
+///
+/// Returns `None` for a non-finite distance — a degenerate/zero-norm embedding the engine could
+/// not score. `f64::clamp` does NOT sanitize a `NaN` (`(1.0 - NaN).clamp(0,1)` is still `NaN`),
+/// and a `NaN` similarity would slip past the floor (`NaN < floor` is `false`, so it would be
+/// admitted as if relevant) and render `confidence="NaN"`. `None` is the honest "no dense
+/// evidence" outcome — treated as a lexical-only hit (no confidence rendered, dropped under an
+/// active floor) — matching the `is_finite` posture in `aionforge_domain`'s drift guard.
+fn dense_similarity_from_distance(distance: f64) -> Option<f64> {
+    let similarity = (1.0 - distance).clamp(0.0, 1.0);
+    similarity.is_finite().then_some(similarity)
 }
 
 /// A hybrid retriever over a shared store and an embedder.
@@ -138,7 +192,14 @@ impl<E: Embedder> HybridRetriever<E> {
 
     async fn run_inner(&self, query: RecallQuery) -> Result<RecallBundle, RetrievalError> {
         let started = Instant::now();
-        let deadline = query.options.deadline.map(|budget| started + budget);
+        // A per-query deadline wins; otherwise the deployment's default recall budget applies,
+        // so the scoped episode scans (and the engine's per-block cancellation) always run
+        // against some ceiling rather than open-ended on a busy store (03 §6, §8).
+        let deadline = query
+            .options
+            .deadline
+            .or(self.config.default_recall_budget)
+            .map(|budget| started + budget);
 
         // 1. Classify (or honor an override).
         let profile = trace::stage_span("classify").in_scope(|| {
@@ -148,6 +209,34 @@ impl<E: Embedder> HybridRetriever<E> {
                 .map_or_else(|| route(&query.text), profile_for)
         });
         let classify_ms = started.elapsed().as_millis();
+        bail_if_past(deadline)?;
+
+        // The reader's visible namespace set, computed UP FRONT so episode candidate
+        // generation can be scoped to it (06 §1, 03 §6). Unlike facts (which the current-
+        // support set already bounds), the episode lexical/dense scans would otherwise sweep
+        // every namespace and spend the per-signal fan-out on episodes the reader cannot see,
+        // then drop them in the post-fusion authorization filter — starving a reader whose
+        // namespace is a minority of the store. The admin reveal (07 §4) widens the set in
+        // lockstep with `include_system`; the assemble stage reuses this same `visible`.
+        let surface_system =
+            query.options.include_system && self.authorizer.may_surface_system(&query.principal);
+        let visible = {
+            let base = self.authorizer.visible_namespaces(&query.principal);
+            if surface_system {
+                base.with_system()
+            } else {
+                base
+            }
+        };
+        // The reader's visible namespaces — the scope the episode lexical, dense, and graph
+        // signals generate candidates within (06 §1, 03 §6). The lexical/dense signals push a
+        // `namespace IN [...]` predicate straight into the BM25/ANN scan (selene-db 1.3), so
+        // they never materialize the scope node-set. The graph signal needs the explicit
+        // episode node-set for `algo.pagerank`'s `result_nodes` (a node-list, not a predicate),
+        // so it materializes the scope lazily — only when it runs (see the graph block below).
+        let visible_namespaces = visible.namespaces();
+        // A tight recall budget can already be spent by here; bail before fanning the signals
+        // rather than only at the next stage boundary.
         bail_if_past(deadline)?;
 
         // 2. Run the signals the profile weights call for, over both episodes and facts.
@@ -161,6 +250,16 @@ impl<E: Embedder> HybridRetriever<E> {
         let mut rankings: Vec<WeightedRanking> = Vec::new();
         let mut signals_run: Vec<Signal> = Vec::new();
         let mut fact_nodes: HashSet<NodeId> = HashSet::new();
+        // The honest, absolute per-hit relevance proxy: dense cosine similarity keyed by node
+        // (P0a). Populated ONLY from the two true `Signal::Dense` rankings below — never the
+        // support/graph/trust signals, which produce rank-derived or non-cosine scores. The raw
+        // `RankedCandidate.score` for a dense hit is cosine DISTANCE (lower = nearer), so
+        // similarity = (1.0 - distance).clamp(0.0, 1.0). Built once here while the dense rankings
+        // still carry the raw distance, before the fuse() seam discards it. A node is unique
+        // within one kind's ranking and the episode/fact node-id spaces are disjoint, so the fill
+        // is order-independent (no nondeterminism). Empty when the embedder is down → every hit
+        // is then lexical-only and carries no confidence.
+        let mut dense_similarity: HashMap<NodeId, f64> = HashMap::new();
         let mut embedder_available = true;
 
         // Embed the query a single time, if any dense weight asks for it. A `None`
@@ -198,10 +297,13 @@ impl<E: Embedder> HybridRetriever<E> {
 
         if profile.weights.lexical > 0.0 {
             let _signal_span = trace::signal_span(Signal::Lexical, fanout).entered();
-            let episodes = lexical_ranking(
+            // Episodes are scoped to the reader's visible namespaces via a predicate-filtered
+            // BM25 scan (06 §1, 03 §6); facts ride their own current-support scoping below.
+            let episodes = lexical_ranking_in_namespaces(
                 &self.store,
                 SearchKind::Episode,
                 &query.text,
+                &visible_namespaces,
                 fanout,
                 deadline,
             )?;
@@ -236,12 +338,16 @@ impl<E: Embedder> HybridRetriever<E> {
 
         if let Some(embedding) = &query_embedding {
             let _signal_span = trace::signal_span(Signal::Dense, fanout).entered();
-            let episodes = dense_ranking_for(
+            // Episodes are scoped to the reader's visible namespaces via a predicate-filtered
+            // ANN scan (06 §1, 03 §6) — approximate candidate generation, exact-cosine rerank;
+            // the fact dense path keeps its current-support scoping and high-precision
+            // graph-seed composition below.
+            let episodes = dense_ranking_in_namespaces(
                 &self.store,
                 SearchKind::Episode,
                 embedding,
+                &visible_namespaces,
                 fanout,
-                profile.exact_rerank,
                 deadline,
             )?;
             // The high-precision default path (03 §4): for the factual/temporal-current
@@ -267,6 +373,15 @@ impl<E: Embedder> HybridRetriever<E> {
                 deadline,
             )?;
             fact_nodes.extend(facts.candidates.iter().map(|c| c.node));
+            // Capture the honest absolute similarity for every dense hit (both kinds) while the
+            // RankedCandidate.score still carries the raw cosine distance — before fusion drops it
+            // at the fuse() seam (P0a). A non-finite distance leaves the node absent (treated as
+            // lexical-only: no confidence rendered, dropped under an active floor).
+            for candidate in episodes.candidates.iter().chain(facts.candidates.iter()) {
+                if let Some(similarity) = dense_similarity_from_distance(candidate.score) {
+                    dense_similarity.insert(candidate.node, similarity);
+                }
+            }
             rankings.push(WeightedRanking::new(profile.weights.dense, episodes));
             rankings.push(WeightedRanking::new(profile.weights.dense, facts));
             signals_run.push(Signal::Dense);
@@ -316,8 +431,23 @@ impl<E: Embedder> HybridRetriever<E> {
                 resolve_seed_entities(&self.store, &query.text, query_embedding.as_ref())?
         {
             let _signal_span = trace::signal_span(Signal::Graph, fanout).entered();
-            let episodes =
-                graph_ranking_for(&self.store, SearchKind::Episode, &seeds, fanout, deadline)?;
+            // The graph signal scopes via `algo.pagerank`'s `result_nodes`, which takes an
+            // explicit node-list (not a predicate), so materialize the visible episode node-set
+            // here — lazily, only when the graph signal runs, rather than for every recall (the
+            // lexical/dense signals scope via the predicate filter instead). The intersect runs
+            // before the top-k truncation, so the graph fan-out is spent on in-scope episodes
+            // (03 §6).
+            let episode_scope = self
+                .store
+                .episode_nodes_in_namespaces(&visible_namespaces)?;
+            let episodes = graph_ranking_for(
+                &self.store,
+                SearchKind::Episode,
+                &seeds,
+                fanout,
+                Some(&episode_scope),
+                deadline,
+            )?;
             let facts = fact_graph_ranking(
                 &self.store,
                 &seeds,
@@ -329,6 +459,44 @@ impl<E: Embedder> HybridRetriever<E> {
             rankings.push(WeightedRanking::new(profile.weights.graph, episodes));
             rankings.push(WeightedRanking::new(profile.weights.graph, facts));
             signals_run.push(Signal::Graph);
+        }
+        bail_if_past(deadline)?;
+
+        // The global authority prior (R1): a query-INDEPENDENT, seedless undirected PageRank over
+        // the associative projection — a standing structural score for how well-connected each
+        // memory is, the topological complement to the non-structural decayed importance signal.
+        // Unlike the graph signal it needs no seed, so it is gated only on a non-zero per-class
+        // weight (`graph_expansion` is irrelevant — authority can serve the dense classes too).
+        // Every profile stages this weight at `0.0` for now (prove-before-flip, store memory
+        // `019ed336`; BEAM is episode-only and cannot measure authority lift), so this block is
+        // inert — no PageRank pass runs — until the activation follow-up flips a weight on. The
+        // `RetrieverConfig::authority_weight` override forces a weight for A-B measurement (the
+        // graph-bearing benchmark) without editing the per-class profiles.
+        let authority_weight = self
+            .config
+            .authority_weight
+            .unwrap_or(profile.weights.authority);
+        if authority_weight > 0.0 {
+            let _signal_span = trace::signal_span(Signal::Authority, fanout).entered();
+            // Like the graph signal, the episode side scopes via `algo.pagerank`'s `result_nodes`
+            // (the visible-namespace episode set, materialized lazily here only when the signal
+            // runs), while the fact side ranks the whole projection and is current-scoped.
+            let episode_scope = self
+                .store
+                .episode_nodes_in_namespaces(&visible_namespaces)?;
+            let episodes = authority_ranking_for(
+                &self.store,
+                SearchKind::Episode,
+                fanout,
+                Some(&episode_scope),
+                deadline,
+            )?;
+            let facts =
+                fact_authority_ranking(&self.store, current_facts.as_deref(), fanout, deadline)?;
+            fact_nodes.extend(facts.candidates.iter().map(|c| c.node));
+            rankings.push(WeightedRanking::new(authority_weight, episodes));
+            rankings.push(WeightedRanking::new(authority_weight, facts));
+            signals_run.push(Signal::Authority);
         }
         bail_if_past(deadline)?;
 
@@ -411,25 +579,22 @@ impl<E: Embedder> HybridRetriever<E> {
         bail_if_past(deadline)?;
 
         // 3. Fuse, then resolve, authorize, temporally filter, and diversity-cap. The
-        //    reader's visible set is computed once here, through the injected authority,
-        //    so every candidate is gated by the same O(1) membership check (06 §1).
+        //    reader's visible set was computed up front (it now also scopes episode candidate
+        //    generation); every candidate is still gated by the same O(1) membership check
+        //    here (06 §1). The admin reveal (07 §4, M6.T02) was folded into `visible` /
+        //    `surface_system` above, in lockstep with `include_system`.
         let assemble_started = Instant::now();
         let _assemble_span = trace::stage_span("assemble").entered();
-        let fused = fuse(&rankings, DEFAULT_RRF_K);
-        // The admin reveal (07 §4, M6.T02): system-role memories surface only when the
-        // caller requests it AND the injected authority grants the capability — the request
-        // flag alone is inert. When granted, BOTH exclusion gates lift in lockstep: the
-        // visible set admits the system namespace, and `admit_episode` skips the role gate.
-        let surface_system =
-            query.options.include_system && self.authorizer.may_surface_system(&query.principal);
-        let visible = {
-            let base = self.authorizer.visible_namespaces(&query.principal);
-            if surface_system {
-                base.with_system()
-            } else {
-                base
-            }
-        };
+        // Fusion dispatches through the FusionStrategy seam; WeightedRrf is the default
+        // (and diagnostic baseline), byte-identical to the prior `fuse(&rankings,
+        // DEFAULT_RRF_K)` call it replaces.
+        let fused = WeightedRrf::default().fuse(&rankings);
+        // The true candidate pool the selection examined — the distinct fused candidates
+        // across every signal, before authorization / temporal / supersession / diversity
+        // attrition. This is the honest "considered" count for the explanation: the gap
+        // between it and `returned` is the recall attrition an operator needs to see (it was
+        // previously reported as ~= returned, hiding it entirely; 03 §6).
+        let fused_pool = fused.len();
         // The identity pre-pass (05 §4): every live core block in the reader's
         // visible set is prepended ahead of the ranked results — identity is the
         // standing context a recall is read against, not a hit that competes on
@@ -439,6 +604,25 @@ impl<E: Embedder> HybridRetriever<E> {
         // gets all of it, honestly, rather than a silent truncation of a redline.
         let core = core_block_entries(&self.store, &visible)?;
         let ranked_budget = query.limit.saturating_sub(core.len());
+        // Floor precedence (most specific wins): an explicit per-query floor, else the
+        // routed class's per-class default (e.g. the factual class), else the
+        // deployment-wide default.
+        //
+        // The default floor is SKIPPED when the embedder is unavailable: it gates on dense
+        // similarity, so with no dense signal it would drop every (now lexical-only) hit
+        // and empty the recall — the opposite of the intended graceful degradation to
+        // lexical recall during an outage (03 §8.1). An explicit per-query floor is the
+        // caller's deliberate choice and is still honored.
+        let default_floor = if embedder_available {
+            if profile.min_relevance > 0.0 {
+                profile.min_relevance
+            } else {
+                self.config.min_relevance
+            }
+        } else {
+            0.0
+        };
+        let min_relevance = query.options.min_relevance.unwrap_or(default_floor);
         let selection = select(
             &self.store,
             &query,
@@ -446,13 +630,17 @@ impl<E: Embedder> HybridRetriever<E> {
             surface_system,
             fused,
             &fact_nodes,
+            &dense_similarity,
+            min_relevance,
+            profile.floor_exempt_signals,
             ranked_budget,
+            deadline,
         )?;
 
         // 4. Structured view stays in score order behind the identity prefix; the
         //    rendered view re-sorts by serialization id so the same set renders
         //    byte-identically (03 §6).
-        let considered = selection.considered + core.len();
+        let considered = fused_pool + core.len();
         let mut structured = core;
         structured.extend(selection.entries);
         let mut rendered_order = structured.clone();
@@ -499,5 +687,24 @@ impl<E: Embedder> Retriever for HybridRetriever<E> {
         query: Self::Query,
     ) -> impl Future<Output = Result<Self::Bundle, Self::Error>> + Send {
         self.run(query)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::dense_similarity_from_distance;
+
+    #[test]
+    fn dense_similarity_maps_distance_and_rejects_a_nan() {
+        // distance 0 (a hit at the query) => similarity 1.0; an orthogonal distance 1 => 0.0.
+        assert_eq!(dense_similarity_from_distance(0.0), Some(1.0));
+        assert_eq!(dense_similarity_from_distance(1.0), Some(0.0));
+        // An out-of-[0,1] distance (e.g. a 1-cos convention in [0, 2], or float drift below 0)
+        // is clamped rather than escaping the band.
+        assert_eq!(dense_similarity_from_distance(2.0), Some(0.0));
+        assert_eq!(dense_similarity_from_distance(-0.25), Some(1.0));
+        // The load-bearing guard: a non-finite distance is "no dense evidence" (None), NOT a
+        // NaN similarity that would slip past the floor and render confidence="NaN".
+        assert_eq!(dense_similarity_from_distance(f64::NAN), None);
     }
 }

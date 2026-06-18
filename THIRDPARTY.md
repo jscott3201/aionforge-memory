@@ -2243,6 +2243,7 @@ Used by:
 - parking_lot v0.12.5 — https://github.com/Amanieu/parking_lot
 - parking_lot_core v0.9.12 — https://github.com/Amanieu/parking_lot
 - rustc_version v0.4.1 — https://github.com/djc/rustc-version-rs
+- thread_local v1.1.9 — https://github.com/Amanieu/thread_local-rs
 
 ```
 Copyright (c) 2016 The Rust Project Developers
@@ -3254,6 +3255,66 @@ THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF ANY KIND, EXPRES
 ## MIT License (MIT)
 
 Used by:
+- sharded-slab v0.1.7 — https://github.com/hawkw/sharded-slab
+
+```
+Copyright (c) 2019 Eliza Weisman
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the &quot;Software&quot;), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+```
+
+---
+
+## MIT License (MIT)
+
+Used by:
+- matchers v0.2.0 — https://github.com/hawkw/matchers
+
+```
+Copyright (c) 2019 Eliza Weisman
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the &quot;Software&quot;), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+```
+
+---
+
+## MIT License (MIT)
+
+Used by:
 - bumpalo v3.20.3 — https://github.com/fitzgen/bumpalo
 
 ```
@@ -3328,6 +3389,9 @@ DEALINGS IN THE SOFTWARE.
 Used by:
 - tracing-attributes v0.1.31 — https://github.com/tokio-rs/tracing
 - tracing-core v0.1.36 — https://github.com/tokio-rs/tracing
+- tracing-log v0.2.0 — https://github.com/tokio-rs/tracing
+- tracing-serde v0.2.0 — https://github.com/tokio-rs/tracing
+- tracing-subscriber v0.3.23 — https://github.com/tokio-rs/tracing
 - tracing v0.1.44 — https://github.com/tokio-rs/tracing
 
 ```
@@ -4732,24 +4796,25 @@ SOFTWARE.
 ## MIT License (MIT)
 
 Used by:
-- aionforge v0.2.2 — https://github.com/jscott3201/aionforge-memory
-- aionforge-auth v0.2.2 — https://github.com/jscott3201/aionforge-memory
-- aionforge-capture v0.2.2 — https://github.com/jscott3201/aionforge-memory
-- aionforge-cli v0.2.2 — https://github.com/jscott3201/aionforge-memory
-- aionforge-config v0.2.2 — https://github.com/jscott3201/aionforge-memory
-- aionforge-consolidate v0.2.2 — https://github.com/jscott3201/aionforge-memory
-- aionforge-domain v0.2.2 — https://github.com/jscott3201/aionforge-memory
-- aionforge-embed v0.2.2 — https://github.com/jscott3201/aionforge-memory
-- aionforge-engine v0.2.2 — https://github.com/jscott3201/aionforge-memory
-- aionforge-forget v0.2.2 — https://github.com/jscott3201/aionforge-memory
-- aionforge-mcp v0.2.2 — https://github.com/jscott3201/aionforge-memory
-- aionforge-procedural v0.2.2 — https://github.com/jscott3201/aionforge-memory
-- aionforge-redteam v0.2.2 — https://github.com/jscott3201/aionforge-memory
-- aionforge-retrieval v0.2.2 — https://github.com/jscott3201/aionforge-memory
-- aionforge-security v0.2.2 — https://github.com/jscott3201/aionforge-memory
-- aionforge-store v0.2.2 — https://github.com/jscott3201/aionforge-memory
-- aionforge-trust v0.2.2 — https://github.com/jscott3201/aionforge-memory
-- aionforge-tui v0.2.2 — https://github.com/jscott3201/aionforge-memory
+- aionforge v0.3.0 — https://github.com/jscott3201/aionforge-memory
+- aionforge-auth v0.3.0 — https://github.com/jscott3201/aionforge-memory
+- aionforge-capture v0.3.0 — https://github.com/jscott3201/aionforge-memory
+- aionforge-cli v0.3.0 — https://github.com/jscott3201/aionforge-memory
+- aionforge-config v0.3.0 — https://github.com/jscott3201/aionforge-memory
+- aionforge-consolidate v0.3.0 — https://github.com/jscott3201/aionforge-memory
+- aionforge-domain v0.3.0 — https://github.com/jscott3201/aionforge-memory
+- aionforge-embed v0.3.0 — https://github.com/jscott3201/aionforge-memory
+- aionforge-engine v0.3.0 — https://github.com/jscott3201/aionforge-memory
+- aionforge-eval v0.3.0 — https://github.com/jscott3201/aionforge-memory
+- aionforge-forget v0.3.0 — https://github.com/jscott3201/aionforge-memory
+- aionforge-mcp v0.3.0 — https://github.com/jscott3201/aionforge-memory
+- aionforge-procedural v0.3.0 — https://github.com/jscott3201/aionforge-memory
+- aionforge-redteam v0.3.0 — https://github.com/jscott3201/aionforge-memory
+- aionforge-retrieval v0.3.0 — https://github.com/jscott3201/aionforge-memory
+- aionforge-security v0.3.0 — https://github.com/jscott3201/aionforge-memory
+- aionforge-store v0.3.0 — https://github.com/jscott3201/aionforge-memory
+- aionforge-trust v0.3.0 — https://github.com/jscott3201/aionforge-memory
+- aionforge-tui v0.3.0 — https://github.com/jscott3201/aionforge-memory
 - chrono v0.4.45 — https://github.com/chronotope/chrono
 - jni-macros v0.22.4 — https://github.com/jni-rs/jni-rs
 - jni-sys-macros v0.4.1 — https://github.com/jni-rs/jni-sys
@@ -4759,11 +4824,11 @@ Used by:
 - r-efi v5.3.0 — https://github.com/r-efi/r-efi
 - r-efi v6.0.0 — https://github.com/r-efi/r-efi
 - rustls-platform-verifier-android v0.1.1 — https://github.com/rustls/rustls-platform-verifier
-- selene-db-algorithms v1.2.0 — https://github.com/Aionforge-Labs/selene-db
-- selene-db-core v1.2.0 — https://github.com/Aionforge-Labs/selene-db
-- selene-db-gql v1.2.0 — https://github.com/Aionforge-Labs/selene-db
-- selene-db-graph v1.2.0 — https://github.com/Aionforge-Labs/selene-db
-- selene-db-persist v1.2.0 — https://github.com/Aionforge-Labs/selene-db
+- selene-db-algorithms v1.3.0 — https://github.com/jscott3201/selene-db
+- selene-db-core v1.3.0 — https://github.com/jscott3201/selene-db
+- selene-db-gql v1.3.0 — https://github.com/jscott3201/selene-db
+- selene-db-graph v1.3.0 — https://github.com/jscott3201/selene-db
+- selene-db-persist v1.3.0 — https://github.com/jscott3201/selene-db
 - sse-stream v0.2.3 — https://github.com/4t145/sse-stream/
 - wasip3 v0.4.0+wasi-0.3.0-rc-2026-01-06 — https://github.com/bytecodealliance/wasi-rs
 - wide v0.7.33 — https://github.com/Lokathor/wide
@@ -5755,6 +5820,39 @@ FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
 COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
 IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+```
+
+---
+
+## MIT License (MIT)
+
+Used by:
+- nu-ansi-term v0.50.3 — https://github.com/nushell/nu-ansi-term
+
+```
+The MIT License (MIT)
+
+Copyright (c) 2014 Benjamin Sago
+Copyright (c) 2021-2022 The Nushell Project Developers
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the &quot;Software&quot;), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 
 ```
 

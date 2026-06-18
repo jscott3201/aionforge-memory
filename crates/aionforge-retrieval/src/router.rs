@@ -52,6 +52,16 @@ pub struct SignalWeights {
     pub support: f64,
     /// Associative graph weight.
     pub graph: f64,
+    /// Global graph-authority weight (R1): the query-independent, seedless-PageRank structural
+    /// prior. STAGED OFF (`0.0`) in every class for now — the mechanism ships inert. Per the
+    /// prove-before-flip directive (store memory `019ed336`), the per-class weight is flipped on
+    /// only once a graph-bearing benchmark shows a marginal recall/nDCG lift (BEAM is
+    /// episode-only and cannot measure authority — its projection has no facts/`SUPPORTS`/
+    /// resolved entities). Intended post-validation targets: `LIGHT` on factual/temporal (where
+    /// `importance`, the non-structural prior, is already `LIGHT`), `MODERATE` on multi-hop/entity,
+    /// and OFF on quote (lexical-only). A `0.0` weight elides the signal from fusion, and the
+    /// retriever skips computing it entirely, so OFF costs nothing.
+    pub authority: f64,
     /// Recency weight.
     pub recency: f64,
     /// Effective-importance weight (05 §2, M5.T01).
@@ -70,6 +80,7 @@ impl SignalWeights {
             Signal::Dense => self.dense,
             Signal::Support => self.support,
             Signal::Graph => self.graph,
+            Signal::Authority => self.authority,
             Signal::Recency => self.recency,
             Signal::Importance => self.importance,
             Signal::Trust => self.trust,
@@ -97,6 +108,28 @@ pub struct RetrievalProfile {
     pub quote_phrase: bool,
     /// Whether to default the candidate kinds to facts (the factual class, 03 §3).
     pub restrict_to_fact_kinds: bool,
+    /// The per-class default absolute dense-relevance floor in `[0, 1]`.
+    ///
+    /// A hit whose dense cosine similarity is below the floor — or which has no dense
+    /// score at all (a lexical-only hit) — is dropped, so an off-topic query can
+    /// legitimately return empty. `0.0` is OFF (the floor never fires). The factual and
+    /// temporal classes floor at `0.60` (the `FACTUAL_FLOOR` / `TEMPORAL_FLOOR` consts —
+    /// off-topic-rejection wins measured on the eval harness); `MultiHop` and `Entity` floor at
+    /// `0.60` too (the `MULTIHOP_FLOOR` const), but with `floor_exempt_signals` set so the floor
+    /// gates only the dense-recovered branch and never amputates graph/support-recovered gold.
+    /// The dense-weight-zero classes (e.g. `Quote`) stay exempt at `0.0`, since a dense floor is
+    /// meaningless where the dense signal itself is off. A per-query
+    /// `RecallOptions::min_relevance` overrides this, which in turn overrides the
+    /// deployment-wide `RetrieverConfig::min_relevance`.
+    pub min_relevance: f64,
+    /// Signals that EXEMPT a candidate from the dense floor — the "dense-OR-signal" hybrid
+    /// admission (M3). A candidate scoring below `min_relevance` is still admitted if one of
+    /// these signals ranked it within the rank cap applied in `select()`. Empty for the
+    /// dense-only classes (factual, temporal, quote), so their floor behaviour is byte-identical;
+    /// `MultiHop` and `Entity` list the graph-recovery signals (`Support`, `Graph`) so the floor
+    /// never amputates graph/support-recovered associative gold, which is legitimately FAR in
+    /// vector space (dense cosine ~0). See the `multihop_entity_floor_probe` calibration.
+    pub floor_exempt_signals: &'static [Signal],
 }
 
 /// Weight levels the mode profiles are built from (03 §3 "heavy/moderate/light").
@@ -104,6 +137,70 @@ const HEAVY: f64 = 1.0;
 const MODERATE: f64 = 0.6;
 const LIGHT: f64 = 0.3;
 const OFF: f64 = 0.0;
+
+/// The per-class dense-relevance floor for a class that has not been calibrated yet — OFF
+/// (the floor never fires). Named so a non-zero value reads as a deliberate flip.
+const FLOOR_OFF: f64 = 0.0;
+
+/// The single-hop-factual dense-relevance floor: off-topic queries on the factual class
+/// return empty rather than surfacing a confident-but-unrelated hit.
+///
+/// `0.60` is the center of the clean separation window measured on the `aionforge-eval`
+/// off-topic-rejection harness against the production gemini-3072 embedder: across an
+/// everyday corpus and a harder project/domain-adjacent corpus, off-topic queries peaked
+/// at ~0.55 dense similarity while on-topic gold bottomed at ~0.64, and a floor at the
+/// midpoint rejected 100% of off-topic queries at zero false-rejection (recall@5 held at
+/// 1.0). The midpoint maximizes the margin on both sides, so it is robust to embedder
+/// drift. Re-measure with `cargo test -p aionforge-eval --test floor_sweep -- --ignored`
+/// after any embedder or dimension change (the value is gemini-cosine-calibrated).
+const FACTUAL_FLOOR: f64 = 0.60;
+
+/// The temporal dense-relevance floor: an off-topic temporal query ("when did X happen")
+/// returns empty rather than surfacing a confident-but-unrelated dated hit.
+///
+/// `0.60` is the center of the separation window measured on the `aionforge-eval`
+/// `beam_temporal_floor` runner (real gemini; 20 BEAM conversations; 76 temporal-routed
+/// positives vs 340 temporal off-topic queries): on-topic gold dense cosine sat at p10
+/// ~0.652 (3072) / ~0.658 (1536) while off-topic noise peaked at p90 ~0.586 / ~0.592, and a
+/// 0.60 floor rejected ~93% of off-topic temporal queries at ZERO *marginal* false-rejection
+/// (the residual is base-retrieval miss, present with the floor off; recall@10 actually rose
+/// via de-cluttering) at both dimensions. The value coincides with [`FACTUAL_FLOOR`] but is
+/// calibrated independently: temporal weights recency heavily, yet the floor gates on dense
+/// cosine *before* recency re-ranks, so the gold's dense distribution is what matters — and
+/// on BEAM it sits as high as factual gold. Re-measure with
+/// `cargo test -p aionforge-eval --test beam_temporal_floor -- --ignored` after any embedder
+/// or dimension change. NOTE: BEAM carries no supersession chains, so the valid-but-older
+/// low-dense-gold case (temporal's distinguishing risk) is untested here.
+const TEMPORAL_FLOOR: f64 = 0.60;
+
+/// The multi-hop / entity dense-relevance floor: an off-topic associative query
+/// ("why/how does X relate to Y") returns empty rather than surfacing a confident-but-
+/// unrelated hit on the *dense-recovered* branch.
+///
+/// `0.60` is the value the `aionforge-eval` `beam_multihop_floor` runner picked at ZERO
+/// *marginal* false-rejection (real gemini; 20 BEAM conversations; 156 MultiHop-routed
+/// positives vs 303 MultiHop-shaped off-topic queries): on-topic gold dense cosine sat at
+/// p10 ~0.653 (3072) / ~0.657 (1536) while off-topic noise peaked at p90 ~0.597 / ~0.608.
+/// The robust separation window suggested ~0.625, but the marginal-false-rejection sweep
+/// put the cost edge one notch higher: 0.60 rejected 85–90% of off-topic MultiHop queries
+/// with recall@10 unchanged, while 0.65 began costing real recall (marg_fr 0.6–1.3%). The
+/// value coincides with [`FACTUAL_FLOOR`] / [`TEMPORAL_FLOOR`] but is calibrated
+/// independently — all three classes converge because it is the gemini embedder's natural
+/// on-topic/off-topic boundary on BEAM-shaped queries.
+///
+/// CRITICAL: this floor governs ONLY the dense-recovered branch. Graph/support-recovered
+/// associative gold — which is legitimately FAR in vector space (dense cosine ~0) — is
+/// protected by `floor_exempt_signals` (`Support`, `Graph`) regardless of this value, so a
+/// conservative floor never amputates the multi-hop evidence the class exists to surface.
+/// On episode-only stores (graph idle) the floor is the sole gate, which is why it stays at
+/// the zero-marginal-cost value rather than the more aggressive separation midpoint.
+///
+/// `Entity` INHERITS this value: BEAM routes ~0 probes to the entity class, so it is
+/// uncalibratable on this harness; entity gold is the same dense-or-graph mixture, so the
+/// multi-hop floor is the principled default. Re-measure with
+/// `cargo test -p aionforge-eval --test beam_multihop_floor -- --ignored` after any embedder
+/// or dimension change, and split Entity out once an entity-routed eval corpus exists.
+const MULTIHOP_FLOOR: f64 = 0.60;
 
 /// The default retrieval profile for a class (03 §3 mode-weight profiles).
 #[must_use]
@@ -113,12 +210,15 @@ pub fn profile_for(class: QueryClass) -> RetrievalProfile {
         // light recency.
         QueryClass::SingleHopFactual => RetrievalProfile {
             class,
+            min_relevance: FACTUAL_FLOOR,
+            floor_exempt_signals: &[],
             weights: SignalWeights {
                 lexical: HEAVY,
                 lexical_anchor: HEAVY,
                 dense: HEAVY,
                 support: OFF,
                 graph: LIGHT,
+                authority: OFF,
                 recency: LIGHT,
                 importance: LIGHT,
                 trust: HEAVY,
@@ -132,12 +232,15 @@ pub fn profile_for(class: QueryClass) -> RetrievalProfile {
         // associative: heavy dense + graph, light lexical, moderate trust, light recency.
         QueryClass::MultiHop => RetrievalProfile {
             class,
+            min_relevance: MULTIHOP_FLOOR,
+            floor_exempt_signals: &[Signal::Support, Signal::Graph],
             weights: SignalWeights {
                 lexical: LIGHT,
                 lexical_anchor: OFF,
                 dense: HEAVY,
                 support: MODERATE,
                 graph: HEAVY,
+                authority: OFF,
                 recency: LIGHT,
                 importance: LIGHT,
                 trust: MODERATE,
@@ -151,12 +254,15 @@ pub fn profile_for(class: QueryClass) -> RetrievalProfile {
         // recall: heavy recency + dense, moderate lexical, no graph, moderate trust.
         QueryClass::Temporal => RetrievalProfile {
             class,
+            min_relevance: TEMPORAL_FLOOR,
+            floor_exempt_signals: &[],
             weights: SignalWeights {
                 lexical: MODERATE,
                 lexical_anchor: OFF,
                 dense: HEAVY,
                 support: OFF,
                 graph: OFF,
+                authority: OFF,
                 recency: HEAVY,
                 importance: LIGHT,
                 trust: MODERATE,
@@ -170,12 +276,15 @@ pub fn profile_for(class: QueryClass) -> RetrievalProfile {
         // entity: heavy graph + moderate dense, lexical over aliases, no recency.
         QueryClass::Entity => RetrievalProfile {
             class,
+            min_relevance: MULTIHOP_FLOOR,
+            floor_exempt_signals: &[Signal::Support, Signal::Graph],
             weights: SignalWeights {
                 lexical: MODERATE,
                 lexical_anchor: OFF,
                 dense: MODERATE,
                 support: MODERATE,
                 graph: HEAVY,
+                authority: OFF,
                 recency: OFF,
                 importance: LIGHT,
                 trust: MODERATE,
@@ -189,12 +298,15 @@ pub fn profile_for(class: QueryClass) -> RetrievalProfile {
         // quote: lexical only, exact-phrase preference.
         QueryClass::Quote => RetrievalProfile {
             class,
+            min_relevance: FLOOR_OFF,
+            floor_exempt_signals: &[],
             weights: SignalWeights {
                 lexical: HEAVY,
                 lexical_anchor: HEAVY,
                 dense: OFF,
                 support: OFF,
                 graph: OFF,
+                authority: OFF,
                 recency: OFF,
                 importance: OFF,
                 trust: OFF,

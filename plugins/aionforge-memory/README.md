@@ -1,8 +1,9 @@
 # Aionforge Memory Plugin
 
-This plugin packages five small Agent Skills for an existing Aionforge Memory
+This plugin packages six small Agent Skills for an existing Aionforge Memory
 MCP server:
 
+- `memory-bootstrap`: one-time, idempotent cold-start setup that seeds a foundational substrate for a fresh project — identity, conventions, architecture decisions, and a work-item backlog skeleton — so the next session recalls real context instead of starting empty.
 - `memory-loop`: use memory through a whole task: recall first, capture and track work during it, and finish with a handoff.
 - `memory-recall`: search durable memory before planning, coding, review, debugging, release, or support work.
 - `memory-capture`: write decisions, handoffs, project facts, validation outcomes, corrections, and failure patterns *as they happen*.
@@ -22,6 +23,7 @@ For Claude Code, the plugin also ships:
 
 - `aionforge-memory-steward`: a default main-thread agent that keeps recall, capture, work-tracking, and handoff in the task loop.
 - A `SessionStart` hook (`hooks/hooks.json`) that re-seeds the cadence into a fresh context after a startup, resume, or context compaction. It fires on the `startup|resume|compact` sources and injects a short reminder via `additionalContext`. (`PreCompact` is deliberately not used: it is blocking-only and cannot inject context, so it cannot deliver a reminder.)
+- `/aionforge-memory:memory-bootstrap`: one-time setup of a foundational memory substrate for a fresh project.
 - `/aionforge-memory:memory-session`: starts a memory-backed Claude Code task.
 - `/aionforge-memory:memory-handoff`: captures a durable end-of-session handoff.
 

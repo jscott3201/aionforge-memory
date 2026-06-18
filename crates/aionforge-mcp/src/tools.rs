@@ -31,6 +31,15 @@ use crate::validated::ValidatedPrincipal;
 const DEFAULT_LIMIT: usize = 10;
 /// The most hits a single search will return, so a response stays small.
 const MAX_LIMIT: usize = 100;
+/// The most candidates a single search will generate per signal before fusion (the recall
+/// fan-out). Decoupled from `MAX_LIMIT` so a caller can cast a wide net for recall while
+/// still returning a small bundle; capped so one query stays bounded.
+///
+/// This bounds the per-signal `k` (how many candidates fusion sees), not the namespace-scoped
+/// episode scan itself: the scoped lexical/dense passes still examine the reader's whole
+/// visible scope to pick their top-`k`. The wall-clock cost of that scan is bounded separately
+/// by the recall deadline ([`aionforge_config::RetrievalConfig::recall_deadline_ms`]).
+const MAX_FANOUT: usize = 1000;
 /// The most items a single `batch_capture` call accepts, so one call stays bounded.
 pub const MAX_BATCH_ITEMS: usize = 64;
 
@@ -68,8 +77,11 @@ pub struct CaptureToolParams {
         description = "Producing role: user, assistant, tool, system, or event (default user)."
     )]
     pub role: Option<String>,
-    /// The owning session id (a UUID), if any.
-    #[schemars(description = "The owning session id (a UUID), if any.")]
+    /// The owning session id (a UUID), if any. Set it to make this capture reconstructable via
+    /// session_manifest; a sessionless capture is invisible to it.
+    #[schemars(
+        description = "The owning session id (a UUID), if any. Set it to make this capture visible to session_manifest; sessionless captures are not."
+    )]
     pub session_id: Option<String>,
     /// Writer trust in [0, 1] (default 0.5).
     #[schemars(description = "Writer trust in [0, 1] (default 0.5).")]
@@ -115,8 +127,11 @@ pub struct BatchCaptureItem {
         description = "Event time as RFC3339 (e.g. 2026-06-07T12:00:00Z); defaults to capture time."
     )]
     pub captured_at: Option<String>,
-    /// The owning session id (a UUID), if any.
-    #[schemars(description = "The owning session id (a UUID), if any.")]
+    /// The owning session id (a UUID), if any. Set it to make this item reconstructable via
+    /// session_manifest; a sessionless capture is invisible to it.
+    #[schemars(
+        description = "The owning session id (a UUID), if any. Set it to make this capture visible to session_manifest; sessionless captures are not."
+    )]
     pub session_id: Option<String>,
     /// The id of a live memory this item replaces; consolidation evidence, not an immediate
     /// action. Must be the shared writer's own memory.
@@ -206,6 +221,22 @@ pub struct SearchToolParams {
         description = "Include episodes that have been superseded by a live replacement (default true)."
     )]
     pub include_superseded: Option<bool>,
+    /// Candidate fan-out per signal before fusion — the recall knob, decoupled from `limit`.
+    /// Raise it to widen recall (cast a wider net) without inflating the returned bundle;
+    /// omit to use the deployment default. An explicit value must be `>= 1` (a `0` is
+    /// rejected rather than silently treated as the default, since omitting it already
+    /// expresses that intent). Capped server-side.
+    #[schemars(
+        description = "Candidates generated per signal before fusion (recall fan-out), decoupled from limit. Higher = wider recall. Optional; omit for the deployment default, an explicit value must be >= 1. Capped server-side."
+    )]
+    pub fanout: Option<usize>,
+    /// Absolute relevance floor in `[0, 1]` on dense cosine similarity. Below-floor hits are
+    /// dropped, so an off-topic query may return empty. Omit for the deployment default. (A
+    /// missing `Option` field deserializes to `None`, matching the sibling `fanout` knob.)
+    #[schemars(
+        description = "Absolute relevance floor in [0,1] on dense cosine similarity; below-floor hits are dropped and an off-topic query may return empty. Omit for the deployment default (0=off)."
+    )]
+    pub min_relevance: Option<f64>,
 }
 
 /// Run the `capture` tool: stamp the event with `now`, capture it, and return a
@@ -233,6 +264,9 @@ pub async fn capture_tool<E: Embedder>(
     let model_family = params
         .model_family
         .unwrap_or_else(|| "mcp-client".to_string());
+    // Count the inbound memory content for the traffic heartbeat (the byte length only — the
+    // content itself is never logged).
+    crate::traffic::record_in(params.content.len() as u64);
     let request = build_capture_request(
         params.content,
         agent_id,
@@ -381,6 +415,8 @@ pub async fn batch_capture_tool<E: Embedder>(
     let mut lines: Vec<String> = Vec::with_capacity(params.items.len());
 
     for (index, item) in params.items.into_iter().enumerate() {
+        // Count each item's inbound memory content for the traffic heartbeat (length only).
+        crate::traffic::record_in(item.content.len() as u64);
         let request = build_capture_request(
             item.content,
             agent_id,
@@ -470,6 +506,34 @@ pub async fn search_tool<E: Embedder>(
     let mut query = RecallQuery::new(params.query, principal, limit);
     query.options.now = Some(now.clone());
     query.options.include_superseded = params.include_superseded.unwrap_or(true);
+    // The recall fan-out knob, capped so one query stays bounded. Decoupled from `limit`:
+    // a wide net for recall, a small returned bundle. Omitting `fanout` already means "use
+    // the deployment default" (the internal `0` sentinel), so an explicit `0` is a caller
+    // error rather than a second spelling of the default — reject it instead of silently
+    // absorbing it, which would hide the mistake.
+    if let Some(fanout) = params.fanout {
+        if fanout == 0 {
+            return Err(
+                "ERR_INVALID_FANOUT: fanout must be >= 1; omit it to use the deployment default"
+                    .to_string(),
+            );
+        }
+        query.options.fanout = fanout.min(MAX_FANOUT);
+    }
+    // The per-query absolute relevance floor on dense cosine similarity. Range-checked like the
+    // fanout knob: an out-of-range value (e.g. 2.0, or a negative) is a caller error rather than
+    // silently clamped, since omitting it already expresses "use the deployment default". A valid
+    // in-range floor drops below-floor hits, so an off-topic query may legitimately return empty
+    // (P0a).
+    if let Some(min_relevance) = params.min_relevance {
+        if !(0.0..=1.0).contains(&min_relevance) {
+            return Err(
+                "ERR_INVALID_MIN_RELEVANCE: min_relevance must be in [0,1]; omit to use the deployment default"
+                    .to_string(),
+            );
+        }
+        query.options.min_relevance = Some(min_relevance);
+    }
     let bundle = memory
         .search(query)
         .await

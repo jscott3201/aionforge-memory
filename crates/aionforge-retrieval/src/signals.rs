@@ -16,6 +16,7 @@ use std::time::Instant;
 
 use aionforge_domain::contracts::Embedder;
 use aionforge_domain::embedding::Embedding;
+use aionforge_domain::namespace::Namespace;
 use aionforge_store::{NodeId, SearchHit, SearchKind, Store};
 
 use crate::error::RetrievalError;
@@ -44,6 +45,11 @@ pub enum Signal {
     Support,
     /// Associative graph expansion.
     Graph,
+    /// Global graph-authority prior (R1): a query-INDEPENDENT, seedless undirected PageRank
+    /// over the associative projection. Where [`Signal::Graph`] restarts mass on the query's
+    /// entities, this gives every memory a standing score for how well-connected it is in the
+    /// whole graph — the structural complement to the non-structural decayed [`Signal::Importance`].
+    Authority,
     /// Recency ranking over ingestion time.
     Recency,
     /// Effective-importance ranking over the decayed write-time importance (05 §2,
@@ -157,15 +163,19 @@ pub(crate) fn dense_ranking_for(
 }
 
 /// Rank a kind by associative proximity to seed entities, via native Personalized
-/// PageRank (03 §1 graph). Mass restarts on the `seeds` (the entities the query names)
-/// and spreads across the associative graph — `MENTIONS`/`ABOUT`/`SUPPORTS` — so the
-/// returned nodes are the `kind` instances closest to those entities. Best-first by
-/// PageRank score; rank fusion reads only the position, so the score scale never has to
-/// be reconciled with the cosine/BM25 signals.
+/// PageRank (03 §1 graph), optionally SCOPED to an explicit candidate node set. Mass
+/// restarts on the `seeds` (the entities the query names) and spreads across the associative
+/// graph — `MENTIONS`/`ABOUT`/`SUPPORTS` — so the returned nodes are the `kind` instances
+/// closest to those entities. Best-first by PageRank score; rank fusion reads only the
+/// position, so the score scale never has to be reconciled with the cosine/BM25 signals.
 ///
-/// This is the unscoped half the retriever uses for episodes; the fact side is
-/// current-scoped by the retriever before fusion (a PageRank reach is not bounded to the
-/// current-support set the way the lexical/dense fact searches are).
+/// `result_nodes` is `Some(scope)` to restrict the ranking to the reader's visible-namespace
+/// records of `kind` (the episode side, 03 §6 namespace scoping): the scope intersects inside
+/// the procedure before the top-`k` truncation, so the graph fan-out lands on in-scope
+/// episodes instead of a cross-namespace top-`k` that `select` would mostly discard. `None`
+/// ranks over the whole projection (the fact side, which the retriever current-scopes after
+/// fusion — a PageRank reach is not bounded to the current-support set the way the
+/// lexical/dense fact searches are).
 ///
 /// # Errors
 /// Returns [`RetrievalError`] if the PageRank call fails.
@@ -174,12 +184,102 @@ pub(crate) fn graph_ranking_for(
     kind: SearchKind,
     seeds: &[NodeId],
     k: usize,
+    result_nodes: Option<&[NodeId]>,
     deadline: Option<Instant>,
 ) -> Result<SignalRanking, RetrievalError> {
     Ok(ranking_from_hits(
         Signal::Graph,
-        store.personalized_pagerank_within(kind, seeds, k, deadline)?,
+        store.personalized_pagerank_within(kind, seeds, k, result_nodes, deadline)?,
     ))
+}
+
+/// Rank a kind by global graph authority — a query-INDEPENDENT, seedless undirected PageRank
+/// over the associative projection (03 §1 authority, R1), optionally SCOPED to an explicit
+/// candidate node set.
+///
+/// The seedless complement to [`graph_ranking_for`]: instead of restarting mass on the query's
+/// entities, it teleports uniformly, so the ranking is the kind's most globally well-connected
+/// nodes — a standing structural prior, the same for every query. `result_nodes` carries the
+/// reader's visible-namespace scope exactly as the graph signal does (the episode side, 03 §6),
+/// intersected inside the procedure before the top-`k` truncation; `None` ranks the whole
+/// projection (the fact side, which the retriever current-scopes after fusion). Best-first by
+/// PageRank score; rank fusion reads only position, so the score scale is never reconciled with
+/// the cosine/BM25 signals.
+///
+/// # Errors
+/// Returns [`RetrievalError`] if the PageRank call fails.
+pub(crate) fn authority_ranking_for(
+    store: &Store,
+    kind: SearchKind,
+    k: usize,
+    result_nodes: Option<&[NodeId]>,
+    deadline: Option<Instant>,
+) -> Result<SignalRanking, RetrievalError> {
+    Ok(ranking_from_hits(
+        Signal::Authority,
+        store.graph_authority(kind, k, result_nodes, deadline)?,
+    ))
+}
+
+/// Rank a kind's text index against the query with native BM25, SCOPED to the reader's
+/// visible namespaces (03 §1 lexical, §6 namespace scoping).
+///
+/// The namespace-scoped episode counterpart of [`lexical_ranking`]: it pushes a
+/// `namespace IN namespaces` predicate into the BM25 scan (selene-db 1.3
+/// `filter_property`/`filter_values`) so only the reader's visible-namespace records are
+/// scored, and the top-`k` come straight from the index — no scope node-set is materialized
+/// first. BM25 is exact either way; the predicate narrows which nodes are scored. An empty
+/// `namespaces` short-circuits to an empty ranking (the reader has no scope), avoiding an
+/// empty-filter engine call.
+///
+/// `deadline` bounds the scan: the visible scope can span an entire busy namespace, so —
+/// unlike the current-support-bounded fact lexical path — this scan needs the same
+/// cancellation budget the unscoped [`lexical_ranking`] carries (03 §6, §8).
+///
+/// # Errors
+/// Returns [`RetrievalError`] if the scoped BM25 search fails.
+pub(crate) fn lexical_ranking_in_namespaces(
+    store: &Store,
+    kind: SearchKind,
+    query: &str,
+    namespaces: &[Namespace],
+    k: usize,
+    deadline: Option<Instant>,
+) -> Result<SignalRanking, RetrievalError> {
+    if namespaces.is_empty() {
+        return Ok(ranking_from_hits(Signal::Lexical, Vec::new()));
+    }
+    let hits = store.text_search_in_namespaces(kind, query, namespaces, k, deadline)?;
+    Ok(ranking_from_hits(Signal::Lexical, hits))
+}
+
+/// Rank a kind by dense similarity to the query, SCOPED to the reader's visible namespaces
+/// via predicate-filtered ANN search (03 §1 dense, §6 namespace scoping).
+///
+/// The namespace-scoped episode counterpart of [`dense_ranking_for`]: it pushes a
+/// `namespace IN namespaces` predicate into the ANN traversal (selene-db 1.3
+/// `filter_property`/`filter_values`), so the engine admits only visible-namespace records
+/// during the HNSW/IVF walk and reranks the survivors with exact cosine — the fan-out lands on
+/// in-scope records without first materializing the scope node-set. Unlike the prior
+/// exact-over-the-whole-scope path, this is an ANN search (approximate candidate generation,
+/// exact-cosine rerank), so recall rides the engine's filtered-ANN quality. An empty
+/// `namespaces` short-circuits to an empty ranking.
+///
+/// # Errors
+/// Returns [`RetrievalError`] if the scoped vector search fails.
+pub(crate) fn dense_ranking_in_namespaces(
+    store: &Store,
+    kind: SearchKind,
+    embedding: &Embedding,
+    namespaces: &[Namespace],
+    k: usize,
+    deadline: Option<Instant>,
+) -> Result<SignalRanking, RetrievalError> {
+    if namespaces.is_empty() {
+        return Ok(ranking_from_hits(Signal::Dense, Vec::new()));
+    }
+    let hits = store.vector_search_ann_in_namespaces(kind, embedding, namespaces, k, deadline)?;
+    Ok(ranking_from_hits(Signal::Dense, hits))
 }
 
 /// Run approximate vector search and, when `exact_rerank` is set, refine the retrieved

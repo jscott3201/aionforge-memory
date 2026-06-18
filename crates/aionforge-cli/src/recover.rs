@@ -36,7 +36,7 @@ fn run_with_config(
             wal_path,
         });
     }
-    let store = match Store::recover(config.data_dir(), config.store_config()) {
+    let store = match Store::recover(config.data_dir(), config.store_config(), &now) {
         Ok(store) => Arc::new(store),
         Err(error) => {
             let rendered = doctor::render_unavailable(

@@ -8,8 +8,11 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use aionforge_consolidate::{ConsolidationConfig, Consolidator, NoopPass};
+use aionforge_consolidate::{
+    ConsolidationConfig, Consolidator, NoopPass, STAGE_DETECTION, STAGE_SUMMARIZATION, StageProfile,
+};
 use aionforge_domain::nodes::episodic::ConsolidationState;
+use aionforge_domain::time::Timestamp;
 use aionforge_store::{BoundQuery, QueryResult, Store, Value};
 
 use common::*;
@@ -80,7 +83,7 @@ async fn consolidation_resumes_after_restart_without_reprocessing() {
     }
 
     // Recover from the WAL alone and resume.
-    let store = Arc::new(Store::recover(&dir, store_config()).expect("recover"));
+    let store = Arc::new(Store::recover(&dir, store_config(), &Timestamp::now()).expect("recover"));
     let cursor = store
         .load_consolidation_cursor()
         .expect("load")
@@ -444,7 +447,7 @@ async fn an_interrupted_in_progress_episode_recovers_across_a_restart() {
     };
 
     // Recover from the WAL alone: the in_progress marker is durable.
-    let store = Arc::new(Store::recover(&dir, store_config()).expect("recover"));
+    let store = Arc::new(Store::recover(&dir, store_config(), &Timestamp::now()).expect("recover"));
     assert_eq!(
         store.consolidation_lag().expect("lag").episodes_pending,
         1,
@@ -514,7 +517,7 @@ async fn transient_failure_attempts_persist_across_restart_and_escalate() {
     }
 
     // Recover from the WAL alone: the two prior failure audits are durable.
-    let store = Arc::new(Store::recover(&dir, store_config()).expect("recover"));
+    let store = Arc::new(Store::recover(&dir, store_config(), &Timestamp::now()).expect("recover"));
     let mut consolidator = Consolidator::with_clock(
         store.clone(),
         ConsolidationConfig {
@@ -617,6 +620,135 @@ async fn the_background_loop_consolidates_until_shutdown() {
     assert!(
         drained,
         "the spawned loop consolidated the episode on its own"
+    );
+}
+
+#[tokio::test]
+async fn a_tick_exposes_the_per_stage_profile_and_distinguishes_zero_from_rejected() {
+    // The verbose-profile contract: a stage that ran but saw nothing
+    // (candidates_considered == 0) must be distinguishable from a stage that saw candidates
+    // and rejected them all (candidates_considered > 0, derived == 0, rejected_by_guard > 0).
+    let store = in_memory();
+    insert_episode(&store, "one", 1);
+
+    let mut consolidator = Consolidator::with_clock(store.clone(), config(), fixed_clock());
+    consolidator.register(Box::new(ProfilingPass {
+        stages: vec![
+            // Detection ran but had no input.
+            StageProfile::enabled(STAGE_DETECTION, 0, 0, 0, 0, 0),
+            // Summarization saw three clusters and the guard rejected every one.
+            StageProfile::enabled(STAGE_SUMMARIZATION, 3, 0, 0, 0, 3),
+        ],
+    }));
+
+    let report = consolidator.tick_once().await.expect("tick");
+    assert_eq!(report.consolidated, 1);
+
+    let detection = report
+        .profile
+        .stages()
+        .iter()
+        .find(|s| s.stage == STAGE_DETECTION)
+        .copied()
+        .expect("detection stage present in the profile");
+    assert!(detection.enabled, "detection ran");
+    assert_eq!(
+        detection.candidates_considered, 0,
+        "detection saw no candidates"
+    );
+    assert_eq!(detection.rejected_by_guard, 0);
+
+    let summarization = report
+        .profile
+        .stages()
+        .iter()
+        .find(|s| s.stage == STAGE_SUMMARIZATION)
+        .copied()
+        .expect("summarization stage present in the profile");
+    assert!(summarization.enabled, "summarization ran");
+    assert_eq!(
+        summarization.candidates_considered, 3,
+        "summarization considered three clusters"
+    );
+    assert_eq!(summarization.derived, 0, "but wrote no note");
+    assert_eq!(
+        summarization.rejected_by_guard, 3,
+        "because the detail-retention guard rejected all three"
+    );
+
+    // The two outcomes are genuinely distinct, which is the whole point of the profile.
+    assert_ne!(
+        detection.candidates_considered, summarization.candidates_considered,
+        "ran-but-empty differs from saw-candidates-then-rejected"
+    );
+}
+
+#[tokio::test]
+async fn the_profile_accumulates_counts_across_a_multi_episode_tick() {
+    // One ProfilingPass reporting the same stage over three episodes in a single tick sums
+    // into one accumulated stage profile (deterministic, count-only accumulation).
+    let store = in_memory();
+    insert_episode(&store, "one", 1);
+    insert_episode(&store, "two", 2);
+    insert_episode(&store, "three", 3);
+
+    let mut consolidator = Consolidator::with_clock(store.clone(), config(), fixed_clock());
+    consolidator.register(Box::new(ProfilingPass {
+        stages: vec![StageProfile::enabled(STAGE_DETECTION, 2, 1, 0, 1, 0)],
+    }));
+
+    let report = consolidator.tick_once().await.expect("tick");
+    assert_eq!(report.consolidated, 3);
+
+    let detection = report
+        .profile
+        .stages()
+        .iter()
+        .find(|s| s.stage == STAGE_DETECTION)
+        .copied()
+        .expect("detection stage present");
+    assert_eq!(
+        detection.candidates_considered, 6,
+        "2 candidates x 3 episodes accumulate"
+    );
+    assert_eq!(detection.derived, 3, "1 derived x 3 episodes accumulate");
+    assert_eq!(
+        detection.quarantined, 3,
+        "1 quarantined x 3 episodes accumulate"
+    );
+}
+
+#[tokio::test]
+async fn a_failed_episode_contributes_no_profile_counts() {
+    // Only a committed episode's passes ran to completion; a transiently-failed episode must
+    // not leak partial counts into the tick profile.
+    let store = in_memory();
+    insert_episode(&store, "doomed", 1);
+    let mut consolidator = Consolidator::with_clock(store.clone(), config(), fixed_clock());
+    consolidator.register(Box::new(AlwaysFailPass { fatal: false }));
+
+    let report = consolidator.tick_once().await.expect("tick");
+    assert_eq!(report.retried, 1);
+    assert!(
+        report.profile.is_empty(),
+        "a failed episode leaves the tick profile empty"
+    );
+}
+
+#[tokio::test]
+async fn a_noop_only_tick_leaves_the_profile_empty() {
+    // A pass that reports no stage (NoopPass) consolidates without populating the profile, so
+    // an empty profile is a faithful "nothing profiled this tick" signal.
+    let store = in_memory();
+    insert_episode(&store, "one", 1);
+    let mut consolidator = Consolidator::with_clock(store.clone(), config(), fixed_clock());
+    consolidator.register(Box::new(NoopPass));
+
+    let report = consolidator.tick_once().await.expect("tick");
+    assert_eq!(report.consolidated, 1);
+    assert!(
+        report.profile.is_empty(),
+        "an unprofiled pass leaves the tick profile empty"
     );
 }
 

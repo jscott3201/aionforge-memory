@@ -167,6 +167,76 @@ fn undirected_pagerank_spreads_entity_seed_and_filters_by_kind() {
 }
 
 #[test]
+fn result_nodes_scopes_the_ranking_to_the_visible_set() {
+    let store = store();
+
+    // One entity with two facts ABOUT it; the seed reaches both (undirected spreading).
+    let ent = entity("aionforge");
+    let e_node = store.insert_entity(&ent).expect("insert entity");
+    let f1 = store
+        .assert_fact(
+            &fact(
+                ent.identity.id,
+                "is",
+                ObjectValue::Text("a memory substrate".to_string()),
+                "aionforge is a memory substrate",
+            ),
+            e_node,
+            &open_window("2026-06-06T09:30:00-05:00[America/Chicago]"),
+        )
+        .expect("assert fact 1");
+    let f2 = store
+        .assert_fact(
+            &fact(
+                ent.identity.id,
+                "uses",
+                ObjectValue::Text("selene".to_string()),
+                "aionforge uses selene",
+            ),
+            e_node,
+            &open_window("2026-06-06T09:31:00-05:00[America/Chicago]"),
+        )
+        .expect("assert fact 2");
+
+    // `None`: unscoped — both facts rank (the baseline this scopes down from).
+    let unscoped = store
+        .personalized_pagerank_within(SearchKind::Fact, &[e_node], 10, None, None)
+        .expect("unscoped");
+    assert_eq!(
+        nodes_of(&unscoped),
+        sorted(vec![f1, f2]),
+        "None ranks every in-projection fact the seed reaches",
+    );
+
+    // `Some(scope)`: the ranking is restricted to the scope, even with `k` large enough for
+    // both facts — so f2 is dropped purely because it is out of scope, not truncated away.
+    // (The selene layer proves the intersection runs *before* the top-k truncation:
+    // `pagerank_result_nodes_intersects_before_limit`.)
+    let scoped = store
+        .personalized_pagerank_within(SearchKind::Fact, &[e_node], 10, Some(&[f1]), None)
+        .expect("scoped to f1");
+    assert_eq!(
+        nodes_of(&scoped),
+        vec![f1],
+        "result_nodes restricts the ranking to the in-scope fact",
+    );
+    assert!(
+        scoped.iter().all(|hit| hit.score > 0.0),
+        "the in-scope fact keeps its positive personalized mass: {scoped:?}",
+    );
+
+    // `Some(empty)`: nothing is in scope (the reader has no visible record) — an empty
+    // ranking, distinct from `None`'s unscoped ranking.
+    let empty_scope = store
+        .personalized_pagerank_within(SearchKind::Fact, &[e_node], 10, Some(&[]), None)
+        .expect("empty scope");
+    assert!(
+        empty_scope.is_empty(),
+        "Some(empty) yields an empty ranking, not the unscoped one: {empty_scope:?}",
+    );
+}
+
+#[test]
 fn mass_spreads_across_support_chains_and_skips_disconnected_facts() {
     let store = store();
 
@@ -481,5 +551,268 @@ fn a_seed_outside_the_projection_is_an_error() {
             .personalized_pagerank(SearchKind::Fact, &[scope], 10)
             .is_err(),
         "seeding on a node outside the associative projection is an error",
+    );
+}
+
+#[test]
+fn global_authority_is_seedless_and_ranks_connected_facts_over_isolated_ones() {
+    let store = store();
+
+    // A well-connected "hub" component: a hub fact ABOUT the hub entity, supported by three
+    // other facts (so the hub fact has the highest degree in the graph). And a disconnected
+    // "leaf" component: a single fact ABOUT its own entity, nothing else.
+    let e_hub = entity("hub");
+    let e_hub_node = store.insert_entity(&e_hub).expect("insert hub entity");
+    let e_leaf = entity("leaf");
+    let e_leaf_node = store.insert_entity(&e_leaf).expect("insert leaf entity");
+
+    let hub_fact = fact(
+        e_hub.identity.id,
+        "is",
+        ObjectValue::Text("central".to_string()),
+        "the hub fact is central",
+    );
+    let hub_fact_id = hub_fact.identity.id;
+    let hub_node = store
+        .assert_fact(
+            &hub_fact,
+            e_hub_node,
+            &open_window("2026-06-06T09:30:00-05:00[America/Chicago]"),
+        )
+        .expect("assert hub fact");
+
+    for (tag, minute) in [("a", "31"), ("b", "32"), ("c", "33")] {
+        let supporter = fact(
+            e_hub.identity.id,
+            "supports",
+            ObjectValue::Text(format!("evidence {tag}")),
+            &format!("evidence {tag} supports the hub"),
+        );
+        let supporter_id = supporter.identity.id;
+        store
+            .assert_fact(
+                &supporter,
+                e_hub_node,
+                &open_window(&format!("2026-06-06T09:{minute}:00-05:00[America/Chicago]")),
+            )
+            .expect("assert supporter fact");
+        support_edge(&store, &supporter_id, &hub_fact_id);
+    }
+
+    let leaf_fact = fact(
+        e_leaf.identity.id,
+        "is",
+        ObjectValue::Text("isolated".to_string()),
+        "the leaf fact is isolated",
+    );
+    let leaf_node = store
+        .assert_fact(
+            &leaf_fact,
+            e_leaf_node,
+            &open_window("2026-06-06T09:34:00-05:00[America/Chicago]"),
+        )
+        .expect("assert leaf fact");
+
+    // The defining contrast with the personalized signal: with no seeds the personalized
+    // pass is empty, but the global authority pass ranks the whole graph (uniform teleport,
+    // not a personalization root). Both run the same undirected projection.
+    let authority = store
+        .graph_authority(SearchKind::Fact, 10, None, None)
+        .expect("global authority over facts");
+    assert!(
+        !authority.is_empty(),
+        "seedless global PageRank ranks the whole graph, not nothing",
+    );
+    assert!(
+        store
+            .personalized_pagerank(SearchKind::Fact, &[], 10)
+            .expect("empty seeds are not an error")
+            .is_empty(),
+        "the personalized signal is empty without seeds — authority is the seedless complement",
+    );
+
+    // The query-independent prior favors structural connectedness: the high-degree hub fact
+    // carries the top authority and outranks the degree-one isolated leaf fact.
+    let score_of = |node: NodeId| {
+        authority
+            .iter()
+            .find(|hit| hit.node == node)
+            .map(|h| h.score)
+    };
+    let hub_score = score_of(hub_node).expect("hub fact is ranked");
+    let leaf_score = score_of(leaf_node).expect("leaf fact is ranked");
+    assert!(
+        hub_score > leaf_score,
+        "the well-connected hub fact outranks the isolated leaf: {authority:?}",
+    );
+    assert_eq!(
+        authority[0].node, hub_node,
+        "the most-connected fact carries the top global authority: {authority:?}",
+    );
+    assert!(
+        authority.iter().all(|hit| hit.score > 0.0),
+        "uniform teleport gives every projection fact positive mass: {authority:?}",
+    );
+}
+
+#[test]
+fn global_authority_pushes_down_scope_limit_and_guards() {
+    let store = store();
+
+    let ent = entity("aionforge");
+    let e_node = store.insert_entity(&ent).expect("insert entity");
+    let f1 = store
+        .assert_fact(
+            &fact(
+                ent.identity.id,
+                "is",
+                ObjectValue::Text("a memory substrate".to_string()),
+                "aionforge is a memory substrate",
+            ),
+            e_node,
+            &open_window("2026-06-06T09:30:00-05:00[America/Chicago]"),
+        )
+        .expect("assert fact 1");
+    store
+        .assert_fact(
+            &fact(
+                ent.identity.id,
+                "uses",
+                ObjectValue::Text("selene".to_string()),
+                "aionforge uses selene",
+            ),
+            e_node,
+            &open_window("2026-06-06T09:31:00-05:00[America/Chicago]"),
+        )
+        .expect("assert fact 2");
+
+    // `result_nodes` restricts the global ranking to the visible scope, reusing pagerank's
+    // intersect-before-truncate pushdown exactly as the personalized path does.
+    let scoped = store
+        .graph_authority(SearchKind::Fact, 10, Some(&[f1]), None)
+        .expect("scoped authority");
+    assert_eq!(
+        nodes_of(&scoped),
+        vec![f1],
+        "result_nodes restricts the global ranking to the in-scope fact",
+    );
+
+    // `k == 0` and `Some(empty)` short-circuit to empty (the shared guards), without a
+    // seedless edge case — there is simply no scope/budget to rank.
+    assert!(
+        store
+            .graph_authority(SearchKind::Fact, 0, None, None)
+            .expect("k=0 is not an error")
+            .is_empty(),
+        "k=0 yields an empty ranking",
+    );
+    assert!(
+        store
+            .graph_authority(SearchKind::Fact, 10, Some(&[]), None)
+            .expect("empty scope is not an error")
+            .is_empty(),
+        "Some(empty) yields an empty ranking, not the unscoped one",
+    );
+}
+
+#[test]
+fn community_labels_group_an_associative_cluster_and_separate_disconnected_ones() {
+    let store = store();
+
+    // Two disconnected associative clusters: entity A with three facts ABOUT it, entity B with
+    // two. No edge bridges them, so they are different connected components — Louvain must place
+    // them in different communities, and the facts of one cluster in the same community.
+    let e_a = entity("alpha");
+    let a_node = store.insert_entity(&e_a).expect("insert entity A");
+    let mut a_facts = Vec::new();
+    for (tag, minute) in [("a1", "30"), ("a2", "31"), ("a3", "32")] {
+        a_facts.push(
+            store
+                .assert_fact(
+                    &fact(
+                        e_a.identity.id,
+                        "rel",
+                        ObjectValue::Text(format!("alpha detail {tag}")),
+                        &format!("alpha detail {tag}"),
+                    ),
+                    a_node,
+                    &open_window(&format!("2026-06-06T09:{minute}:00-05:00[America/Chicago]")),
+                )
+                .expect("assert A fact"),
+        );
+    }
+
+    let e_b = entity("beta");
+    let b_node = store.insert_entity(&e_b).expect("insert entity B");
+    let mut b_facts = Vec::new();
+    for (tag, minute) in [("b1", "33"), ("b2", "34")] {
+        b_facts.push(
+            store
+                .assert_fact(
+                    &fact(
+                        e_b.identity.id,
+                        "rel",
+                        ObjectValue::Text(format!("beta detail {tag}")),
+                        &format!("beta detail {tag}"),
+                    ),
+                    b_node,
+                    &open_window(&format!("2026-06-06T09:{minute}:00-05:00[America/Chicago]")),
+                )
+                .expect("assert B fact"),
+        );
+    }
+
+    let all: Vec<NodeId> = a_facts.iter().chain(b_facts.iter()).copied().collect();
+    let labels = store
+        .community_labels(&all, None)
+        .expect("community labels");
+
+    // Every requested fact is labeled.
+    assert_eq!(
+        labels.len(),
+        all.len(),
+        "every requested node is labeled: {labels:?}"
+    );
+    // The three facts of cluster A share one community; the two of cluster B share another.
+    let a_comm = labels[&a_facts[0]];
+    assert!(
+        a_facts.iter().all(|f| labels[f] == a_comm),
+        "cluster A's facts share one community: {labels:?}",
+    );
+    let b_comm = labels[&b_facts[0]];
+    assert!(
+        b_facts.iter().all(|f| labels[f] == b_comm),
+        "cluster B's facts share one community: {labels:?}",
+    );
+    // The disconnected clusters are different communities — the property the diversity cap needs.
+    assert_ne!(
+        a_comm, b_comm,
+        "disconnected associative clusters are distinct communities: {labels:?}",
+    );
+
+    // No GQL pushdown, so the Rust-side filter must return only the requested subset.
+    let one = store
+        .community_labels(&[a_facts[0]], None)
+        .expect("subset labels");
+    assert_eq!(
+        one.keys().copied().collect::<Vec<_>>(),
+        vec![a_facts[0]],
+        "the label map is filtered to exactly the requested nodes",
+    );
+
+    // Deterministic within a generation: a repeated call returns the same labels (so a recall's
+    // diversity constraint is reproducible).
+    let again = store
+        .community_labels(&all, None)
+        .expect("community labels again");
+    assert_eq!(labels, again, "Louvain labels are stable across calls");
+
+    // No nodes requested: short-circuit to an empty map without building the projection.
+    assert!(
+        store
+            .community_labels(&[], None)
+            .expect("empty request is not an error")
+            .is_empty(),
+        "an empty request yields an empty label map",
     );
 }

@@ -182,6 +182,12 @@ async fn pin_and_unpin_are_scoped_audited_and_idempotent() -> TestResult {
     let pin_audit = pin_kind_audit(&memory, &memory_id, alice, "pin");
     assert!(pin_audit.contains("count=1"), "{pin_audit}");
     assert!(pin_audit.contains("kind=pin"), "{pin_audit}");
+    // The P1 fix end-to-end: the audit row names the acting agent (Alice), not the substrate.
+    // This is the exact bug surface — principal.agent_id -> WritableMemory.actor -> audit.actor_id.
+    assert!(
+        pin_audit.contains(&format!("actor={alice}")),
+        "the pin audit is attributed to the acting agent: {pin_audit}"
+    );
 
     // Unpin lifts the stay and audits; a second unpin is an idempotent no-op.
     let unpinned = unpin_tool(
@@ -204,5 +210,9 @@ async fn pin_and_unpin_are_scoped_audited_and_idempotent() -> TestResult {
     let unpin_audit = pin_kind_audit(&memory, &memory_id, alice, "unpin");
     assert!(unpin_audit.contains("count=1"), "{unpin_audit}");
     assert!(unpin_audit.contains("kind=unpin"), "{unpin_audit}");
+    assert!(
+        unpin_audit.contains(&format!("actor={alice}")),
+        "the unpin audit is attributed to the acting agent: {unpin_audit}"
+    );
     Ok(())
 }

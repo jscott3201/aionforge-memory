@@ -1,10 +1,16 @@
-//! Native Personalized PageRank as an associative retrieval signal (03 §1 graph, M3.T01).
+//! Native PageRank as an associative retrieval signal (03 §1 graph, M3.T01) — both the
+//! query-seeded and the seedless-global passes over the same associative projection.
 //!
-//! Seeds PageRank on the entities a query mentions and reads back the facts and episodes
-//! that sit closest to them in the associative graph — `Episode -MENTIONS-> Entity`,
-//! `Fact -ABOUT-> Entity`, and `Fact|Episode -SUPPORTS-> Fact`. Retrieval (L1) gates this
-//! to the classes that benefit (multi-hop, entity) and fuses the per-kind ranking with the
-//! others.
+//! [`Store::personalized_pagerank_within`] seeds PageRank on the entities a query mentions
+//! and reads back the facts and episodes that sit closest to them in the associative graph —
+//! `Episode -MENTIONS-> Entity`, `Fact -ABOUT-> Entity`, and `Fact|Episode -SUPPORTS-> Fact`.
+//! Retrieval (L1) gates this to the classes that benefit (multi-hop, entity) and fuses the
+//! per-kind ranking with the others. [`Store::graph_authority`] runs the same projection
+//! *seedless* (uniform teleport) for a query-independent global authority prior; the two share
+//! one private `pagerank_within` core and differ only in the bound personalization.
+//! [`Store::community_labels`] runs native Louvain over the same projection to group nodes into
+//! associative communities — not a retrieval signal but a selection-stage diversity constraint
+//! (R2), so a recall can't return a cluster of near-redundant facts about one entity.
 //!
 //! ## Why undirected
 //! The associative schema points records *at* entities, so under natural directed PageRank
@@ -20,19 +26,26 @@
 //! call and dies with the session, so there is no cross-call cache to invalidate as the
 //! graph advances.
 //!
-//! ## Kind filtering and limit
-//! `algo.pagerank` takes a trailing `result_label` and `limit`: the procedure filters the
-//! scored nodes to the requested label and truncates to the top `k` by score before the rows
-//! cross back. So the ranking is exactly the top-`k` nodes of one [`SearchKind`], best-first,
-//! in a single bounded call — no full-graph transfer, no label scan, no Rust-side sort.
+//! ## Kind filtering, namespace scoping, and limit
+//! `algo.pagerank` takes trailing `result_label`, `limit`, and `result_nodes` arguments
+//! (selene-db 1.3): the procedure filters the scored nodes to the requested label, optionally
+//! intersects them with an explicit `result_nodes` set, then truncates to the top `k` by score
+//! — all before the rows cross back. The intersection runs before the truncation, so a
+//! `result_nodes` scope yields the top-`k` of the in-scope ranking, not the in-scope members of
+//! an already-truncated top-`k`. That ordering is what lets the retriever spend the graph
+//! fan-out on the reader's visible-namespace episodes rather than a cross-namespace top-`k` a
+//! post-fusion filter would mostly discard (03 §6 namespace scoping). So the ranking is exactly
+//! the top-`k` nodes of one [`SearchKind`] within an optional node scope, best-first, in a
+//! single bounded call — no full-graph transfer, no label scan, no Rust-side sort.
 
+use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 use selene_core::{NodeId, Value};
 
-use crate::convert::string_value;
+use crate::convert::{as_node_ref, string_value};
 use crate::error::StoreError;
-use crate::gql::BoundQuery;
+use crate::gql::{BoundQuery, QueryResult};
 use crate::search::{SearchHit, SearchKind, extract_hits, k_value};
 use crate::store::Store;
 
@@ -57,6 +70,10 @@ const SEED_WEIGHT: f64 = 1.0;
 /// PageRank traversal orientation: spread mass across each edge both ways so a seed entity
 /// reaches its facts and episodes (see the module "Why undirected" note).
 const ORIENTATION_UNDIRECTED: &str = "undirected";
+/// Louvain iteration cap — converges well within this on a memory-sized graph; matches
+/// selene's own default. Louvain is a single-pass, deterministic (spec §E30 sorted-candidate
+/// iteration) community assignment, so the labels are reproducible within a graph generation.
+const LOUVAIN_MAX_ITERATIONS: i64 = 50;
 
 impl Store {
     /// Personalized-PageRank a kind by associative proximity to `seeds` (M3.T01).
@@ -78,14 +95,23 @@ impl Store {
         seeds: &[NodeId],
         k: usize,
     ) -> Result<Vec<SearchHit>, StoreError> {
-        self.personalized_pagerank_within(kind, seeds, k, None)
+        self.personalized_pagerank_within(kind, seeds, k, None, None)
     }
 
-    /// [`Store::personalized_pagerank`] bounded by an optional recall deadline.
+    /// [`Store::personalized_pagerank`] scoped to an optional node set and bounded by an
+    /// optional recall deadline.
     ///
-    /// `None` is identical to [`Store::personalized_pagerank`]. A `Some(deadline)` lets
-    /// the retriever abort the projection-build + PageRank `CALL`s mid-statement when
-    /// the recall budget expires — the deadline rides the single shared session.
+    /// `result_nodes` is `Some(scope)` to restrict the ranking to an explicit node set — the
+    /// reader's visible-namespace records of `kind` (03 §6 namespace scoping) — or `None` to
+    /// rank over every projection node (the unscoped fact reach). The scope is intersected
+    /// inside `algo.pagerank` *before* the top-`k` truncation, so the fan-out is spent on
+    /// in-scope nodes rather than a cross-namespace top-`k`. `Some(empty)` is the
+    /// reader-has-no-visible-record case: it short-circuits to an empty ranking rather than
+    /// building a projection only to intersect to nothing — distinct from `None`.
+    ///
+    /// A `Some(deadline)` lets the retriever abort the projection-build + PageRank `CALL`s
+    /// mid-statement when the recall budget expires — the deadline rides the single shared
+    /// session; `None` runs unbounded.
     ///
     /// # Errors
     /// Returns [`StoreError`] if a seed is not in the projection, or the projection
@@ -95,41 +121,220 @@ impl Store {
         kind: SearchKind,
         seeds: &[NodeId],
         k: usize,
+        result_nodes: Option<&[NodeId]>,
         deadline: Option<Instant>,
     ) -> Result<Vec<SearchHit>, StoreError> {
-        if seeds.is_empty() || k == 0 {
+        if seeds.is_empty() {
+            // A graph signal needs a personalization root; no seeds means no associative prior,
+            // not a uniform PageRank fallback (that is [`Store::graph_authority`]'s job).
+            return Ok(Vec::new());
+        }
+        self.pagerank_within(
+            kind,
+            personalization_value(seeds),
+            k,
+            result_nodes,
+            deadline,
+        )
+    }
+
+    /// Globally rank a kind by undirected PageRank *authority* — a seedless, query-independent
+    /// structural prior (R1, the global-authority fusion signal).
+    ///
+    /// Where [`Store::personalized_pagerank_within`] restarts mass on a query's entities (so its
+    /// ranking answers "what is near *these* nodes"), this teleports uniformly: every projection
+    /// node gets a standing score for how well-connected it is in the *whole* associative graph.
+    /// It is the topological complement to the non-structural decayed-importance signal — a
+    /// memory wired into many supported facts and mentioned entities carries more standing
+    /// authority than an isolated one, regardless of the query.
+    ///
+    /// Seedless is the only difference from the personalized path: it binds `personalization`
+    /// (`$seeds`) to `NULL`, which `algo.pagerank` resolves to uniform teleport (classic global
+    /// PageRank). The `undirected` orientation is load-bearing here for the same reason as the
+    /// personalized signal — the schema points records *at* entities, so a natural-orientation
+    /// global PageRank would pool all authority at the entity sinks and starve the facts and
+    /// episodes this ranking returns. `result_label`/`limit`/`result_nodes` push the kind filter,
+    /// top-`k`, and visible-namespace scope into the procedure exactly as the personalized path
+    /// does, so a global authority pass is still one bounded call, not a full-graph transfer.
+    ///
+    /// Unlike the personalized signal, an empty result is not the seedless case (there are no
+    /// seeds) — it is the empty-store / `k == 0` / empty-scope case. Because uniform teleport
+    /// gives every projection node a positive floor, the `score > 0.0` cut in the shared core is
+    /// effectively a no-op here (no node has zero global mass); it stays for parity with the
+    /// personalized path, where it drops out-of-component nodes.
+    ///
+    /// This recomputes the identical ranking on every recall (the input is the whole graph, not
+    /// the query), so it pairs with a generation-keyed result cache — a separate store-side
+    /// follow-up — to avoid repeating the pass; without the cache it costs one `algo.pagerank`
+    /// per recall, the same order as the existing graph signal.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the projection build, the PageRank call, a bind, execution, or
+    /// the deadline fails.
+    pub fn graph_authority(
+        &self,
+        kind: SearchKind,
+        k: usize,
+        result_nodes: Option<&[NodeId]>,
+        deadline: Option<Instant>,
+    ) -> Result<Vec<SearchHit>, StoreError> {
+        // NULL personalization => uniform teleport => classic global (seedless) PageRank, per the
+        // `algo.pagerank` contract (`personalization` is nullable, default "NULL (uniform
+        // teleport)"). Everything else is the shared associative-projection PageRank core.
+        self.pagerank_within(kind, Value::Null, k, result_nodes, deadline)
+    }
+
+    /// The shared associative-projection PageRank core behind the personalized graph signal and
+    /// the global authority prior. `personalization` is the bound `$seeds` value — a `[node,
+    /// weight]` list for the personalized path, or `NULL` for the seedless/global path — and is
+    /// the *only* axis the two callers differ on.
+    fn pagerank_within(
+        &self,
+        kind: SearchKind,
+        personalization: Value,
+        k: usize,
+        result_nodes: Option<&[NodeId]>,
+        deadline: Option<Instant>,
+    ) -> Result<Vec<SearchHit>, StoreError> {
+        if k == 0 {
+            return Ok(Vec::new());
+        }
+        // An explicit-but-empty scope means "no node of this kind is in scope" (the reader has
+        // no visible record), which `algo.pagerank` would intersect to an empty result anyway.
+        // Short-circuit so a no-scope reader never pays for the projection build. This is the
+        // `Some(empty)` case only — `None` (unscoped) still ranks the whole projection.
+        if matches!(result_nodes, Some(scope) if scope.is_empty()) {
             return Ok(Vec::new());
         }
 
         // Build the ephemeral associative projection and PageRank over it in one session
         // (the projection is session-scoped). `result_label` filters the scored nodes to the
-        // requested kind and `limit` truncates to the top `k` by score inside the procedure;
-        // the `WHERE score > 0.0` yield-filter then drops any node outside the seed's
-        // connected component (zero personalized mass).
-        let build = BoundQuery::new("CALL algo.projection_build($name, $labels, $types, NULL)")
-            .bind_str("name", PROJECTION_NAME)?
-            .bind("labels", string_list_value(&PROJECTION_NODE_LABELS)?)?
-            .bind("types", string_list_value(&PROJECTION_EDGE_TYPES)?)?;
+        // requested kind, `result_nodes` (when bound non-NULL) intersects them with the
+        // visible-namespace scope, and `limit` truncates to the top `k` by score inside the
+        // procedure (intersection before truncation); the `score > 0.0` cut below then drops
+        // any node with zero mass (outside a seed's connected component, in the personalized
+        // case — a no-op under uniform teleport).
+        let build = assoc_projection_build()?;
         let rank = BoundQuery::new(
             "CALL algo.pagerank($name, $damping, $max_iter, $tolerance, NULL, \
-             $orientation, $seeds, $result_label, $limit) YIELD node_id, score \
-             WHERE score > 0.0",
+             $orientation, $seeds, $result_label, $limit, $result_nodes) YIELD node_id, score",
         )
         .bind_str("name", PROJECTION_NAME)?
         .bind("damping", Value::Float(DAMPING))?
         .bind("max_iter", Value::Int(MAX_ITERATIONS))?
         .bind("tolerance", Value::Float(TOLERANCE))?
         .bind_str("orientation", ORIENTATION_UNDIRECTED)?
-        .bind("seeds", personalization_value(seeds))?
+        .bind("seeds", personalization)?
         .bind_str("result_label", kind.label())?
-        .bind("limit", k_value(k))?;
+        .bind("limit", k_value(k))?
+        .bind("result_nodes", result_nodes_value(result_nodes))?;
 
-        // PageRank already filtered to `kind` and returned the top `k` best-first, so the
-        // yielded rows are the ranking — no Rust-side label intersection, sort, or truncate.
-        extract_hits(
+        // PageRank filtered to `kind` and returned the top `k` best-first. Drop any node with
+        // zero mass: selene-db 1.3 removed the inline `CALL ... YIELD ... WHERE` shortcut, so
+        // this `score > 0.0` cut is applied here instead of in the query. Rows arrive best-first
+        // and a zero-mass node can only sort last, so the retained prefix is still the ranking —
+        // a filter, not a re-sort.
+        let mut hits = extract_hits(
             self.execute_session_within(&[build, rank], deadline)?,
             "score",
-        )
+        )?;
+        hits.retain(|hit| hit.score > 0.0);
+        Ok(hits)
+    }
+
+    /// Detect community labels over the associative projection via native Louvain (R2 — the
+    /// selection-stage community-diversity constraint).
+    ///
+    /// Returns the community each requested node belongs to, as a `node -> community` map.
+    /// The community is selene's representative-node id for the community — an opaque, stable
+    /// key, suitable only for grouping (two nodes are in the same community iff their values
+    /// are equal), never as a score. A node absent from the map carries no community label
+    /// (it was not in the projection, e.g. a core block); callers treat that as "uncapped".
+    ///
+    /// Louvain runs over the SAME `{Entity,Fact,Episode}×{MENTIONS,ABOUT,SUPPORTS}` projection
+    /// as the PageRank signals, so a "community" is an associative cluster — facts about the
+    /// same entities, chained through support. It is single-pass and deterministic (selene spec
+    /// §E30), so the labels are reproducible within a graph generation; they shift across writes,
+    /// which is why the result is only ever a diversity CONSTRAINT, not a fused score.
+    ///
+    /// CAVEAT: unlike `algo.pagerank`, `algo.louvain` has no `result_nodes`/`limit` pushdown, so
+    /// it labels the WHOLE projection and the caller filters to `nodes` here (the Rust-side
+    /// intersect the upstream selene-db pushdown gap would remove). Fine at memory-store sizes;
+    /// it wants a generation-keyed projection/result cache before scale. An empty `nodes`
+    /// short-circuits without building the projection.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the projection build, the Louvain call, a bind, execution, the
+    /// deadline, or the row decode fails.
+    pub fn community_labels(
+        &self,
+        nodes: &[NodeId],
+        deadline: Option<Instant>,
+    ) -> Result<HashMap<NodeId, NodeId>, StoreError> {
+        if nodes.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let wanted: HashSet<NodeId> = nodes.iter().copied().collect();
+
+        // Build the projection and run Louvain over it in one session (the projection is
+        // session-scoped, like the PageRank path).
+        let build = assoc_projection_build()?;
+        let detect =
+            BoundQuery::new("CALL algo.louvain($name, $max_iter) YIELD node_id, community, level")
+                .bind_str("name", PROJECTION_NAME)?
+                .bind("max_iter", Value::Int(LOUVAIN_MAX_ITERATIONS))?;
+
+        let QueryResult::Rows(rows) = self.execute_session_within(&[build, detect], deadline)?
+        else {
+            // `YIELD` always projects a row table; a non-Rows result would mean the CALL did not
+            // project (or modified the graph), neither of which a read-only Louvain can do.
+            return Ok(HashMap::new());
+        };
+        let node_idx = rows
+            .column_index("node_id")
+            .ok_or_else(|| StoreError::decode("louvain result has no node_id column"))?;
+        let community_idx = rows
+            .column_index("community")
+            .ok_or_else(|| StoreError::decode("louvain result has no community column"))?;
+
+        // Louvain labels every projection node; keep only the requested ones (no GQL pushdown).
+        let mut labels = HashMap::with_capacity(wanted.len());
+        for row in 0..rows.row_count() {
+            let node = as_node_ref(
+                rows.value(row, node_idx)
+                    .ok_or_else(|| StoreError::decode("louvain row missing node_id"))?,
+            )?;
+            if !wanted.contains(&node) {
+                continue;
+            }
+            let community = as_node_ref(
+                rows.value(row, community_idx)
+                    .ok_or_else(|| StoreError::decode("louvain row missing community"))?,
+            )?;
+            labels.insert(node, community);
+        }
+        Ok(labels)
+    }
+}
+
+/// Build the shared ephemeral associative projection — the `{Entity,Fact,Episode}` nodes over
+/// the `{MENTIONS,ABOUT,SUPPORTS}` edges that every graph algorithm in this module ranks or
+/// labels. Lives only for the session that builds it, so the fixed [`PROJECTION_NAME`] is safe.
+fn assoc_projection_build() -> Result<BoundQuery, StoreError> {
+    BoundQuery::new("CALL algo.projection_build($name, $labels, $types, NULL)")
+        .bind_str("name", PROJECTION_NAME)?
+        .bind("labels", string_list_value(&PROJECTION_NODE_LABELS)?)?
+        .bind("types", string_list_value(&PROJECTION_EDGE_TYPES)?)
+}
+
+/// The `result_nodes` argument `algo.pagerank` restricts its scored rows to: a `LIST<NODE>`
+/// the procedure intersects with the kind-filtered ranking *before* truncating to `limit`, so
+/// the yield is the top-`k` of the in-scope nodes. `None` binds `NULL` — the unscoped ranking
+/// over every projection node of the kind.
+fn result_nodes_value(nodes: Option<&[NodeId]>) -> Value {
+    match nodes {
+        Some(nodes) => Value::List(nodes.iter().copied().map(Value::NodeRef).collect()),
+        None => Value::Null,
     }
 }
 

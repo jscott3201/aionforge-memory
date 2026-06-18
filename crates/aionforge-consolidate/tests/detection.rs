@@ -373,6 +373,7 @@ fn status_extractor_and_config() -> (RuleExtractor, PassConfig) {
             detection,
             summarization: SummarizationConfig::default(),
             induction: InductionConfig::default(),
+            ..PassConfig::default()
         },
     )
 }

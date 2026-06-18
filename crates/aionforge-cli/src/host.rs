@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use aionforge::{
     Authorizer, CaptureConfig, CategoryRule, ConsolidationGuardPolicy, CoreEditPolicy,
@@ -190,6 +191,10 @@ pub(crate) fn memory_config(config: &Config) -> Result<MemoryConfig, CliError> {
     } else {
         None
     };
+    // Map the layered [consolidation] block into the engine's scheduler config + pass tuning.
+    // With an absent block this returns the engine defaults knob-for-knob (no behavior change);
+    // the mapping lives in `consolidation_config` so host.rs stays under the file-size cap.
+    let (consolidation, pass) = crate::consolidation_config::consolidation_settings(config);
     Ok(MemoryConfig {
         capture: CaptureConfig {
             embed_on_capture: config.embedder.enabled,
@@ -204,6 +209,8 @@ pub(crate) fn memory_config(config: &Config) -> Result<MemoryConfig, CliError> {
         erasure: Default::default(),
         core_block: core_block_policy(config),
         consolidation_guard: consolidation_guard_policy(config),
+        consolidation,
+        pass,
     })
 }
 
@@ -215,6 +222,13 @@ fn retriever_config(config: &Config) -> RetrieverConfig {
         semantic_half_life_secs: config.decay.semantic_half_life_secs as f64,
         cooling_enabled: config.drift.enabled,
         cooling_factor: config.drift.cooling_factor,
+        // 0 disables the default recall budget (leaving an un-budgeted recall unbounded);
+        // any positive value becomes the wall-clock ceiling for a deadline-less query.
+        default_recall_budget: (config.retrieval.recall_deadline_ms > 0)
+            .then(|| Duration::from_millis(config.retrieval.recall_deadline_ms)),
+        // The opt-in absolute dense-cosine relevance floor; 0.0 (the default) is off, leaving
+        // recall byte-identical (P0a). The user-facing range is validated in config.
+        min_relevance: config.retrieval.min_relevance,
         ..RetrieverConfig::default()
     }
 }

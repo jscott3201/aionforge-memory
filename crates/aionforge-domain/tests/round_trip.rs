@@ -17,7 +17,7 @@ use aionforge_domain::edges::{
     HasProvenance, InScope, InSession, Mentions, PromotedTo, RecentIn, RelatesTo, SupersededBy,
     Supports, ValidAt,
 };
-use aionforge_domain::nodes::agent::{Agent, Session};
+use aionforge_domain::nodes::agent::{Agent, MemSession};
 use aionforge_domain::nodes::anchors::{RecencyWindow, Scope, ValidityAnchor};
 use aionforge_domain::nodes::associative::Note;
 use aionforge_domain::nodes::control::{ConsolidationCursor, SchemaVersion};
@@ -335,7 +335,7 @@ fn arb_agent() -> impl Strategy<Value = Agent> {
         )
 }
 
-fn arb_session() -> impl Strategy<Value = Session> {
+fn arb_session() -> impl Strategy<Value = MemSession> {
     (
         arb_identity(),
         arb_timestamp(),
@@ -344,7 +344,7 @@ fn arb_session() -> impl Strategy<Value = Session> {
         arb_json(),
     )
         .prop_map(
-            |(identity, started_at, ended_at, owner_agent_id, metadata)| Session {
+            |(identity, started_at, ended_at, owner_agent_id, metadata)| MemSession {
                 identity,
                 started_at,
                 ended_at,
@@ -494,9 +494,9 @@ fn arb_validity_anchor() -> impl Strategy<Value = ValidityAnchor> {
         arb_timestamp(),
         prop::option::of(any::<String>()),
     )
-        .prop_map(|(identity, instant, label)| ValidityAnchor {
+        .prop_map(|(identity, anchored_at, label)| ValidityAnchor {
             identity,
-            instant,
+            anchored_at,
             label,
         })
 }

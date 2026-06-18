@@ -10,10 +10,10 @@ homepage.workspace = true
 description = "Optional Model Context Protocol server surface (Tools, Resources, Prompts) for Aionforge Memory."
 
 [dependencies]
-aionforge-engine = { path = "../aionforge-engine", version = "0.2.2" }
-aionforge-domain = { path = "../aionforge-domain", version = "0.2.2" }
-aionforge-config = { path = "../aionforge-config", version = "0.2.2" }
-aionforge-auth = { path = "../aionforge-auth", version = "0.2.2" }
+aionforge-engine = { path = "../aionforge-engine", version = "0.3.0" }
+aionforge-domain = { path = "../aionforge-domain", version = "0.3.0" }
+aionforge-config = { path = "../aionforge-config", version = "0.3.0" }
+aionforge-auth = { path = "../aionforge-auth", version = "0.3.0" }
 base64 = { workspace = true }
 bytes = "1"
 http = "1"
@@ -31,13 +31,17 @@ tokio = { workspace = true }
 tower-service = "0.3"
 
 [dev-dependencies]
-aionforge-domain = { path = "../aionforge-domain", version = "0.2.2" }
-aionforge-engine = { path = "../aionforge-engine", version = "0.2.2" }
-aionforge-store = { path = "../aionforge-store", version = "0.2.2", features = ["test-support"] }
-aionforge-config = { path = "../aionforge-config", version = "0.2.2" }
-aionforge-auth = { path = "../aionforge-auth", version = "0.2.2" }
+aionforge-domain = { path = "../aionforge-domain", version = "0.3.0" }
+aionforge-engine = { path = "../aionforge-engine", version = "0.3.0" }
+aionforge-store = { path = "../aionforge-store", version = "0.3.0", features = ["test-support"] }
+aionforge-config = { path = "../aionforge-config", version = "0.3.0" }
+aionforge-auth = { path = "../aionforge-auth", version = "0.3.0" }
 rmcp = { version = "1.6", features = ["client"] }
-tokio = { workspace = true }
+# `time` for tokio::time::timeout in the initialize-handshake deadlock regression test.
+tokio = { workspace = true, features = ["time"] }
+# Install a real stderr fmt subscriber in the deadlock regression test so it reproduces the
+# dispatch-to-stderr half of the #252 `initialize` hang.
+tracing-subscriber = { workspace = true }
 # Mint test RS256 tokens and serve a mock JWKS for the auth-validator through-line tests.
 jsonwebtoken = { workspace = true }
 wiremock = { workspace = true }

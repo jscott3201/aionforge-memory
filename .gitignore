@@ -11,8 +11,22 @@ node_modules/
 
 # Per-machine agent memory identity (Aionforge Memory ID + namespace).
 claude-id.json
+codex-id.json
 
 # Local working directories — spec, planning, research, design artifacts.
 # These are working documents (and the frozen build spec) that never get
 # committed. The leading underscore is the convention; the glob covers all.
 _*/
+
+# BEAM benchmark data is CC BY-SA 4.0 and is NEVER vendored — it lives outside the
+# repo under ~/.aionforge/beam-data. Guard against an accidental in-repo copy.
+**/beam-data/
+**/beam-100k*.jsonl
+*.parquet
+
+# LongMemEval benchmark data is external and is NEVER vendored — it lives outside
+# the repo under ~/.aionforge/longmemeval-data unless AIONFORGE_LONGMEMEVAL_DATA
+# points elsewhere.
+**/longmemeval-data/
+**/LongMemEval*.json
+**/LongMemEval*.jsonl

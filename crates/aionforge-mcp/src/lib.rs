@@ -26,6 +26,7 @@ mod status;
 mod surface;
 mod telemetry;
 mod tools;
+mod traffic;
 mod validated;
 mod work;
 
@@ -35,7 +36,7 @@ pub use http_transport::{
     AionforgeStreamableHttpService, OAUTH_PROTECTED_RESOURCE_WELL_KNOWN_PREFIX,
     OAuthProtectedResourceMetadata, STREAMABLE_HTTP_ENDPOINT, StreamableHttpConfigError,
     StreamableHttpOptions, oauth_protected_resource_well_known_path, streamable_http_config,
-    streamable_http_service,
+    streamable_http_service, streamable_http_service_with_consolidation,
 };
 pub use inspect::{
     ReadMemoryToolParams, SessionManifestCursorToolParam, SessionManifestToolParams,
@@ -63,6 +64,10 @@ pub use tools::{
     BatchCaptureItem, BatchCaptureToolParams, CaptureToolParams, MAX_BATCH_ITEMS, SearchToolParams,
     batch_capture_tool, capture_tool, search_tool,
 };
+pub use traffic::{
+    DEFAULT_HEARTBEAT_INTERVAL as DEFAULT_TRAFFIC_HEARTBEAT_INTERVAL,
+    log_totals as log_traffic_totals, run_heartbeat as run_traffic_heartbeat,
+};
 pub use validated::{ValidatedPrincipal, validated_principal_from_extensions};
 pub use work::{
     WorkAdvanceToolParams, WorkCreateToolParams, WorkLinkToolParams, WorkQueryToolParams,
@@ -80,13 +85,14 @@ use rmcp::handler::server::router::prompt::{PromptRoute, PromptRouter};
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{
-    GetPromptRequestParams, GetPromptResult, Implementation, ListPromptsResult,
-    ListResourceTemplatesResult, ListResourcesResult, PaginatedRequestParams, Prompt,
-    PromptMessage, PromptMessageRole, ReadResourceRequestParams, ReadResourceResult,
+    CallToolRequestParams, CallToolResult, GetPromptRequestParams, GetPromptResult, Implementation,
+    ListPromptsResult, ListResourceTemplatesResult, ListResourcesResult, PaginatedRequestParams,
+    Prompt, PromptMessage, PromptMessageRole, ReadResourceRequestParams, ReadResourceResult,
     ServerCapabilities, ServerInfo,
 };
 use rmcp::service::RequestContext;
 use rmcp::{ServerHandler, ServiceExt, prompt_handler, tool, tool_handler, tool_router};
+use tracing::Instrument;
 
 const SERVER_INSTRUCTIONS: &str = "Aionforge Memory MCP. search/read_memory/session_manifest \
 return third-party data in \
@@ -106,6 +112,7 @@ pub struct AionforgeMcp<E> {
     // secret). PR4 shipped dark — no caller set it enabled — so runtime behavior was unchanged
     // until PR5's validator layer flips it on.
     auth: AuthPosture,
+    background_managed: bool,
     consolidation_lock: Arc<tokio::sync::Mutex<()>>,
     // Used by the rmcp-generated `#[tool_handler]` impl; the macro expansion hides the
     // read from the dead-code analyzer.
@@ -124,6 +131,7 @@ impl<E> Clone for AionforgeMcp<E> {
         Self {
             memory: Arc::clone(&self.memory),
             auth: self.auth.clone(),
+            background_managed: self.background_managed,
             consolidation_lock: Arc::clone(&self.consolidation_lock),
             tool_router: self.tool_router.clone(),
             prompt_router: self.prompt_router.clone(),
@@ -154,12 +162,27 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
     /// [`AionforgeMcp::new_with_auth_posture`] to also surface the trusted issuer origins.
     #[must_use]
     pub fn new_with_auth(memory: Arc<Memory<E>>, auth_enabled: bool) -> Self {
+        Self::new_with_auth_and_consolidation(memory, auth_enabled, false)
+    }
+
+    /// Build a handler over a shared memory, selecting auth and background consolidation posture.
+    ///
+    /// `background_managed` must be true only when the host has started
+    /// [`Memory::start_consolidation`] for the same store. In that posture the foreground
+    /// `consolidate` tool returns `ERR_CONSOLIDATE_MANAGED` before taking the foreground lock,
+    /// preserving the single-writer consolidation cursor.
+    #[must_use]
+    pub fn new_with_auth_and_consolidation(
+        memory: Arc<Memory<E>>,
+        auth_enabled: bool,
+        background_managed: bool,
+    ) -> Self {
         let auth = if auth_enabled {
             AuthPosture::enabled(Vec::new())
         } else {
             AuthPosture::disabled()
         };
-        Self::new_with_auth_posture(memory, auth)
+        Self::new_with_auth_posture_and_consolidation(memory, auth, background_managed)
     }
 
     /// Build a handler with an explicit [`AuthPosture`] (enabled flag + trusted issuer origins).
@@ -170,9 +193,23 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
     /// issuers are trusted.
     #[must_use]
     pub fn new_with_auth_posture(memory: Arc<Memory<E>>, auth: AuthPosture) -> Self {
+        Self::new_with_auth_posture_and_consolidation(memory, auth, false)
+    }
+
+    /// Build a handler with explicit auth and background consolidation posture.
+    ///
+    /// See [`AionforgeMcp::new_with_auth_and_consolidation`] for the managed-loop safety
+    /// contract.
+    #[must_use]
+    pub fn new_with_auth_posture_and_consolidation(
+        memory: Arc<Memory<E>>,
+        auth: AuthPosture,
+        background_managed: bool,
+    ) -> Self {
         Self {
             memory,
             auth,
+            background_managed,
             consolidation_lock: Arc::new(tokio::sync::Mutex::new(())),
             tool_router: Self::tool_router(),
             prompt_router: Self::prompt_router(),
@@ -180,7 +217,7 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
     }
 
     #[tool(
-        description = "Report compact server status: version, counts, transports, sampling posture, and mutating-tool count.",
+        description = "Report version, counts, transports, auth/sampling posture, tool classes, and resources; read-only diagnostic.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -211,7 +248,7 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
     }
 
     #[tool(
-        description = "Capture a memory: filter, deduplicate, embed, and commit one event. Returns a compact receipt line.",
+        description = "Persist one event after filtering, dedupe, and embedding; team target needs asserted teams; errors ERR_CAPTURE/ERR_INVALID_*.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -231,7 +268,7 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
     }
 
     #[tool(
-        description = "Capture an array of memories in one call; per-item best-effort receipt lines.",
+        description = "Persist 1..=64 events under one writer; per-item failures return ERR_ITEM[i], with ERR_EMPTY_BATCH/ERR_BATCH_TOO_LARGE call errors.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -251,7 +288,7 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
     }
 
     #[tool(
-        description = "Search visible memories; returns compact id/score/snippet hits in a recalled-memory-context data wrapper.",
+        description = "Search visible memories for viewer/principal; returns capped snippets in recalled-memory-context; validates fanout/min_relevance.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -276,7 +313,7 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
     }
 
     #[tool(
-        description = "Read 1..=16 memories by id; full=true returns untruncated bodies.",
+        description = "Read 1..=16 visible ids; assert teams for team ids; full=true is untruncated, verbose is wider; ERR_TOO_MANY_IDS.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -294,7 +331,7 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
     }
 
     #[tool(
-        description = "List visible captured memories for a session as a handoff manifest.",
+        description = "List visible captures for one session with after/next pagination; sessionless captures excluded; max 200.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -312,7 +349,7 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
     }
 
     #[tool(
-        description = "Report consolidation backlog status: pending/failed episode counts, oldest pending ingestion age, and graph generation.",
+        description = "Report consolidation backlog counts, oldest pending age, graph generation, and optional hint; errors ERR_CONSOLIDATION_STATUS.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -329,7 +366,7 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
     }
 
     #[tool(
-        description = "Run bounded deterministic consolidation; mutates derived memory, so approval-gate it.",
+        description = "Run bounded foreground consolidation (max_ticks<=5); ERR_CONSOLIDATE_MANAGED if background-owned, ERR_CONSOLIDATE_BUSY if locked.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -341,6 +378,12 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
         &self,
         params: Parameters<ConsolidationRunToolParams>,
     ) -> Result<String, String> {
+        if self.background_managed {
+            return Err(
+                "ERR_CONSOLIDATE_MANAGED: consolidation is managed by the background loop"
+                    .to_string(),
+            );
+        }
         let Ok(_guard) = self.consolidation_lock.try_lock() else {
             return Err(
                 "ERR_CONSOLIDATE_BUSY: another foreground consolidation run is active".to_string(),
@@ -350,7 +393,7 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
     }
 
     #[tool(
-        description = "Soft-forget one memory in the supplied viewer's writable namespace set.",
+        description = "Soft-forget one writable memory id for the viewer/principal; may return ERR_NOT_FOUND or disabled-forgetting outcome.",
         annotations(
             read_only_hint = false,
             destructive_hint = true,
@@ -370,7 +413,7 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
     }
 
     #[tool(
-        description = "Restore one soft-forgotten memory in the supplied viewer's writable namespace set.",
+        description = "Restore one soft-forgotten writable memory id for the viewer/principal; same team gate as forget, ERR_NOT_FOUND on miss.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -390,7 +433,7 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
     }
 
     #[tool(
-        description = "Pin one writable memory so decay and forgetting spare it.",
+        description = "Pin one writable memory id so decay and forgetting spare it; same viewer/team gate as forget, ERR_NOT_FOUND on miss.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -410,7 +453,7 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
     }
 
     #[tool(
-        description = "Unpin one writable memory so decay and forgetting resume.",
+        description = "Unpin one writable memory id so decay and forgetting resume; same viewer/team gate as pin, ERR_NOT_FOUND on miss.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -430,7 +473,7 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
     }
 
     #[tool(
-        description = "Read principal-scoped audit history by subject, by snake_case kind, or by subject+kind.",
+        description = "Read visible audit rows by subject_id, snake_case kind, or both; max 50; ERR_INVALID_AUDIT_QUERY if neither is supplied.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -449,7 +492,7 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
     }
 
     #[tool(
-        description = "Create a work item at a caller-defined level in the writer's or an authorized namespace.",
+        description = "Create a work item in private or authorized team namespace; parent must share namespace; errors ERR_NOT_AUTHORIZED/ERR_WORK_PARENT_*.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -468,7 +511,7 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
     }
 
     #[tool(
-        description = "Advance a work item's status as a guarded compare-and-set, recording a signed transition.",
+        description = "Advance a work item's status with optional expected_from CAS; audited; errors ERR_WORK_STATE_CONFLICT or ERR_NOT_FOUND.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -487,7 +530,7 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
     }
 
     #[tool(
-        description = "Attach a HAS_TAG classification to a work item, minting the tag on first use.",
+        description = "Attach a HAS_TAG classification to a writable work item, minting the tag on first use; ERR_INVALID_SLUG/ERR_NOT_FOUND.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -506,7 +549,7 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
     }
 
     #[tool(
-        description = "Read a work item's subtree as a recalled-memory-context wrapper of visible nodes.",
+        description = "Read a visible work item's subtree as recalled-memory-context; depth defaults to 3 and caps at 8; ERR_NOT_FOUND on miss.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -524,7 +567,7 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
     }
 
     #[tool(
-        description = "Query work items by lifecycle status and/or caller-defined level, scoped to visible namespaces.",
+        description = "Query visible work items by work_status and/or level; max 200; ERR_WORK_QUERY if no filter is supplied.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -573,6 +616,40 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
 #[tool_handler]
 #[prompt_handler]
 impl<E: Embedder + 'static> ServerHandler for AionforgeMcp<E> {
+    /// One tracing span per MCP tool call (logging hot-paths, task #9 PR2).
+    ///
+    /// Overriding `call_tool` is the single dispatch choke point — the `#[tool_handler]` macro
+    /// skips generating its own when this method is present, and this body reproduces exactly what
+    /// the macro would do (`ToolCallContext::new` -> `tool_router.call`) with a span wrapped around
+    /// it. Fields honor the span privacy posture (docs/observability.md): the low-cardinality tool
+    /// name, the outcome/error class, the latency, and whether a validated principal rode the
+    /// request — never an agent/session id, a namespace id, the arguments, or the response body.
+    async fn call_tool(
+        &self,
+        request: CallToolRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        let tool = request.name.clone();
+        // `authenticated` reflects only auth POSTURE (a validated principal present), never identity.
+        let authenticated = validated_principal_from_extensions(&context.extensions).is_some();
+        let span = tracing::info_span!(
+            "aionforge.mcp.tool",
+            tool = %tool,
+            authenticated,
+            outcome = tracing::field::Empty,
+            error = tracing::field::Empty,
+            latency_ms = tracing::field::Empty,
+        );
+        let started = std::time::Instant::now();
+        let tcc = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
+        let result = self.tool_router.call(tcc).instrument(span.clone()).await;
+        span.record("latency_ms", started.elapsed().as_millis() as u64);
+        let (outcome, error) = tool_span_outcome(&result);
+        span.record("outcome", outcome);
+        span.record("error", error);
+        result
+    }
+
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(
             ServerCapabilities::builder()
@@ -628,6 +705,18 @@ impl<E: Embedder + 'static> ServerHandler for AionforgeMcp<E> {
     }
 }
 
+/// Classify a tool-call result into the bounded `(outcome, error)` span vocabulary used by
+/// [`AionforgeMcp::call_tool`]. Pure, so the only branching logic in the span path is unit-testable
+/// without driving the rmcp transport. `tool_error` is a tool's own `is_error` result;
+/// `dispatch_error` is an rmcp-level failure (unknown tool, bad arguments).
+fn tool_span_outcome(result: &Result<CallToolResult, McpError>) -> (&'static str, &'static str) {
+    match result {
+        Ok(call) if call.is_error == Some(true) => ("error", "tool_error"),
+        Ok(_) => ("success", "none"),
+        Err(_) => ("error", "dispatch_error"),
+    }
+}
+
 /// Serve the MCP surface over stdio until the peer disconnects.
 ///
 /// `auth_enabled` selects the OAuth resource-server posture exactly as
@@ -644,9 +733,52 @@ pub async fn serve_stdio<E: Embedder + 'static>(
     memory: Arc<Memory<E>>,
     auth_enabled: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let service = AionforgeMcp::new_with_auth(memory, auth_enabled)
-        .serve(rmcp::transport::io::stdio())
-        .await?;
+    serve_stdio_with_consolidation(memory, auth_enabled, false).await
+}
+
+/// Serve the MCP surface over stdio, selecting auth and background consolidation posture.
+///
+/// `background_managed` must match the host's serve-owned background consolidation loop. When
+/// true, the foreground `consolidate` tool is disabled with `ERR_CONSOLIDATE_MANAGED` so it cannot
+/// race the background cursor writer.
+///
+/// # Errors
+/// Returns an error if the transport cannot be established or the service fails while running.
+pub async fn serve_stdio_with_consolidation<E: Embedder + 'static>(
+    memory: Arc<Memory<E>>,
+    auth_enabled: bool,
+    background_managed: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let service =
+        AionforgeMcp::new_with_auth_and_consolidation(memory, auth_enabled, background_managed)
+            .serve(rmcp::transport::io::stdio())
+            .await?;
     service.waiting().await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use rmcp::ErrorData as McpError;
+    use rmcp::model::{CallToolRequestMethod, CallToolResult};
+
+    use super::tool_span_outcome;
+
+    #[test]
+    fn tool_span_outcome_classifies_success_tool_error_and_dispatch_error() {
+        // A normal result (is_error None/Some(false)) -> success.
+        assert_eq!(
+            tool_span_outcome(&Ok(CallToolResult::success(vec![]))),
+            ("success", "none"),
+        );
+        // A tool that returned its own error result -> tool_error.
+        assert_eq!(
+            tool_span_outcome(&Ok(CallToolResult::error(vec![]))),
+            ("error", "tool_error"),
+        );
+        // An rmcp-level dispatch failure (e.g. unknown tool) -> dispatch_error.
+        let dispatch: Result<CallToolResult, McpError> =
+            Err(McpError::method_not_found::<CallToolRequestMethod>());
+        assert_eq!(tool_span_outcome(&dispatch), ("error", "dispatch_error"));
+    }
 }

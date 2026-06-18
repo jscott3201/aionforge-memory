@@ -143,6 +143,8 @@ fn recall_query(query: &str, agent: &Id) -> SearchToolParams {
         limit: None,
         verbose: None,
         include_superseded: None,
+        fanout: None,
+        min_relevance: None,
     }
 }
 

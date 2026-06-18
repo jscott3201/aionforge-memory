@@ -10,9 +10,9 @@ homepage.workspace = true
 description = "Asynchronous consolidation: a durable cursor and a bounded background scheduler over the commit stream."
 
 [dependencies]
-aionforge-domain = { path = "../aionforge-domain", version = "0.2.2" }
-aionforge-security = { path = "../aionforge-security", version = "0.2.2" }
-aionforge-store = { path = "../aionforge-store", version = "0.2.2" }
+aionforge-domain = { path = "../aionforge-domain", version = "0.3.0" }
+aionforge-security = { path = "../aionforge-security", version = "0.3.0" }
+aionforge-store = { path = "../aionforge-store", version = "0.3.0" }
 async-trait = { workspace = true }
 metrics = { workspace = true }
 serde_json = { workspace = true }
@@ -21,7 +21,7 @@ tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time", "sy
 tracing = { workspace = true }
 
 [dev-dependencies]
-aionforge-store = { path = "../aionforge-store", version = "0.2.2", features = ["test-support"] }
+aionforge-store = { path = "../aionforge-store", version = "0.3.0", features = ["test-support"] }
 proptest = { workspace = true }
 
 [lints]

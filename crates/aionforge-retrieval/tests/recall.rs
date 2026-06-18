@@ -585,3 +585,77 @@ async fn the_explanation_reports_class_and_weights() {
     assert!(bundle.explanation.embedder_available);
     assert_eq!(bundle.explanation.returned, bundle.structured.len());
 }
+
+/// Recall@k regression for the namespace-scoped episode fix (search-recall investigation):
+/// a reader's own matching episodes must surface even when ANOTHER agent's namespace holds a
+/// larger, higher-ranked majority of matches than the per-signal fan-out. Episode candidate
+/// generation is scoped to the reader's visible namespaces, so the fan-out is spent on
+/// episodes she can see — not consumed by an out-of-namespace crowd that the post-fusion
+/// authorization filter would then drop (which, before the fix, returned ~nothing).
+#[tokio::test]
+async fn namespace_scoping_protects_recall_from_a_crowded_store() {
+    let store = store();
+    // Alice owns three matching episodes, embedded slightly off the exact query vector.
+    for tag in ["one", "two", "three"] {
+        seed(
+            &store,
+            &format!("alpha note {tag}"),
+            alice_ns(),
+            None,
+            Role::User,
+            [0.9, 0.1, 0.0, 0.0],
+            false,
+        );
+    }
+    // Another agent owns a larger, exact-matching majority that would dominate an unscoped
+    // top-k and consume the whole fan-out before alice's episodes are ever retrieved.
+    let bob_ns = Namespace::Agent(Id::from_content_hash(b"bob-the-crowd").to_string());
+    for i in 0..12 {
+        seed(
+            &store,
+            &format!("alpha alpha exact {i}"),
+            bob_ns.clone(),
+            None,
+            Role::User,
+            [1.0, 0.0, 0.0, 0.0],
+            false,
+        );
+    }
+
+    // A fan-out (3) far smaller than the cross-namespace corpus (15): without scoping the
+    // three candidates per signal would all be bob's (exact match, higher BM25), and alice
+    // would recall nothing after authorization. `effective_fanout = max(default_fanout,
+    // limit)`, so the limit is held at 3 to keep the fan-out tight.
+    let config = RetrieverConfig {
+        default_fanout: 3,
+        ..RetrieverConfig::default()
+    };
+    let r = HybridRetriever::new(store, embedder_to("alpha", [1.0, 0.0, 0.0, 0.0]), config);
+
+    let bundle = r
+        .recall(RecallQuery::new("alpha", alice(), 3))
+        .await
+        .expect("recall");
+
+    let contents: Vec<&str> = bundle.structured.iter().map(|e| e.content()).collect();
+    // All three of alice's matching episodes surface, despite the 12-episode crowd.
+    for tag in ["one", "two", "three"] {
+        let want = format!("alpha note {tag}");
+        assert!(
+            contents.contains(&want.as_str()),
+            "alice's '{want}' must surface under scoped recall; got {contents:?}"
+        );
+    }
+    // No out-of-namespace episode leaks (authorization holds end to end).
+    assert!(
+        !contents.iter().any(|c| c.starts_with("alpha alpha exact")),
+        "no other-agent episode leaks: {contents:?}"
+    );
+    // The considered pool reflects only the scoped candidates, not the 15-episode store —
+    // the honest telemetry that makes the recall ceiling visible.
+    assert!(
+        bundle.explanation.candidates_considered <= 4,
+        "considered pool is scoped to the reader's namespace, not the whole store: {}",
+        bundle.explanation.candidates_considered
+    );
+}

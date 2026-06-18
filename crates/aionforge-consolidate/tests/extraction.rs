@@ -11,8 +11,8 @@ use std::future::Future;
 use std::sync::Arc;
 
 use aionforge_consolidate::{
-    ConsolidationConfig, Consolidator, FactExtractionPass, PassConfig, RuleExtractor,
-    RuleSummarizer,
+    ConsolidationConfig, ConsolidationProfile, Consolidator, FactExtractionPass, PassConfig,
+    RuleExtractor, RuleSummarizer, STAGE_EXTRACTION,
 };
 use aionforge_domain::blocks::{Identity, Stats};
 use aionforge_domain::contracts::Embedder;
@@ -143,10 +143,15 @@ fn insert_raw_episode_as(
     store.insert_episode(&episode).expect("insert episode");
 }
 
-/// Drain every pending episode by ticking until the backlog is empty.
-async fn drain(consolidator: &Consolidator) {
+/// Drain every pending episode by ticking until the backlog is empty, returning the per-stage
+/// profile accumulated across every tick (folded exactly as the scheduler folds it). Lets a test
+/// assert the counts a real run produced — e.g. the extraction stage's `derived` tracking the
+/// actual rule yield. Callers that only need the side effect ignore the return value.
+async fn drain(consolidator: &Consolidator) -> ConsolidationProfile {
+    let mut profile = ConsolidationProfile::new();
     loop {
         let report = consolidator.tick_once().await.expect("tick");
+        profile.merge_profile(&report.profile);
         if report.pending_after == 0 {
             break;
         }
@@ -156,6 +161,7 @@ async fn drain(consolidator: &Consolidator) {
             "a tick made no progress but work remains: {report:?}"
         );
     }
+    profile
 }
 
 fn count(store: &Store, query: BoundQuery) -> usize {
@@ -254,7 +260,7 @@ async fn extraction_resolves_surfaces_records_provenance_and_is_idempotent() {
     let extraction = fact_extraction(&store, "prefers");
     assert_eq!(
         extraction.extraction_rule_version.as_deref(),
-        Some("rule-v1"),
+        Some("rule-v2"),
         "the fact records the extraction rule version"
     );
     assert!(
@@ -537,5 +543,197 @@ async fn a_system_role_episode_produces_no_facts() {
         ),
         0,
         "the system-role episode produces no fact"
+    );
+}
+
+/// The stored trust of the first fact with the given predicate.
+fn fact_trust(store: &Store, predicate: &str) -> f64 {
+    let query =
+        BoundQuery::new("MATCH (f:Fact) WHERE f.predicate = $p RETURN f.trust AS trust LIMIT 1")
+            .bind_str("p", predicate)
+            .expect("bind predicate");
+    match store.execute(&query).expect("trust query") {
+        QueryResult::Rows(rows) => match rows.value(0, 0) {
+            // A stored trust column reads back as a double; tolerate a single-precision return
+            // too so the assertion is robust to the metric encoding.
+            Some(Value::Float(trust)) => *trust,
+            Some(Value::Float32(trust)) => f64::from(*trust),
+            other => panic!("expected a float trust, got {other:?}"),
+        },
+        other => panic!("expected rows, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn an_is_a_dependent_clause_yields_no_fact() {
+    // The removed `is a`→`is_a` catch-all used to turn any `"X is a Y"` clause — including a
+    // dependent fragment a sentence split off — into a junk fact. With that rule gone and the
+    // subject-plausibility gate live, this episode yields no fact at all (no typed marker
+    // matches, and the dependent clause is not a subject).
+    let store = store();
+    let namespace = Namespace::Agent("alice".to_string());
+    insert_raw_episode(
+        &store,
+        "The migration ran, which means it is a breaking change.",
+        &namespace,
+        0,
+    );
+
+    let mut consolidator = Consolidator::new(Arc::clone(&store), ConsolidationConfig::default());
+    consolidator.register(Box::new(FactExtractionPass::new(
+        Arc::new(RuleExtractor::with_default_rules()),
+        Arc::new(ClusterEmbedder::new()),
+        Arc::new(RuleSummarizer::with_default_rules()),
+        PassConfig::default(),
+    )));
+    drain(&consolidator).await;
+
+    assert_eq!(
+        count(&store, BoundQuery::new("MATCH (f:Fact) RETURN f.id AS id")),
+        0,
+        "the is_a dependent-clause exemplar produces no fact"
+    );
+    // And it minted no junk entity from the clause fragment either.
+    assert_eq!(
+        count(
+            &store,
+            BoundQuery::new("MATCH (e:Entity) RETURN e.id AS id")
+        ),
+        0,
+        "no entity is minted from a rejected clause"
+    );
+}
+
+#[tokio::test]
+async fn genuine_typed_entity_facts_still_extract() {
+    // Recall is preserved: every shipped typed rule (works_on/based_in/prefers/uses) still
+    // fires on clean prose, so the precision gates do not regress legitimate extraction.
+    let store = store();
+    let namespace = Namespace::Agent("alice".to_string());
+    insert_raw_episode(&store, "Alice works on Aionforge.", &namespace, 0);
+    insert_raw_episode(&store, "Alice is based in Helios.", &namespace, 1);
+    insert_raw_episode(&store, "Alice prefers Rust.", &namespace, 2);
+    insert_raw_episode(&store, "Alice uses Selene.", &namespace, 3);
+
+    let mut consolidator = Consolidator::new(Arc::clone(&store), ConsolidationConfig::default());
+    consolidator.register(Box::new(FactExtractionPass::new(
+        Arc::new(RuleExtractor::with_default_rules()),
+        Arc::new(ClusterEmbedder::new()),
+        Arc::new(RuleSummarizer::with_default_rules()),
+        PassConfig::default(),
+    )));
+    drain(&consolidator).await;
+
+    for predicate in ["works_on", "based_in", "prefers", "uses"] {
+        assert_eq!(
+            count(
+                &store,
+                BoundQuery::new("MATCH (f:Fact) WHERE f.predicate = $p RETURN f.id AS id")
+                    .bind_str("p", predicate)
+                    .expect("bind predicate"),
+            ),
+            1,
+            "the genuine `{predicate}` typed-entity fact still extracts"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_derived_fact_trust_is_below_its_source_episode() {
+    // A derived fact is weaker evidence than its source episode, so its stored trust is the
+    // episode trust discounted by `derived_trust_factor` (< 1): with the inserted episode
+    // trust 0.9 and the default factor 0.9, the fact's trust is 0.81 — strictly below 0.9.
+    let store = store();
+    let namespace = Namespace::Agent("alice".to_string());
+    insert_raw_episode(&store, "Alice prefers Rust.", &namespace, 0);
+
+    let mut consolidator = Consolidator::new(Arc::clone(&store), ConsolidationConfig::default());
+    consolidator.register(Box::new(FactExtractionPass::new(
+        Arc::new(RuleExtractor::with_default_rules()),
+        Arc::new(ClusterEmbedder::new()),
+        Arc::new(RuleSummarizer::with_default_rules()),
+        PassConfig::default(),
+    )));
+    drain(&consolidator).await;
+
+    let episode_trust = 0.9_f64; // the trust `insert_raw_episode` stamps
+    let trust = fact_trust(&store, "prefers");
+    assert!(
+        trust < episode_trust,
+        "the derived fact ranks strictly below its source episode (fact {trust} < episode \
+         {episode_trust})"
+    );
+    let expected = episode_trust * 0.9; // the default derived_trust_factor
+    assert!(
+        (trust - expected).abs() < 1e-9,
+        "the derived fact trust is the episode trust times the discount: {trust} vs {expected}"
+    );
+}
+
+#[tokio::test]
+async fn svo_derives_a_fact_but_narrative_prose_does_not() {
+    // The P0b determination, as an executable control. The deterministic SVO ruleset DERIVES a
+    // fact from a clean subject-verb-object episode and DERIVES NOTHING from narrative
+    // decision/design prose with no marker. This isolates "the extractor and the #262 subject
+    // gate work" from "the content carries no triple to pull": the 0-facts-from-prose observed on
+    // real captures is the latter (content shape), NOT a gating regression. Rich-prose extraction
+    // is a model-backed-extractor job (M4), not a looser deterministic gate — loosening the gate
+    // is exactly what #262 tightened to stop junk facts.
+    let store = store();
+    let namespace = Namespace::Agent("control".to_string());
+
+    // A clean SVO episode (the "works on" marker, Person -> Project) — known-good shape.
+    insert_raw_episode(&store, "Bob works on Helios.", &namespace, 1);
+    // Narrative decision prose — the shape of most real agent captures. No marker fires.
+    insert_raw_episode(
+        &store,
+        "We decided the retrieval layer should fuse signals by rank, for robustness to scale \
+         mismatch.",
+        &namespace,
+        2,
+    );
+    // A near-miss: "causes" contains the bare substring "uses" but not the space-padded " uses "
+    // marker (the match is `sentence.find(" uses ")`), so the padding guard must NOT false-fire.
+    insert_raw_episode(&store, "The retry causes a refresh.", &namespace, 3);
+
+    let mut consolidator = Consolidator::new(Arc::clone(&store), ConsolidationConfig::default());
+    consolidator.register(Box::new(FactExtractionPass::new(
+        Arc::new(RuleExtractor::with_default_rules()),
+        Arc::new(ClusterEmbedder::new()),
+        Arc::new(RuleSummarizer::with_default_rules()),
+        PassConfig::default(),
+    )));
+    let profile = drain(&consolidator).await;
+
+    // The SVO episode derived its fact — the extractor and subject gate work on a clean triple.
+    assert_eq!(
+        count(
+            &store,
+            BoundQuery::new("MATCH (f:Fact) WHERE f.predicate = 'works_on' RETURN f.id AS id"),
+        ),
+        1,
+        "a clean SVO episode derives its fact",
+    );
+    // The narrative-prose AND near-miss episodes added NOTHING: the only fact in the store is the
+    // SVO one, so the 0-facts-from-prose outcome is by-design content shape, not a gating bug, and
+    // the padding guard did not false-fire on "ca[uses]".
+    assert_eq!(
+        count(&store, BoundQuery::new("MATCH (f:Fact) RETURN f.id AS id")),
+        1,
+        "only the SVO triple derives a fact; prose and the near-miss derive nothing",
+    );
+
+    // The clarity payload at the profile level: the extraction stage's `derived` reflects the
+    // REAL rule yield — it scanned all three episodes and pulled exactly the one SVO fact, not a
+    // hardcoded zero (the P0b confusion this stage removes) nor a false-fire on the near-miss.
+    let extraction = profile
+        .stages()
+        .iter()
+        .find(|s| s.stage == STAGE_EXTRACTION)
+        .expect("extraction stage profiled");
+    assert_eq!(
+        (extraction.candidates_considered, extraction.derived),
+        (3, 1),
+        "extraction scanned 3 episodes and derived exactly the one SVO fact",
     );
 }

@@ -5,9 +5,9 @@
 # ubuntu+macOS matrix, and a version tag drives the gated publish (release.yml).
 #
 # Near-instant gates always run: rustfmt, file-size cap (700 LOC), no-secret scan,
-# the GQL parameter-binding gate, the store-only-selene gate, and the audit-keygen
-# confinement gate. When dependency manifests change, cargo-deny + THIRDPARTY.md
-# currency run too.
+# the GQL parameter-binding gate, the no-log-leakage gate, the store-only-selene gate,
+# and the audit-keygen confinement gate. A cached rustdoc (-D warnings) job also runs.
+# When dependency manifests change, cargo-deny + THIRDPARTY.md currency run too.
 #
 # The heavyweight ubuntu build/clippy/test suite deliberately does NOT run on dev
 # PRs. It runs once per release batch at the `development` -> `main` release gate
@@ -103,6 +103,14 @@ jobs:
       - uses: actions/checkout@v4
       - run: bash .github/scripts/check-no-gql-interpolation.sh
 
+  log-leakage-gate:
+    name: no-log-leakage gate
+    if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash .github/scripts/check-no-log-leakage.sh
+
   store-only-selene-gate:
     name: store-only-selene gate
     if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
@@ -126,6 +134,28 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: bash .github/scripts/check-principal-gate.sh
+
+  rustdoc:
+    name: rustdoc (-D warnings)
+    # The one compile-requiring gate on dev PRs. The heavyweight build/clippy/test
+    # suite is deliberately deferred to the release gate, but doc-link breaks
+    # (broken intra-doc links, missing-doc warnings) are cheap to introduce and
+    # otherwise only surface at the development -> main promotion. A cached
+    # `cargo doc` is fast enough to run per-PR and catches them at the source.
+    if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo doc — libs (deny warnings)
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+        run: cargo doc --no-deps --workspace --lib --document-private-items
+      - name: cargo doc — bins (deny warnings)
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+        run: cargo doc --no-deps --workspace --bins --document-private-items
 
   deny:
     name: cargo-deny

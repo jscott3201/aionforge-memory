@@ -87,6 +87,17 @@ pub struct RecallOptions {
     /// rest spill; spilled memories are appended only if the bundle is under-filled
     /// (03 §6). Zero means no cap.
     pub session_diversity_cap: usize,
+    /// The most memories from a single associative COMMUNITY allowed to fill the bundle before
+    /// the rest spill — the structural analogue of [`session_diversity_cap`](Self::session_diversity_cap)
+    /// (R2). A community is a Louvain cluster over the associative graph (facts/episodes about
+    /// the same entities, chained through support), so this stops a recall returning a wall of
+    /// near-redundant facts about one cluster. Unlike the session cap it applies to facts too
+    /// (a fact has no session but does have a community). Spilled memories are topped up only if
+    /// the bundle is under-filled. The production default is `2`, activated from the #291
+    /// graph-bearing sweep as a conservative first cap: it breaks the one-cluster wall while
+    /// still allowing two facts from a legitimate single-entity community. **Zero means no cap**
+    /// — the community labels are not even computed, so recall is byte-identical and zero-cost.
+    pub community_diversity_cap: usize,
     /// A wall-clock budget for the whole recall; exceeding it surfaces as
     /// [`RetrievalError::DeadlineExceeded`](crate::RetrievalError::DeadlineExceeded)
     /// (03 §8). `None` means no deadline.
@@ -126,6 +137,14 @@ pub struct RecallOptions {
     /// episode view that hides replaced raw captures while keeping derived fact history
     /// governed by [`TemporalMode`].
     pub include_superseded: bool,
+    /// An OPT-IN absolute relevance floor in `[0, 1]` on the dense cosine similarity: a hit
+    /// whose similarity is below the floor — or which has no dense score at all (a
+    /// lexical/BM25-only hit) — is dropped, so an unrelated query may legitimately return
+    /// empty (P0a). `None` (the default) falls back to the retriever's configured
+    /// `min_relevance`, mirroring the `fanout == 0` sentinel; the config default is `0.0`
+    /// (off), which leaves recall byte-identical. The floor is defined only against the
+    /// dense proxy — the one absolute relevance signal in the pipeline.
+    pub min_relevance: Option<f64>,
 }
 
 impl Default for RecallOptions {
@@ -134,6 +153,7 @@ impl Default for RecallOptions {
             mode_override: None,
             temporal: TemporalMode::default(),
             session_diversity_cap: 3,
+            community_diversity_cap: 2,
             deadline: None,
             include_expired: false,
             fanout: 0,
@@ -141,6 +161,7 @@ impl Default for RecallOptions {
             now: None,
             include_system: false,
             include_superseded: true,
+            min_relevance: None,
         }
     }
 }

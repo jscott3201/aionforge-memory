@@ -1,14 +1,17 @@
 //! MCP server command execution.
 
 use std::convert::Infallible;
-use std::io::Write;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use aionforge::{
+    ConsolidationHandle, Embedder, Memory, RuleExtractor, RuleInducer, RuleSummarizer,
+};
 use aionforge_config::{AuthConfig, Config, ServerHttpConfig};
 use aionforge_mcp::{
     AionforgeStreamableHttpService, AuthPosture, AuthValidators, STREAMABLE_HTTP_ENDPOINT,
-    StreamableHttpOptions, serve_stdio, streamable_http_service,
+    StreamableHttpOptions, serve_stdio_with_consolidation,
+    streamable_http_service_with_consolidation,
 };
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full, combinators::BoxBody};
@@ -33,23 +36,93 @@ type HttpResponse = Response<BoxBody<Bytes, Infallible>>;
 pub(crate) async fn run(options: &HostOptions, args: ServeArgs) -> Result<(), CliError> {
     let config = load_config(options)?;
     let memory = open_memory(&config)?;
+    let consolidation_handle = start_background_consolidation(&memory, &config);
+    // Periodic in/out traffic heartbeat for the server's lifetime (logging-foundation, task #9):
+    // a `tracing` line every few minutes with cumulative + delta bytes/tokens in and out. Covers
+    // both transports. A zero cadence disables it. Spawned BEFORE the (blocking) transport dispatch
+    // so it ticks for the whole serve, and explicitly aborted on the way out (below) so shutdown is
+    // deterministic rather than dependent on runtime-drop timing.
+    let heartbeat =
+        resolve_heartbeat_interval(std::env::var(TRAFFIC_HEARTBEAT_ENV).ok().as_deref());
+    let heartbeat_task = (!heartbeat.is_zero())
+        .then(|| tokio::spawn(aionforge_mcp::run_traffic_heartbeat(heartbeat)));
     // The OAuth resource-server posture is DEFAULT-OFF: `config.auth.enabled` is `false` unless a
     // deployment opts in, so the stdio and HTTP transports below reproduce today's behavior exactly.
-    match args.transport {
-        ServeTransport::Stdio => {
-            let startup = check_startup_embedder(memory.as_ref()).await?;
-            report_startup_embedder(&startup);
-            // stdio carries no HTTP request, so no Tower validator can run over it; the flag is
-            // threaded only for posture parity (an enabled stdio server has no producer yet).
-            // Auth-on over stdio therefore rejects EVERY identity-bearing tool with
-            // ERR_PRINCIPAL_REQUIRED (fail-closed, never a bypass). Warn LOUDLY at startup so the
-            // operator sees the root cause as a single visible signal, not a stream of per-tool 403s.
-            report_stdio_auth_unsupported(config.auth.enabled);
-            serve_stdio(memory, config.auth.enabled)
+    let result = match args.transport {
+        ServeTransport::Stdio => match check_startup_embedder(memory.as_ref()).await {
+            Ok(startup) => {
+                report_startup_embedder(&startup);
+                // stdio carries no HTTP request, so no Tower validator can run over it; the flag is
+                // threaded only for posture parity (an enabled stdio server has no producer yet).
+                // Auth-on over stdio therefore rejects EVERY identity-bearing tool with
+                // ERR_PRINCIPAL_REQUIRED (fail-closed, never a bypass). Warn LOUDLY at startup so the
+                // operator sees the root cause as a single visible signal, not a stream of per-tool 403s.
+                report_stdio_auth_unsupported(config.auth.enabled);
+                serve_stdio_with_consolidation(
+                    memory,
+                    config.auth.enabled,
+                    config.consolidation.enabled,
+                )
                 .await
                 .map_err(|error| CliError::Serve(error.to_string()))
-        }
+            }
+            Err(error) => Err(error),
+        },
         ServeTransport::Http => serve_http(memory, args, &config).await,
+    };
+    // Stop the heartbeat deterministically before exit, then log the final cumulative summary.
+    if let Some(task) = heartbeat_task {
+        task.abort();
+    }
+    if let Some(handle) = consolidation_handle {
+        handle.shutdown().await;
+    }
+    aionforge_mcp::log_traffic_totals("shutdown");
+    result
+}
+
+fn start_background_consolidation<E: Embedder + 'static>(
+    memory: &Arc<Memory<E>>,
+    config: &Config,
+) -> Option<ConsolidationHandle> {
+    if !config.consolidation.enabled {
+        tracing::info!(
+            target: "aionforge::serve",
+            background_managed = false,
+            "background consolidation disabled; foreground consolidate tool remains available",
+        );
+        return None;
+    }
+
+    tracing::info!(
+        target: "aionforge::serve",
+        background_managed = true,
+        tick_interval_secs = config.consolidation.tick_interval_secs,
+        batch_size = config.consolidation.batch_size,
+        "background consolidation enabled; foreground consolidate tool will return ERR_CONSOLIDATE_MANAGED",
+    );
+    Some(memory.start_consolidation(
+        RuleExtractor::with_default_rules_and_config(memory.pass_config().extraction),
+        RuleSummarizer::with_default_rules(),
+        RuleInducer::with_default_rules(),
+        memory.consolidation_config(),
+        memory.pass_config(),
+    ))
+}
+
+/// Environment variable overriding the traffic-heartbeat cadence, in whole seconds. `0` disables
+/// the heartbeat; unset uses [`aionforge_mcp::DEFAULT_TRAFFIC_HEARTBEAT_INTERVAL`]. An env knob
+/// (not a config field) keeps it operationally tunable without a schema change, mirroring the
+/// `RUST_LOG` / `AIONFORGE_LOG_FORMAT` logging controls.
+const TRAFFIC_HEARTBEAT_ENV: &str = "AIONFORGE_TRAFFIC_HEARTBEAT_SECS";
+
+/// Resolve the heartbeat cadence from the env override, falling back to the compiled-in default.
+/// An unparseable value falls back too — observability setup must never fail the server. Pure, so
+/// the precedence is unit-testable.
+fn resolve_heartbeat_interval(env: Option<&str>) -> std::time::Duration {
+    match env.and_then(|value| value.trim().parse::<u64>().ok()) {
+        Some(seconds) => std::time::Duration::from_secs(seconds),
+        None => aionforge_mcp::DEFAULT_TRAFFIC_HEARTBEAT_INTERVAL,
     }
 }
 
@@ -122,7 +195,7 @@ fn build_http_options(
 }
 
 async fn serve_http(
-    memory: Arc<aionforge::Memory<RuntimeEmbedder>>,
+    memory: Arc<Memory<RuntimeEmbedder>>,
     args: ServeArgs,
     config: &Config,
 ) -> Result<(), CliError> {
@@ -146,7 +219,12 @@ async fn serve_http(
         None => AuthPosture::disabled(),
     };
 
-    let service = streamable_http_service(memory, options, auth_posture)?;
+    let service = streamable_http_service_with_consolidation(
+        memory,
+        options,
+        auth_posture,
+        config.consolidation.enabled,
+    )?;
     let service = HttpMcpRouter {
         inner: service,
         validators: validators.map(Arc::new),
@@ -199,28 +277,25 @@ async fn shutdown_signal() -> std::io::Result<()> {
 }
 
 fn report_startup_embedder(status: &StartupEmbedderStatus) {
-    let mut stderr = std::io::stderr().lock();
-    let _ = writeln!(
-        stderr,
-        "aionforge serve: {}",
-        render_startup_embedder_status(status),
+    tracing::info!(
+        target: "aionforge::serve",
+        status = %render_startup_embedder_status(status),
+        "startup embedder check",
     );
 }
 
 fn report_shutdown_signal() {
-    let mut stderr = std::io::stderr().lock();
-    let _ = writeln!(stderr, "aionforge serve: shutdown signal received");
+    tracing::info!(target: "aionforge::serve", "shutdown signal received");
 }
 
 /// Warn loudly when auth is enabled on the stdio transport, where there is no HTTP producer to
 /// insert a validated principal: every identity-bearing tool then fails closed with
 /// `ERR_PRINCIPAL_REQUIRED`. A no-op when auth is disabled (the default), so the warning never
-/// fires on today's path. Surfaced on stderr (the same channel as the other startup advisories),
-/// since the CLI installs no tracing subscriber.
+/// fires on today's path. Emitted at `warn` through the global tracing subscriber installed in
+/// `main`; the advisory text is fixed and secret-free.
 fn report_stdio_auth_unsupported(auth_enabled: bool) {
     if let Some(warning) = stdio_auth_unsupported_warning(auth_enabled) {
-        let mut stderr = std::io::stderr().lock();
-        let _ = writeln!(stderr, "{warning}");
+        tracing::warn!(target: "aionforge::serve", "{warning}");
     }
 }
 
@@ -244,19 +319,18 @@ fn stdio_auth_unsupported_warning(auth_enabled: bool) -> Option<String> {
 /// each soft config advisory (`AuthConfig::startup_warnings`, which names issuers by index, never
 /// by value). No token, key, or JWKS is ever logged.
 fn report_auth_startup(auth: &AuthConfig, validators: &Option<AuthValidators>) {
-    let mut stderr = std::io::stderr().lock();
     match validators {
         None => {
-            let _ = writeln!(stderr, "aionforge serve: auth disabled (default)");
+            tracing::info!(target: "aionforge::serve", "auth disabled (default)");
         }
         Some(validators) => {
-            let _ = writeln!(
-                stderr,
-                "aionforge serve: auth enabled issuers={}",
-                validators.issuer_origins().len()
+            tracing::info!(
+                target: "aionforge::serve",
+                issuers = validators.issuer_origins().len(),
+                "auth enabled",
             );
             for warning in auth.startup_warnings() {
-                let _ = writeln!(stderr, "aionforge serve: auth warning: {warning}");
+                tracing::warn!(target: "aionforge::serve", "auth warning: {warning}");
             }
         }
     }
@@ -266,7 +340,7 @@ fn report_auth_startup(auth: &AuthConfig, validators: &Option<AuthValidators>) {
 ///
 /// Routes `/mcp` to the inner Streamable HTTP service and, when auth is enabled, gates it: it
 /// serves the RFC 9728 well-known metadata, extracts and validates the Bearer token, maps the
-/// claims to a principal, and inserts the [`ValidatedPrincipal`] into the request's
+/// claims to a principal, and inserts the [`ValidatedPrincipal`](aionforge_mcp::ValidatedPrincipal) into the request's
 /// `http::request::Parts.extensions` — the two-level nesting PR4 reads back downstream. When
 /// `validators` is `None` (the DEFAULT-OFF path) it is byte-for-byte the pre-PR5 router: `/mcp`
 /// delegates straight to the inner service and every other path 404s, with no validation, no
@@ -331,10 +405,165 @@ fn not_found_response() -> HttpResponse {
 
 #[cfg(test)]
 mod tests {
+    use std::future::Future;
+
+    use aionforge::{
+        CaptureRequest, CaptureVerdict, EmbedderModel, Embedding, Id, MemoryConfig, Role,
+        Timestamp, WriterContext,
+    };
     use aionforge_mcp::streamable_http_config;
+    use aionforge_store::{BoundQuery, QueryResult};
 
     use super::*;
     use crate::cli::SessionPostureArgs;
+
+    #[derive(Clone)]
+    struct FakeEmbedder {
+        model: EmbedderModel,
+    }
+
+    impl FakeEmbedder {
+        fn new() -> Self {
+            Self {
+                model: EmbedderModel {
+                    family: "fake".to_string(),
+                    version: "1".to_string(),
+                    dimension: 4,
+                },
+            }
+        }
+    }
+
+    #[derive(Debug)]
+    struct NeverFails;
+
+    impl std::fmt::Display for NeverFails {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("unreachable")
+        }
+    }
+
+    impl std::error::Error for NeverFails {}
+
+    impl Embedder for FakeEmbedder {
+        type Error = NeverFails;
+
+        fn embed(
+            &self,
+            inputs: &[String],
+        ) -> impl Future<Output = Result<Vec<Embedding>, Self::Error>> + Send {
+            let out = inputs
+                .iter()
+                .map(|_| Embedding::new(vec![1.0, 0.0, 0.0, 0.0]).expect("valid"))
+                .collect();
+            async move { Ok(out) }
+        }
+
+        fn model(&self) -> &EmbedderModel {
+            &self.model
+        }
+    }
+
+    fn now() -> Timestamp {
+        "2026-06-06T09:30:00-05:00[America/Chicago]"
+            .parse()
+            .expect("valid zoned datetime")
+    }
+
+    fn test_memory_with_config(config: &Config) -> Arc<Memory<FakeEmbedder>> {
+        let (consolidation, pass) = crate::consolidation_config::consolidation_settings(config);
+        let memory_config = MemoryConfig {
+            consolidation,
+            pass,
+            ..MemoryConfig::default()
+        };
+        Arc::new(
+            Memory::open_in_memory(FakeEmbedder::new(), &now(), memory_config)
+                .expect("open memory"),
+        )
+    }
+
+    fn fact_count(memory: &Memory<FakeEmbedder>) -> usize {
+        let query = BoundQuery::new("MATCH (f:Fact) RETURN f.id AS id");
+        match memory.store().execute(&query).expect("fact count query") {
+            QueryResult::Rows(rows) => rows.row_count(),
+            _ => 0,
+        }
+    }
+
+    async fn capture_svo(memory: &Memory<FakeEmbedder>) {
+        let receipt = memory
+            .capture(CaptureRequest {
+                content: "Alice uses Rust.".to_string(),
+                role: Role::User,
+                agent_id: Id::generate(),
+                teams: Vec::new(),
+                session_id: None,
+                captured_at: now(),
+                ingested_at: now(),
+                writer: WriterContext {
+                    model_family: "host".to_string(),
+                    model_version: None,
+                    transport: None,
+                    request_id: None,
+                    trust: 0.9,
+                    signed: None,
+                },
+                trusted: false,
+                namespace: None,
+                supersedes: None,
+            })
+            .await
+            .expect("capture");
+        assert_eq!(receipt.verdict, CaptureVerdict::New);
+    }
+
+    #[tokio::test]
+    async fn background_consolidation_default_off_does_not_start() {
+        let config = Config::default();
+        let memory = test_memory_with_config(&config);
+        capture_svo(memory.as_ref()).await;
+
+        let handle = start_background_consolidation(&memory, &config);
+
+        assert!(
+            handle.is_none(),
+            "default consolidation.enabled=false must not start a background loop"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(75)).await;
+        assert_eq!(
+            fact_count(memory.as_ref()),
+            0,
+            "without the background loop, raw episodes wait for an explicit consolidate call"
+        );
+    }
+
+    #[tokio::test]
+    async fn background_consolidation_enabled_derives_fact_and_shuts_down() {
+        let mut config = Config::default();
+        config.consolidation.enabled = true;
+        config.consolidation.tick_interval_secs = 1;
+        let memory = test_memory_with_config(&config);
+        capture_svo(memory.as_ref()).await;
+
+        let handle = start_background_consolidation(&memory, &config)
+            .expect("enabled config starts the background loop");
+
+        let mut derived = false;
+        for _ in 0..40 {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            if fact_count(memory.as_ref()) >= 1 {
+                derived = true;
+                break;
+            }
+        }
+        handle.shutdown().await;
+
+        assert!(
+            derived,
+            "the serve-owned background consolidator derived a fact without a tool call"
+        );
+    }
 
     /// A `serve http` invocation with every promoted knob absent: `listen`/`stateless`
     /// `None` and empty allow-lists, the "inherit the config" signal.
@@ -497,6 +726,28 @@ mod tests {
         );
         // And the built options must convert into a valid rmcp config (Origin validation on).
         streamable_http_config(options).expect("default loopback options build a valid config");
+    }
+
+    #[test]
+    fn heartbeat_interval_resolves_env_override_default_and_disable() {
+        use std::time::Duration;
+        // Unset: the compiled-in default.
+        assert_eq!(
+            resolve_heartbeat_interval(None),
+            aionforge_mcp::DEFAULT_TRAFFIC_HEARTBEAT_INTERVAL
+        );
+        // A valid override (whitespace-tolerant) wins.
+        assert_eq!(
+            resolve_heartbeat_interval(Some(" 60 ")),
+            Duration::from_secs(60)
+        );
+        // Zero disables (the caller checks is_zero before spawning).
+        assert_eq!(resolve_heartbeat_interval(Some("0")), Duration::ZERO);
+        // Garbage falls back to the default rather than failing the server.
+        assert_eq!(
+            resolve_heartbeat_interval(Some("soon")),
+            aionforge_mcp::DEFAULT_TRAFFIC_HEARTBEAT_INTERVAL
+        );
     }
 
     /// A non-empty resolved allow-list replaces the loopback default wholesale.
