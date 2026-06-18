@@ -44,29 +44,24 @@ use std::time::Duration;
 
 use aionforge_domain::Retriever;
 use aionforge_domain::authz::Principal;
-use aionforge_domain::blocks::{Identity, Stats};
 use aionforge_domain::contracts::Embedder;
 use aionforge_domain::embedding::{EmbedderModel, Embedding};
-use aionforge_domain::ids::{ContentHash, Id};
-use aionforge_domain::namespace::Namespace;
-use aionforge_domain::nodes::episodic::{ConsolidationState, Episode, Role};
-use aionforge_domain::time::Timestamp;
+use aionforge_domain::ids::Id;
 use aionforge_embed::HttpEmbedder;
 use aionforge_eval::{
-    BeamMessage, FloorReport, SweepReport, is_rejected, ndcg_at_k, parse_conversations, ranked_ids,
-    recall_at_k,
+    BeamConversation, FloorReport, IngestMode, IngestSession, SweepReport, is_rejected, ndcg_at_k,
+    parse_conversations, ranked_ids, recall_at_k, seed_sessions_with_embeddings,
 };
 use aionforge_retrieval::{
     HybridRetriever, QueryClass, RecallBundle, RecallOptions, RecallQuery, RetrieverConfig,
 };
-use aionforge_store::{Store, StoreConfig};
+use aionforge_store::Store;
 use secrecy::SecretString;
 
 const ENDPOINT: &str = "https://openrouter.ai/api/v1";
 const MODEL: &str = "google/gemini-embedding-2";
 /// The model's native embedding dimension (what the API returns without a `dimensions` field).
 const NATIVE_DIM: u32 = 3072;
-const T0: &str = "2026-01-01T00:00:00Z[UTC]";
 const KEY_ENV: &str = "AIONFORGE_EMBEDDER_API_KEY";
 /// Override the normalized BEAM JSONL path; defaults to the prepare_beam.py output.
 const DATA_ENV: &str = "AIONFORGE_BEAM_DATA";
@@ -240,10 +235,6 @@ impl DimAcc {
     }
 }
 
-fn ts(text: &str) -> Timestamp {
-    text.parse().expect("valid timestamp")
-}
-
 fn default_data_path() -> PathBuf {
     if let Ok(path) = std::env::var(DATA_ENV) {
         return PathBuf::from(path);
@@ -325,51 +316,22 @@ async fn embed_all(embedder: &HttpEmbedder, texts: &[String]) -> HashMap<String,
     cache
 }
 
-fn seed_store(
-    messages: &[BeamMessage],
+async fn seed_store(
+    conversation: &BeamConversation,
     cache: &HashMap<String, Embedding>,
     dim: u32,
 ) -> (Arc<Store>, HashMap<String, Id>) {
-    let store = Store::open_with_config(StoreConfig {
-        embedding_dimension: dim,
-    })
-    .expect("open store");
-    store.migrate(&ts(T0)).expect("migrate store");
-
-    let mut id_map = HashMap::new();
-    for message in messages {
-        let id = Id::generate();
-        id_map.insert(message.id.clone(), id);
-        let episode = Episode {
-            identity: Identity {
-                id,
-                ingested_at: ts(T0),
-                namespace: Namespace::Global,
-                expired_at: None,
-            },
-            stats: Stats {
-                importance: 0.5,
-                trust: 0.5,
-                last_access: ts(T0),
-                access_count_recent: 0,
-                referenced_count: 0,
-                surprise: 0.1,
-                is_pinned: false,
-            },
-            content: message.text.clone(),
-            role: Role::User,
-            captured_at: ts(T0),
-            agent_id: Id::generate(),
-            session_id: None,
-            content_hash: ContentHash::of(message.text.as_bytes()),
-            embedding: cache.get(&message.text).cloned(),
-            embedder_model: None,
-            consolidation_state: ConsolidationState::Raw,
-            origin: None,
-        };
-        store.insert_episode(&episode).expect("insert episode");
-    }
-    (Arc::new(store), id_map)
+    let session = IngestSession::from(conversation);
+    let outcome = seed_sessions_with_embeddings::<CachingEmbedder>(
+        &[session],
+        IngestMode::RawTurns,
+        cache,
+        None,
+        dim,
+    )
+    .await
+    .expect("seed BEAM conversation through ingest adapter");
+    (outcome.store, outcome.id_map)
 }
 
 async fn recall(
@@ -580,7 +542,7 @@ async fn beam_floor_recall() {
                 .iter()
                 .map(|(text, vector)| (text.clone(), resize(vector, dim)))
                 .collect();
-            let (store, id_map) = seed_store(&conversation.messages, &cache, dim);
+            let (store, id_map) = seed_store(conversation, &cache, dim).await;
             let retriever = HybridRetriever::new(
                 store,
                 CachingEmbedder {
