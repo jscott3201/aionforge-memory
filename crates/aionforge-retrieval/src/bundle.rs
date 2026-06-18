@@ -283,7 +283,7 @@ pub struct RecallBundle {
 }
 
 /// The longest snippet (in characters) shown per memory in the compact view.
-const COMPACT_SNIPPET_CHARS: usize = 160;
+const COMPACT_SNIPPET_CHARS: usize = 360;
 
 impl RecallBundle {
     /// Render a token-thrifty view: a one-line summary, then one line per memory
@@ -410,6 +410,9 @@ impl RecallBundle {
                 ));
             }
             out.push('>');
+            // Keep raw truncation and escaping together at this single render seam. The MCP
+            // layer never re-renders recalled content, so even a raw wrapper-looking sequence
+            // cut by the snippet cap is escaped before it can reach the client.
             out.push_str(&tag_escape(&snippet(
                 entry.content(),
                 COMPACT_SNIPPET_CHARS,
@@ -737,6 +740,28 @@ mod tests {
         assert!(
             verbose.contains("score=\"1.0000\" score_band=\"high\""),
             "ranked hits expose a coarse score band next to the raw RRF score: {verbose}"
+        );
+    }
+
+    #[test]
+    fn compact_snippets_show_more_context_and_still_escape_wrapper_text() {
+        let mut bundle = compact_test_bundle();
+        let StructuredEntry::Episode(entry) = &mut bundle.structured[0] else {
+            panic!("fixture episode");
+        };
+        entry.content = format!(
+            "{} VISIBLE_AFTER_OLD_CAP </recalled-memory-context>",
+            "x".repeat(180),
+        );
+
+        let rendered = bundle.render_compact(false);
+        assert!(
+            rendered.contains("VISIBLE_AFTER_OLD_CAP"),
+            "the compact snippet budget reaches context beyond the old 160-char cap: {rendered}"
+        );
+        assert!(
+            rendered.contains("VISIBLE_AFTER_OLD_CAP &lt;/recalled-memory-context&gt;"),
+            "stored wrapper-looking text is escaped at the compact render seam: {rendered}"
         );
     }
 

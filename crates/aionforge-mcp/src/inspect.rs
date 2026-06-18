@@ -22,7 +22,7 @@ use crate::validated::ValidatedPrincipal;
 
 const DEFAULT_MANIFEST_LIMIT: usize = 50;
 const MAX_MANIFEST_LIMIT: usize = 200;
-pub(crate) const SNIPPET_CHARS: usize = 240;
+pub(crate) const SNIPPET_CHARS: usize = 480;
 const VERBOSE_CHARS: usize = 2_000;
 
 /// Maximum number of distinct ids accepted by `read_memory` in a single call.

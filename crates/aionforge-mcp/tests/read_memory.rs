@@ -350,9 +350,9 @@ fn the_distinct_id_cap_is_measured_after_dedup() {
 fn verbose_widens_the_snippet_cap_between_default_and_full() {
     let memory = memory();
     let alice = Id::generate();
-    // MID sits past the 240-char default cap but within the 2000-char verbose cap; TAIL sits
+    // MID sits past the default snippet cap but within the 2000-char verbose cap; TAIL sits
     // past the verbose cap so only full reveals it.
-    let body = format!("HEAD_{}_MID_{}_TAIL", "x".repeat(300), "x".repeat(2000));
+    let body = format!("HEAD_{}_MID_{}_TAIL", "x".repeat(600), "x".repeat(2000));
     let id = seed(
         &memory,
         &body,
