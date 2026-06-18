@@ -23,3 +23,10 @@ _*/
 **/beam-data/
 **/beam-100k*.jsonl
 *.parquet
+
+# LongMemEval benchmark data is external and is NEVER vendored — it lives outside
+# the repo under ~/.aionforge/longmemeval-data unless AIONFORGE_LONGMEMEVAL_DATA
+# points elsewhere.
+**/longmemeval-data/
+**/LongMemEval*.json
+**/LongMemEval*.jsonl

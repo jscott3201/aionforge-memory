@@ -94,3 +94,25 @@ BEAM north-star / LongMemEval A/B, local on-demand:
 Populated as the eval track lands: ingest adapter (BRIEF-6) -> LongMemEval
 Recall@k/nDCG@k/MRR scorer -> LoCoMo/BEIR smokes -> BEAM 128K+ tiers
 (cost-gated).
+
+### LongMemEval_S Retrieval A/B
+
+Date: 2026-06-18
+
+Benchmark PR: pending (BRIEF-8)
+
+Runner:
+`cargo test -p aionforge-eval --test longmemeval_scorer longmemeval_s_real_embedder -- --ignored --nocapture`
+
+Fixture: external LongMemEval_S via `AIONFORGE_LONGMEMEVAL_DATA` or
+`~/.aionforge/longmemeval-data/LongMemEval_S.json`
+
+Metrics: Recall@k, nDCG@k, MRR
+
+| arm | fixture | k | questions | recall@k | nDCG@k | MRR | status |
+|---|---|---:|---:|---:|---:|---:|---|
+| RRF default | pending data acquisition | 10 | pending | pending | pending | pending | no local LongMemEval_S file present in this checkout |
+
+Decision: pending real run. The scorer and key-gated local runner landed here;
+replace this row with measured baseline values once LongMemEval_S is available
+locally.

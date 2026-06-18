@@ -18,6 +18,8 @@
 //! - [`beam`] — a loader for a normalized slice of the external BEAM long-term-memory
 //!   benchmark (never vendored), used by the on-demand source-recall-under-floor runner.
 //! - [`ingest_adapter`] — a session/time-aware seed path for benchmark conversations.
+//! - [`longmemeval`] — a LongMemEval retrieval-label loader and Recall@k/nDCG@k/MRR
+//!   scorer over seeded benchmark sessions.
 //! - [`scrub`] — a secret/PII gate run over any fixture before it becomes a baseline.
 //!
 //! The embedder-backed floor-sweep *runner* (which embeds a fixture once and re-runs
@@ -27,6 +29,7 @@
 pub mod beam;
 pub mod fixture;
 pub mod ingest_adapter;
+pub mod longmemeval;
 pub mod metrics;
 pub mod report;
 pub mod scrub;
@@ -36,6 +39,12 @@ pub use fixture::{Graded, MemoryRow, QueryRow, parse_memories, parse_queries};
 pub use ingest_adapter::{
     IngestCorpus, IngestError, IngestMode, IngestOutcome, IngestSession, IngestTurn, seed_sessions,
     seed_sessions_with_embeddings,
+};
+pub use longmemeval::{
+    DEFAULT_LONGMEMEVAL_DATA_PATH, GoldGranularity, LONGMEMEVAL_DATA_ENV, LongMemEvalArm,
+    LongMemEvalArmReport, LongMemEvalCorpus, LongMemEvalError, LongMemEvalGold,
+    LongMemEvalQuestion, LongMemEvalQuestionScore, LongMemEvalReport, LongMemEvalScoringOptions,
+    parse_longmemeval, score_longmemeval, score_ranked_ids,
 };
 pub use metrics::{
     CorpusMetrics, community_redundancy, false_rejection_rate, is_rejected, max_dense_similarity,
