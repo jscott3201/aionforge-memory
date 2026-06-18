@@ -88,6 +88,8 @@ This is reference and guides, not planning or changelogs.
   off-by-default skill induction.
 - [Agent plugin](plugins.md) — the repo-shipped plugin package with Agent Skills
   and MCP client manifests.
+- [Operator console](operator-console.md) — the SvelteKit static-SPA console
+  skeleton, validation gate, and current serving boundary.
 - [Note link evolution](link-evolution.md) — the deterministic off-cursor layer that draws and
   revises bi-temporal `RELATES_TO` edges between notes, run *outside* the consolidation cursor so it
   can never perturb the byte-deterministic canonical path, behind a closed relationship vocabulary,

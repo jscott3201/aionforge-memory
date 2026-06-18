@@ -126,6 +126,14 @@ cargo test --workspace --locked --all-features --doc
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace --lib --document-private-items --locked
 ```
 
+For console changes under `ui/console`, also run:
+
+```bash
+cd ui/console
+pnpm install --frozen-lockfile
+pnpm validate
+```
+
 Fast repository gates:
 
 ```bash
@@ -146,8 +154,9 @@ bash .github/scripts/check-thirdparty-current.sh
 ```
 
 The CI workflow runs on pull requests into `development`. Doc-only changes still
-run formatting and repository safety gates; the heavier Rust build, lint, test,
-and documentation matrix runs at the `development` -> `main` release gate, not on
+run formatting and repository safety gates; console changes run the Svelte
+format/lint/type/build gate; the heavier Rust build, lint, test, and
+documentation matrix runs at the `development` -> `main` release gate, not on
 every development PR. See `CONTRIBUTING.md` for the full branch/release model.
 
 ## Editing Guidance

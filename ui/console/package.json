@@ -1,0 +1,40 @@
+{
+  "name": "@aionforge/console",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20.19"
+  },
+  "scripts": {
+    "dev": "vite dev --host 127.0.0.1",
+    "build": "vite build",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "eslint .",
+    "preview": "vite preview --host 127.0.0.1",
+    "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+    "validate": "pnpm format:check && pnpm lint && pnpm check && pnpm build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "svelte-lucide": "3.0.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@sveltejs/adapter-static": "3.0.10",
+    "@sveltejs/kit": "2.65.2",
+    "@sveltejs/vite-plugin-svelte": "7.1.2",
+    "@types/node": "25.9.3",
+    "eslint": "10.5.0",
+    "eslint-plugin-svelte": "3.19.0",
+    "globals": "17.6.0",
+    "prettier": "3.8.4",
+    "prettier-plugin-svelte": "4.1.1",
+    "svelte": "5.56.3",
+    "svelte-check": "4.6.0",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.61.1",
+    "vite": "8.0.16"
+  }
+}
