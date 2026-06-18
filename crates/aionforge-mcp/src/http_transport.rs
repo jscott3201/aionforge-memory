@@ -304,7 +304,7 @@ pub fn streamable_http_config(
 /// Mount the returned service under [`STREAMABLE_HTTP_ENDPOINT`]. The `auth` posture's `enabled`
 /// flag drives the handler: [`AuthPosture::disabled`] (the default-off path) reproduces today's
 /// body-only behavior exactly; an enabled posture requires a validated request extension on every
-/// identity-resolving tool (which a Tower validator inserts upstream — see
+/// identity-resolving tool (which an HTTP validator inserts upstream — see
 /// [`AuthValidators`](crate::AuthValidators)). The posture's issuer origins ride `server_status`.
 ///
 /// # Errors
