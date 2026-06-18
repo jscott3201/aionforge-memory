@@ -3,100 +3,23 @@
 //! Exercises the tool functions directly with a fake embedder; the rmcp handler that
 //! wraps them is compile-verified. Hermetic — no transport, no network.
 
-use aionforge_domain::contracts::Embedder;
-use aionforge_domain::embedding::{EmbedderModel, Embedding};
+mod common;
+
 use aionforge_domain::ids::Id;
 use aionforge_domain::time::Timestamp;
 use aionforge_engine::{Memory, MemoryConfig, RetrieverConfig};
 use aionforge_mcp::{
-    AionforgeMcp, AuthEnabled, CaptureToolParams, MCP_SURFACE_GUIDE_RESOURCE_URI,
-    RECALL_UNTRUSTED_DATA_PROMPT, RECALL_UNTRUSTED_DATA_PROMPT_NAME,
-    RECALL_UNTRUSTED_DATA_PROMPT_RESOURCE_URI, SearchToolParams, TOOL_APPROVAL_POLICY_RESOURCE_URI,
-    TOOL_MANIFEST_RESOURCE_URI, capture_tool, search_tool,
+    AionforgeMcp, AuthEnabled, MCP_SURFACE_GUIDE_RESOURCE_URI, RECALL_UNTRUSTED_DATA_PROMPT,
+    RECALL_UNTRUSTED_DATA_PROMPT_NAME, RECALL_UNTRUSTED_DATA_PROMPT_RESOURCE_URI, SearchToolParams,
+    TOOL_APPROVAL_POLICY_RESOURCE_URI, TOOL_MANIFEST_RESOURCE_URI, capture_tool, search_tool,
 };
+use common::{FakeEmbedder, capture_params, memory, now};
 use rmcp::ServiceExt;
 use rmcp::model::{GetPromptRequestParams, PromptMessageContent, ReadResourceRequestParams};
-use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
 type TestResult = Result<(), Box<dyn std::error::Error + Send + Sync>>;
-
-#[derive(Clone)]
-struct FakeEmbedder {
-    model: EmbedderModel,
-}
-
-impl FakeEmbedder {
-    fn new() -> Self {
-        Self {
-            model: EmbedderModel {
-                family: "fake".to_string(),
-                version: "1".to_string(),
-                dimension: 4,
-            },
-        }
-    }
-}
-
-#[derive(Debug)]
-struct FakeEmbedError;
-
-impl std::fmt::Display for FakeEmbedError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("fake embedder is down")
-    }
-}
-
-impl std::error::Error for FakeEmbedError {}
-
-impl Embedder for FakeEmbedder {
-    type Error = FakeEmbedError;
-
-    fn embed(
-        &self,
-        inputs: &[String],
-    ) -> impl Future<Output = Result<Vec<Embedding>, Self::Error>> + Send {
-        let out = inputs
-            .iter()
-            .map(|_| Embedding::new(vec![1.0, 0.0, 0.0, 0.0]).expect("valid"))
-            .collect();
-        async move { Ok(out) }
-    }
-
-    fn model(&self) -> &EmbedderModel {
-        &self.model
-    }
-}
-
-fn now() -> Timestamp {
-    "2026-06-06T09:30:00-05:00[America/Chicago]"
-        .parse()
-        .expect("valid zoned datetime")
-}
-
-fn memory() -> Arc<Memory<FakeEmbedder>> {
-    Arc::new(
-        Memory::open_in_memory(FakeEmbedder::new(), &now(), MemoryConfig::default())
-            .expect("open memory"),
-    )
-}
-
-fn capture_params(content: &str, agent_id: &str) -> CaptureToolParams {
-    CaptureToolParams {
-        content: content.to_string(),
-        agent_id: Some(agent_id.to_string()),
-        principal: None,
-        teams: Vec::new(),
-        target_namespace: None,
-        role: None,
-        session_id: None,
-        trust: None,
-        model_family: None,
-        captured_at: None,
-        supersedes: None,
-    }
-}
 
 #[tokio::test]
 async fn mcp_transport_advertises_and_serves_prompts_and_resources() -> TestResult {

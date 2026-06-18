@@ -1,16 +1,9 @@
-//! The capture and search tool logic, free of the MCP transport so it can be tested
-//! directly (04 §1, 03 §6).
+//! Capture and search tool logic, free of MCP transport so tests can call it directly.
 //!
-//! Output is compact by default — a one-line receipt for a capture, and a one-line
-//! summary plus one short line per memory for a search — to keep an agent's context
-//! small; `verbose` opts into per-memory detail. The search rendering is delegated to
-//! [`RecallBundle::render_compact`](aionforge_engine::RecallBundle::render_compact) so the
-//! recall security contract (the `recalled-memory-context` wrapper and `tag_escape` on
-//! every snippet, 07 §4) is applied in one place and never re-derived here. Captures
-//! default to the writer's private namespace. A host may deliberately assert team
-//! membership and a `team:<name>` target to write shared memory; the capture funnel's
-//! authorizer still gates the resolved namespace. Search is authorized against the
-//! caller-supplied viewer namespace plus the teams the host asserts for that reader.
+//! Output stays compact by default. Search text is delegated to
+//! [`RecallBundle::render_compact`](aionforge_engine::RecallBundle::render_compact), so the
+//! recall wrapper and tag escaping are applied in one place. Captures default to the writer's
+//! private namespace; shared writes and searches are explicitly principal-scoped.
 
 use aionforge_domain::contracts::Embedder;
 use aionforge_domain::ids::Id;
@@ -25,20 +18,14 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 
 use crate::principal::{AuthEnabled, HostPrincipalToolParam, resolve_reader, resolve_writer};
+use crate::structured::StructuredToolOutput;
 use crate::validated::ValidatedPrincipal;
 
 /// The default number of hits a search returns when the caller does not say.
 const DEFAULT_LIMIT: usize = 10;
 /// The most hits a single search will return, so a response stays small.
 const MAX_LIMIT: usize = 100;
-/// The most candidates a single search will generate per signal before fusion (the recall
-/// fan-out). Decoupled from `MAX_LIMIT` so a caller can cast a wide net for recall while
-/// still returning a small bundle; capped so one query stays bounded.
-///
-/// This bounds the per-signal `k` (how many candidates fusion sees), not the namespace-scoped
-/// episode scan itself: the scoped lexical/dense passes still examine the reader's whole
-/// visible scope to pick their top-`k`. The wall-clock cost of that scan is bounded separately
-/// by the recall deadline ([`aionforge_config::RetrievalConfig::recall_deadline_ms`]).
+/// The most candidates a search will generate per signal before fusion.
 const MAX_FANOUT: usize = 1000;
 /// The most items a single `batch_capture` call accepts, so one call stays bounded.
 pub const MAX_BATCH_ITEMS: usize = 64;
@@ -485,6 +472,21 @@ pub async fn search_tool<E: Embedder>(
     extension: Option<ValidatedPrincipal>,
     auth_enabled: AuthEnabled,
 ) -> Result<String, String> {
+    Ok(
+        search_tool_output(memory, params, now, extension, auth_enabled)
+            .await?
+            .text,
+    )
+}
+
+/// Run recall and return stable compact text plus structured search results.
+pub(crate) async fn search_tool_output<E: Embedder>(
+    memory: &Memory<E>,
+    params: SearchToolParams,
+    now: &Timestamp,
+    extension: Option<ValidatedPrincipal>,
+    auth_enabled: AuthEnabled,
+) -> Result<StructuredToolOutput, String> {
     // A reader is an agent: recall scopes to the global space, the reader's own private
     // namespace, and the teams the host asserts. A non-agent viewer has no reader identity,
     // so it is rejected rather than silently widened.
@@ -544,7 +546,7 @@ pub async fn search_tool<E: Embedder>(
     let rendered = bundle.render_compact(verbose);
     // Measure the realized served size once, at the single render seam, before handing it back.
     crate::telemetry::record_recall_served("search", &rendered);
-    Ok(rendered)
+    Ok(crate::structured::search::output(rendered, &bundle))
 }
 
 /// Parse the optional role string, defaulting to `user`.

@@ -359,7 +359,10 @@ ids are silently absent; `full=true` returns untruncated bodies);
 `session_manifest` lists the visible captured memories for a session. `audit_history` reads the principal-scoped audit subgraph by
 subject, by `kind`, or by subject+kind; when `subject_id` is omitted, `kind` is
 required and the compact output uses `subject=*` while listing each row's
-subject. Mutating tools are `capture`, `batch_capture`, `consolidate`, `forget`,
+subject. These read-like tools preserve their compact text output and also attach
+MCP `structuredContent` DTOs; `aionforge://manifest/tools.json` lists the schema
+for each tool so UI clients can render typed state without scraping the recall
+wrapper. Mutating tools are `capture`, `batch_capture`, `consolidate`, `forget`,
 `unforget`, `pin`, `unpin`, `work_create`, `work_advance`, and `work_link`;
 configure clients to ask before running them unless the host has a stronger local
 policy. `pin`/`unpin` hold or release a memory against decay; `work_create`,

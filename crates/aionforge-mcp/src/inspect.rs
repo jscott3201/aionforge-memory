@@ -5,11 +5,10 @@ use std::collections::{HashMap, HashSet};
 use aionforge_domain::authz::VisibleSet;
 use aionforge_domain::contracts::Embedder;
 use aionforge_domain::ids::Id;
-use aionforge_domain::nodes::core::{BlockKind, CoreBlock};
+use aionforge_domain::nodes::core::CoreBlock;
 use aionforge_domain::nodes::episodic::{Episode, Role};
 use aionforge_domain::nodes::forensic::ProvenanceRecord;
-use aionforge_domain::nodes::semantic::FactStatus;
-use aionforge_domain::nodes::work::{Tag, WorkItem, WorkStatus};
+use aionforge_domain::nodes::work::{Tag, WorkItem};
 use aionforge_domain::time::Timestamp;
 // `ResolvedMemory` is a store-crate type; `aionforge-mcp` depends on the store only through
 // the engine re-export (the store is a dev-dependency here), so it is named via the engine.
@@ -18,6 +17,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::principal::{AuthEnabled, HostPrincipalToolParam, resolve_reader};
+use crate::render::{render_episode_line, render_memory_line};
+use crate::structured::StructuredToolOutput;
 use crate::validated::ValidatedPrincipal;
 
 const DEFAULT_MANIFEST_LIMIT: usize = 50;
@@ -153,6 +154,16 @@ pub fn read_memory_tool<E: Embedder>(
     extension: Option<ValidatedPrincipal>,
     auth_enabled: AuthEnabled,
 ) -> Result<String, String> {
+    Ok(read_memory_tool_output(memory, params, extension, auth_enabled)?.text)
+}
+
+/// Read visible memories as stable text plus a structured DTO for UI clients.
+pub(crate) fn read_memory_tool_output<E: Embedder>(
+    memory: &Memory<E>,
+    params: ReadMemoryToolParams,
+    extension: Option<ValidatedPrincipal>,
+    auth_enabled: AuthEnabled,
+) -> Result<StructuredToolOutput, String> {
     // Parse every id upfront (fail fast on malformed input before any store access), then
     // dedupe on the parsed Id so equivalent UUID spellings collapse to a single read. The
     // empty/too-many gates and the requested count are measured on this distinct-Id set, so
@@ -294,7 +305,14 @@ pub fn read_memory_tool<E: Embedder>(
     }
     out.push_str("\n</recalled-memory-context>");
     crate::telemetry::record_recall_served("read_memory", &out);
-    Ok(out)
+    Ok(crate::structured::inspect::read_memory(
+        out,
+        parsed.len(),
+        &found_memories,
+        &superseded_by,
+        &provenance,
+        max_chars,
+    ))
 }
 
 /// Render a visible session handoff manifest.
@@ -307,6 +325,16 @@ pub fn session_manifest_tool<E: Embedder>(
     extension: Option<ValidatedPrincipal>,
     auth_enabled: AuthEnabled,
 ) -> Result<String, String> {
+    Ok(session_manifest_tool_output(memory, params, extension, auth_enabled)?.text)
+}
+
+/// Render a visible session handoff as stable text plus structured episode records.
+pub(crate) fn session_manifest_tool_output<E: Embedder>(
+    memory: &Memory<E>,
+    params: SessionManifestToolParams,
+    extension: Option<ValidatedPrincipal>,
+    auth_enabled: AuthEnabled,
+) -> Result<StructuredToolOutput, String> {
     let session_id = parse_id(&params.session_id, "SESSION_ID")?;
     let principal = resolve_reader(
         params.viewer.as_deref(),
@@ -384,7 +412,7 @@ pub fn session_manifest_tool<E: Embedder>(
     };
     let rendered = render_session_manifest(
         &session_id,
-        visible_episodes,
+        &visible_episodes,
         limit,
         total_visible,
         superseded_hidden,
@@ -392,7 +420,19 @@ pub fn session_manifest_tool<E: Embedder>(
         manifest_chars,
     );
     crate::telemetry::record_recall_served("session_manifest", &rendered);
-    Ok(rendered)
+    let next_for_structured = next
+        .as_ref()
+        .map(|cursor| (cursor.ingested_at.to_string(), cursor.id.to_string()));
+    Ok(crate::structured::inspect::session_manifest(
+        rendered,
+        &session_id,
+        &visible_episodes,
+        limit,
+        total_visible,
+        superseded_hidden,
+        next_for_structured,
+        manifest_chars,
+    ))
 }
 
 pub(crate) fn parse_id(raw: &str, field: &str) -> Result<Id, String> {
@@ -455,7 +495,7 @@ fn dedupe_ids(ids: Vec<Id>) -> Vec<Id> {
 
 fn render_session_manifest(
     session_id: &Id,
-    episodes: Vec<(Episode, Option<Id>)>,
+    episodes: &[(Episode, Option<Id>)],
     limit: usize,
     total_visible: usize,
     superseded_hidden: usize,
@@ -478,7 +518,7 @@ fn render_session_manifest(
         // session_manifest never surfaces creation provenance — it is a handoff index, and the
         // by-id read_memory path is the place to ask "who wrote this".
         out.push_str(&render_episode_line(
-            &episode,
+            episode,
             superseded_by.as_ref(),
             None,
             max_chars,
@@ -524,226 +564,4 @@ fn render_session_manifest_cursor(cursor: Option<&SessionManifestCursor>) -> Str
             .expect("session manifest cursor serializes")
         })
         .unwrap_or_else(|| "none".to_string())
-}
-
-fn render_episode_line(
-    episode: &Episode,
-    superseded_by: Option<&Id>,
-    provenance: Option<&ProvenanceRecord>,
-    max_chars: usize,
-) -> String {
-    let supersedes = episode.origin.as_ref().and_then(|origin| origin.supersedes);
-    format!(
-        "<memory id=\"{}\" kind=\"episode\" ns=\"{}\" role=\"{}\" captured_at=\"{}\" ingested_at=\"{}\" session=\"{}\" supersedes=\"{}\" superseded_by=\"{}\"{}>{}</memory>",
-        attr_escape(&episode.identity.id.to_string()),
-        attr_escape(&episode.identity.namespace.to_string()),
-        role_name(episode),
-        attr_escape(&episode.captured_at.to_string()),
-        attr_escape(&episode.identity.ingested_at.to_string()),
-        attr_escape(&render_optional_id(episode.session_id.as_ref())),
-        attr_escape(&render_optional_id(supersedes.as_ref())),
-        attr_escape(&render_optional_id(superseded_by)),
-        provenance_attrs(provenance),
-        tag_escape(&truncate_chars(&episode.content, max_chars))
-    )
-}
-
-/// The creation-provenance attributes for an episode's `<memory>` line, or an empty string when
-/// there is no record (only captured episodes carry one) — the caller fetches provenance only
-/// under verbose/full, so a `None` here means "not requested" or "not an episode/no record".
-///
-/// `trust_at_write` is the write-time snapshot, deliberately named apart from search's rank-time
-/// `trust` so the two distinct numbers are never conflated. `written_at` is the provenance
-/// record's own instant — for a raw capture it equals the episode's `ingested_at` on the same
-/// line by construction (both stamped in the one capture transaction), and is surfaced as part of
-/// the self-contained provenance block rather than left for the reader to correlate. Every value
-/// is `attr_escape`d, so a hostile stored field cannot break out of its attribute.
-fn provenance_attrs(provenance: Option<&ProvenanceRecord>) -> String {
-    let Some(record) = provenance else {
-        return String::new();
-    };
-    format!(
-        " writer=\"{}\" model_family=\"{}\" model_version=\"{}\" trust_at_write=\"{:.2}\" written_at=\"{}\"",
-        attr_escape(&record.writer_agent_id.to_string()),
-        attr_escape(&record.model_family),
-        attr_escape(record.model_version.as_deref().unwrap_or("none")),
-        record.trust_at_write,
-        attr_escape(&record.identity.ingested_at.to_string()),
-    )
-}
-
-/// Render one resolved memory of any lifecycle kind as a `<memory>` line.
-///
-/// Per-kind dispatch over [`ResolvedMemory`]. The Episode arm delegates to
-/// [`render_episode_line`]; with `provenance: None` its output stays **byte-identical** to the
-/// episode-only era (and `session_manifest`/`work` reads, which pass `None`, are left untouched).
-/// `provenance` is **episode-only** — every other arm ignores it (those kinds carry no
-/// `ProvenanceRecord`) — and is populated only on a verbose/full `read_memory`. Every arm reuses
-/// the same `attr_escape`/`tag_escape`/`truncate_chars` helpers, so escaping and the body char
-/// cap are uniform across kinds.
-pub(crate) fn render_memory_line(
-    memory: &ResolvedMemory,
-    superseded_by: Option<&Id>,
-    provenance: Option<&ProvenanceRecord>,
-    max_chars: usize,
-) -> String {
-    match memory {
-        ResolvedMemory::Episode(episode) => {
-            render_episode_line(episode, superseded_by, provenance, max_chars)
-        }
-        ResolvedMemory::Fact(fact) => format!(
-            "<memory id=\"{}\" kind=\"fact\" ns=\"{}\" ingested_at=\"{}\" predicate=\"{}\" status=\"{}\">{}</memory>",
-            attr_escape(&fact.identity.id.to_string()),
-            attr_escape(&fact.identity.namespace.to_string()),
-            attr_escape(&fact.identity.ingested_at.to_string()),
-            attr_escape(&fact.predicate),
-            fact_status_tag(fact.status),
-            tag_escape(&truncate_chars(&fact.statement, max_chars)),
-        ),
-        ResolvedMemory::Entity(entity) => {
-            // Entity has no single text field, so the body is the canonical name plus the
-            // description when present — the design-of-record's pinned format.
-            let mut body = entity.canonical_name.clone();
-            if let Some(description) = &entity.description {
-                body.push_str(" — ");
-                body.push_str(description);
-            }
-            format!(
-                "<memory id=\"{}\" kind=\"entity\" ns=\"{}\" ingested_at=\"{}\" entity_type=\"{}\">{}</memory>",
-                attr_escape(&entity.identity.id.to_string()),
-                attr_escape(&entity.identity.namespace.to_string()),
-                attr_escape(&entity.identity.ingested_at.to_string()),
-                attr_escape(&entity.entity_type),
-                tag_escape(&truncate_chars(&body, max_chars)),
-            )
-        }
-        ResolvedMemory::Note(note) => format!(
-            "<memory id=\"{}\" kind=\"note\" ns=\"{}\" ingested_at=\"{}\">{}</memory>",
-            attr_escape(&note.identity.id.to_string()),
-            attr_escape(&note.identity.namespace.to_string()),
-            attr_escape(&note.identity.ingested_at.to_string()),
-            tag_escape(&truncate_chars(&note.content, max_chars)),
-        ),
-        ResolvedMemory::Skill(skill) => format!(
-            "<memory id=\"{}\" kind=\"skill\" ns=\"{}\" ingested_at=\"{}\" name=\"{}\" version=\"{}\" deprecated=\"{}\">{}</memory>",
-            attr_escape(&skill.identity.id.to_string()),
-            attr_escape(&skill.identity.namespace.to_string()),
-            attr_escape(&skill.identity.ingested_at.to_string()),
-            attr_escape(&skill.name),
-            skill.version,
-            skill.deprecated_at.is_some(),
-            tag_escape(&truncate_chars(&skill.description, max_chars)),
-        ),
-        ResolvedMemory::BadPattern(pattern) => format!(
-            "<memory id=\"{}\" kind=\"bad_pattern\" ns=\"{}\" ingested_at=\"{}\" observed_at=\"{}\">{}</memory>",
-            attr_escape(&pattern.identity.id.to_string()),
-            attr_escape(&pattern.identity.namespace.to_string()),
-            attr_escape(&pattern.identity.ingested_at.to_string()),
-            attr_escape(&pattern.observed_at.to_string()),
-            tag_escape(&truncate_chars(&pattern.description, max_chars)),
-        ),
-        ResolvedMemory::Core(core) => format!(
-            "<memory id=\"{}\" kind=\"core\" ns=\"{}\" ingested_at=\"{}\" block_kind=\"{}\">{}</memory>",
-            attr_escape(&core.identity.id.to_string()),
-            attr_escape(&core.identity.namespace.to_string()),
-            attr_escape(&core.identity.ingested_at.to_string()),
-            block_kind_tag(core.block_kind),
-            tag_escape(&truncate_chars(&core.content, max_chars)),
-        ),
-        ResolvedMemory::WorkItem(item) => {
-            // The headline is the title; the optional body rides after it (mirroring the Entity
-            // arm's `name — description`). Identity-only — no Stats, no supersession.
-            let mut body = item.title.clone();
-            if let Some(detail) = &item.body {
-                body.push_str(" — ");
-                body.push_str(detail);
-            }
-            format!(
-                "<memory id=\"{}\" kind=\"work_item\" ns=\"{}\" ingested_at=\"{}\" level=\"{}\" work_status=\"{}\" parent=\"{}\" ordinal=\"{}\">{}</memory>",
-                attr_escape(&item.identity.id.to_string()),
-                attr_escape(&item.identity.namespace.to_string()),
-                attr_escape(&item.identity.ingested_at.to_string()),
-                attr_escape(&item.level),
-                work_status_tag(item.work_status),
-                attr_escape(&render_optional_id(item.parent_id.as_ref())),
-                item.ordinal,
-                tag_escape(&truncate_chars(&body, max_chars)),
-            )
-        }
-        ResolvedMemory::Tag(tag) => format!(
-            "<memory id=\"{}\" kind=\"tag\" ns=\"{}\" ingested_at=\"{}\" slug=\"{}\">{}</memory>",
-            attr_escape(&tag.identity.id.to_string()),
-            attr_escape(&tag.identity.namespace.to_string()),
-            attr_escape(&tag.identity.ingested_at.to_string()),
-            attr_escape(&tag.slug),
-            tag_escape(&truncate_chars(
-                tag.display.as_deref().unwrap_or(&tag.slug),
-                max_chars
-            )),
-        ),
-    }
-}
-
-/// The stable scalar tag for a work item's lifecycle status (matches the domain `snake_case`).
-pub(crate) fn work_status_tag(status: WorkStatus) -> &'static str {
-    match status {
-        WorkStatus::Todo => "todo",
-        WorkStatus::InProgress => "in_progress",
-        WorkStatus::Blocked => "blocked",
-        WorkStatus::Done => "done",
-        WorkStatus::Dropped => "dropped",
-    }
-}
-
-/// The stable scalar tag for a fact's lifecycle status (matches the domain `snake_case`).
-fn fact_status_tag(status: FactStatus) -> &'static str {
-    match status {
-        FactStatus::Active => "active",
-        FactStatus::Quarantined => "quarantined",
-        FactStatus::Superseded => "superseded",
-    }
-}
-
-/// The stable scalar tag for a core block's category (matches the domain `snake_case`).
-fn block_kind_tag(kind: BlockKind) -> &'static str {
-    match kind {
-        BlockKind::Persona => "persona",
-        BlockKind::Commitment => "commitment",
-        BlockKind::Redline => "redline",
-    }
-}
-
-fn render_optional_id(id: Option<&Id>) -> String {
-    id.map(ToString::to_string)
-        .unwrap_or_else(|| "none".to_string())
-}
-
-fn role_name(episode: &Episode) -> &'static str {
-    match episode.role {
-        aionforge_domain::nodes::episodic::Role::User => "user",
-        aionforge_domain::nodes::episodic::Role::Assistant => "assistant",
-        aionforge_domain::nodes::episodic::Role::Tool => "tool",
-        aionforge_domain::nodes::episodic::Role::System => "system",
-        aionforge_domain::nodes::episodic::Role::Event => "event",
-    }
-}
-
-fn truncate_chars(value: &str, max_chars: usize) -> String {
-    if value.chars().count() <= max_chars {
-        return value.to_string();
-    }
-    let mut out: String = value.chars().take(max_chars).collect();
-    out.push_str("...");
-    out
-}
-
-fn tag_escape(value: &str) -> String {
-    value
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-}
-
-fn attr_escape(value: &str) -> String {
-    tag_escape(value).replace('"', "&quot;")
 }
