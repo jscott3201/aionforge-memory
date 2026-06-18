@@ -7,9 +7,18 @@
 {"id":"q-0204","query":"how are durable facts created from raw conversations","source":"aionforge-eval-project-sanitized","expected":[{"id":"m-0207","grade":3},{"id":"m-0205","grade":1}]}
 {"id":"q-0205","query":"how does the system handle outdated or replaced memories","source":"aionforge-eval-project-sanitized","expected":[{"id":"m-0210","grade":3}]}
 {"id":"q-0206","query":"what does forgetting decay and what is protected from it","source":"aionforge-eval-project-sanitized","expected":[{"id":"m-0208","grade":3}]}
+{"id":"q-0207","query":"when does forgetting decay unpinned memories","source":"aionforge-eval-project-sanitized","expected":[{"id":"m-0208","grade":3},{"id":"m-0210","grade":1}]}
 {"id":"q-0101","query":"summarize the main causes of the french revolution","source":"aionforge-eval-synthetic","expected_empty":true}
 {"id":"q-0102","query":"what is the best oil for seasoning a cast iron skillet","source":"aionforge-eval-synthetic","expected_empty":true}
+{"id":"q-0103","query":"which watercolor paper is best for wet on wet painting","source":"aionforge-eval-synthetic","expected_empty":true}
+{"id":"q-0104","query":"how should I tune a piano before a recital","source":"aionforge-eval-synthetic","expected_empty":true}
 {"id":"q-0301","query":"how do I set up a kubernetes ingress controller with tls termination","source":"aionforge-eval-adjacent","expected_empty":true}
 {"id":"q-0302","query":"what is the worst-case time complexity of the quicksort algorithm","source":"aionforge-eval-adjacent","expected_empty":true}
 {"id":"q-0303","query":"how do I train a convolutional neural network for image classification","source":"aionforge-eval-adjacent","expected_empty":true}
 {"id":"q-0304","query":"what is the difference between the tcp and udp network protocols","source":"aionforge-eval-adjacent","expected_empty":true}
+{"id":"q-0305","query":"how does a bloom filter trade false positives against memory usage","source":"aionforge-eval-adjacent","expected_empty":true}
+{"id":"q-0306","query":"what are raft consensus election timeouts used for","source":"aionforge-eval-adjacent","expected_empty":true}
+{"id":"q-0307","query":"when did the linux kernel add io uring support","source":"aionforge-eval-adjacent","expected_empty":true}
+{"id":"q-0308","query":"why do distributed caches need consistent hashing","source":"aionforge-eval-adjacent","expected_empty":true}
+{"id":"q-0309","query":"how should postgres replication lag alerts be configured","source":"aionforge-eval-adjacent","expected_empty":true}
+{"id":"q-0310","query":"compare transformer attention with recurrent neural networks","source":"aionforge-eval-adjacent","expected_empty":true}

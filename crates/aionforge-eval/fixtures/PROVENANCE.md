@@ -36,13 +36,26 @@ The corpus has three kinds of row, distinguished by the `source` tag:
   number, machine path, secret, and planning-note term — the scrub gate enforces this.
   They make the corpus homogeneous and technical, which is how the real store looks.
 - `aionforge-eval-adjacent` — **domain-adjacent off-topic negatives** (Kubernetes,
-  quicksort, CNN training, TCP/UDP). They share vocabulary (vectors, databases, training)
-  with the project cluster but are NOT about the memory system, so they stress the floor
-  harder than everyday negatives: the floor must still reject them.
+  quicksort, CNN training, TCP/UDP, Bloom filters, Raft timeouts, kernel features,
+  consistent hashing, Postgres replication, and transformer attention). They share
+  vocabulary (vectors, databases, training, memory, recall-like false positives,
+  consensus, time, and ranking/comparison language) with the project cluster but are
+  NOT about the memory system, so they stress the floor harder than everyday negatives:
+  the floor must still reject them.
 
-Positive queries are on-topic for exactly one cluster; negatives (`expected_empty`) are
-off-topic to the whole corpus, so a healthy dense floor rejects them while keeping the
-positives.
+Positive queries are on-topic for exactly one cluster and include single-hop factual,
+multi-hop, and temporal-shaped prompts so the per-class shipped floors are represented.
+Negatives (`expected_empty`) are off-topic to the whole corpus, so a healthy dense floor
+rejects them while keeping the positives.
+
+The broadened negative set was hand-authored in two bands:
+
+- far off-topic everyday questions (history, cookware, watercolor paper, piano tuning);
+- adjacent-but-off-topic technical questions that borrow project-adjacent vocabulary
+  without becoming Aionforge Memory questions.
+
+No supporting negative memories are added for those topics: the correct answer is empty
+against the existing corpus by construction.
 
 ## Scrub
 

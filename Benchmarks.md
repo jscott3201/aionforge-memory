@@ -95,6 +95,49 @@ Populated as the eval track lands: ingest adapter (BRIEF-6) -> LongMemEval
 Recall@k/nDCG@k/MRR scorer -> LoCoMo/BEIR smokes -> BEAM 128K+ tiers
 (cost-gated).
 
+### Off-Topic Rejection Floor
+
+Date: 2026-06-18
+
+Benchmark PR: pending (BRIEF-10)
+
+Runner:
+`set -a && source ~/.aionforge/aionforge-redeploy.env && set +a && cargo test -p aionforge-eval --test floor_sweep -- --ignored --nocapture`
+
+Fixture: synthetic `aionforge-eval` floor corpus, 21 memories and 24 queries
+(10 positive, 14 off-topic negatives). Negatives include far off-topic everyday
+questions plus adjacent-but-off-topic technical questions.
+
+Metrics: rejection_rate over off-topic negatives, false_rejection_rate over
+positive queries, Recall@5, nDCG@5. One cached production embedder pass used
+OpenRouter `google/gemini-embedding-2`, approximately 937 input tokens, and
+estimated embedding spend of `$0.0001` at `$0.1500` per 1M tokens.
+
+| uniform min_relevance | rejection_rate | false_rejection_rate | recall@5 | nDCG@5 |
+|---:|---:|---:|---:|---:|
+| 0.00 | 0.000 | 0.000 | 0.950 | 0.921 |
+| 0.35 | 0.000 | 0.000 | 0.950 | 0.921 |
+| 0.40 | 0.000 | 0.000 | 0.950 | 0.921 |
+| 0.45 | 0.000 | 0.000 | 0.950 | 0.921 |
+| 0.50 | 0.071 | 0.000 | 0.950 | 0.921 |
+| 0.55 | 0.643 | 0.000 | 0.950 | 0.921 |
+| 0.60 | 0.929 | 0.000 | 1.000 | 0.929 |
+| 0.62 | 1.000 | 0.000 | 1.000 | 0.930 |
+| 0.65 | 1.000 | 0.000 | 0.950 | 0.923 |
+| 0.70 | 1.000 | 0.100 | 0.750 | 0.809 |
+
+| arm | floor source | rejection_rate | false_rejection_rate | recall@5 | nDCG@5 |
+|---|---|---:|---:|---:|---:|
+| floor off | forced 0.00 | 0.000 | 0.000 | 0.950 | 0.921 |
+| shipped profile | router defaults | 0.929 | 0.000 | 1.000 | 0.929 |
+
+Decision: keep the already-shipped 0.60 per-class dense floors as the
+conservative production profile documented by this harness. A uniform 0.62 row
+rejected all negatives at zero false rejection on this broadened fixture, but
+BRIEF-10 records rather than retunes; 0.60 rejects 13/14 negatives, keeps
+false_rejection_rate at 0.000, and improves positive recall@5 by de-cluttering
+relative to floor-off. DBSF and magnitude-aware fusion arms remain deferred.
+
 ### LongMemEval_S Retrieval A/B
 
 Date: 2026-06-18
