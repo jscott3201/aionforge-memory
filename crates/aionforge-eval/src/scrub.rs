@@ -56,6 +56,28 @@ pub fn scrub_violations<'a>(items: impl IntoIterator<Item = (&'a str, &'a str)>)
     violations
 }
 
+/// Return `text` with scrub-pattern matches replaced by stable placeholders.
+///
+/// Use this only for external benchmark corpora that must pass through the same
+/// adapter scrub gate as hand-authored fixtures. The placeholders preserve enough
+/// local context for retrieval while ensuring raw secrets, identifiers, local paths,
+/// or process notes do not enter the seeded store.
+#[must_use]
+pub fn redact_scrub_patterns(text: &str) -> String {
+    let mut redacted = text.to_string();
+    for (name, regex) in PATTERNS.iter() {
+        let replacement = match *name {
+            "email" => "[email]",
+            "uuid" => "[uuid]",
+            "machine-path" => "[path]",
+            "planning-note" => "[planning-note]",
+            _ => "[secret]",
+        };
+        redacted = regex.replace_all(&redacted, replacement).into_owned();
+    }
+    redacted
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -82,5 +104,14 @@ mod tests {
                 .iter()
                 .any(|v| v.contains("machine-path"))
         );
+    }
+
+    #[test]
+    fn redaction_removes_scrub_matches() {
+        let text = "image 568ba110-4d9e-4023-a2bd-5ffd7528e72a from /Users/alice";
+        let redacted = redact_scrub_patterns(text);
+        assert!(redacted.contains("[uuid]"));
+        assert!(redacted.contains("[path]"));
+        assert!(scrub_violations([("m-1", redacted.as_str())]).is_empty());
     }
 }

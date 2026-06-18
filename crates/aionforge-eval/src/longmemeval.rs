@@ -24,7 +24,7 @@ use crate::{IngestOutcome, ndcg_at_k, ranked_ids, recall_at_k};
 
 mod parser;
 
-pub use parser::parse_longmemeval;
+pub use parser::{parse_longmemeval, parse_longmemeval_cases};
 
 /// Environment variable for an external LongMemEval data file.
 pub const LONGMEMEVAL_DATA_ENV: &str = "AIONFORGE_LONGMEMEVAL_DATA";
@@ -282,6 +282,53 @@ where
     })
 }
 
+/// Score pre-seeded per-question LongMemEval cases and aggregate by arm.
+///
+/// LongMemEval supplies a controlled haystack for each question. Callers that want
+/// faithful benchmark numbers should parse with [`parse_longmemeval_cases`], seed
+/// each case into its own store, and pass those `(case, outcome)` pairs here. The
+/// older [`score_longmemeval`] function remains useful for merged-corpus fixtures
+/// and focused unit tests.
+///
+/// # Errors
+/// Returns [`LongMemEvalError`] if retrieval fails or gold labels cannot be mapped.
+pub async fn score_seeded_longmemeval_cases<E>(
+    cases: &[(&LongMemEvalCorpus, &IngestOutcome)],
+    arms: &[LongMemEvalArm],
+    embedder: E,
+    options: LongMemEvalScoringOptions,
+) -> Result<LongMemEvalReport, LongMemEvalError>
+where
+    E: Embedder + Clone + Send + Sync + 'static,
+{
+    let mut aggregates: Vec<ArmAggregate> = arms.iter().map(|_| ArmAggregate::default()).collect();
+    let mut questions = 0usize;
+    let mut all_questions = Vec::new();
+
+    for (case, outcome) in cases {
+        questions += case.questions.len();
+        all_questions.extend(case.questions.iter().cloned());
+        let report =
+            score_longmemeval(case, outcome, arms, embedder.clone(), options.clone()).await?;
+        for (aggregate, row) in aggregates.iter_mut().zip(report.rows) {
+            aggregate.observe_row(&row);
+        }
+    }
+
+    let rows = aggregates
+        .into_iter()
+        .zip(arms.iter())
+        .map(|(aggregate, arm)| aggregate.finish(arm.name.clone()))
+        .collect();
+
+    Ok(LongMemEvalReport {
+        k: options.k,
+        questions,
+        gold_granularity: corpus_granularity(&all_questions),
+        rows,
+    })
+}
+
 /// Score one ranked list against graded gold labels.
 #[must_use]
 pub fn score_ranked_ids(
@@ -315,6 +362,13 @@ impl ArmAggregate {
         self.recall_sum += score.recall_at_k;
         self.ndcg_sum += score.ndcg_at_k;
         self.rr_sum += score.reciprocal_rank;
+    }
+
+    fn observe_row(&mut self, row: &LongMemEvalArmReport) {
+        self.questions += row.questions;
+        self.recall_sum += row.recall_at_k * row.questions as f64;
+        self.ndcg_sum += row.ndcg_at_k * row.questions as f64;
+        self.rr_sum += row.mrr * row.questions as f64;
     }
 
     fn finish(self, arm: String) -> LongMemEvalArmReport {
