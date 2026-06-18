@@ -10,9 +10,9 @@ homepage.workspace = true
 description = "Decay and importance, active forgetting, erasure cascade, attested core memory, and drift detection."
 
 [dependencies]
-aionforge-domain = { path = "../aionforge-domain", version = "0.2.2" }
-aionforge-store = { path = "../aionforge-store", version = "0.2.2" }
-aionforge-embed = { path = "../aionforge-embed", version = "0.2.2" }
+aionforge-domain = { path = "../aionforge-domain", version = "0.3.0" }
+aionforge-store = { path = "../aionforge-store", version = "0.3.0" }
+aionforge-embed = { path = "../aionforge-embed", version = "0.3.0" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }

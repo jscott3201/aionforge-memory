@@ -6,282 +6,128 @@
   Long-term memory for AI agents, built on selene-db.
 </p>
 
-> **Status: 0.2.2 public release.** The Rust library, CLI, MCP server,
-> read-only operator TUI, Docker image, and red-team gates are in place. A
-> small sanitized retrieval regression corpus is in place; broader
-> retrieval-quality benchmarks remain deferred. Expect schema and API changes
-> before 1.0; the read-only TUI is slated to be replaced by an operator
-> console in a later release.
+> **Status: 0.3.0 public release.** Aionforge Memory is public and usable,
+> but still pre-1.0. Expect schema and API changes before 1.0. The 0.3.0
+> release is a fresh-store release from 0.2.x because the selene-db 1.2 to 1.3
+> upgrade changes the WAL/schema format.
 
-Aionforge Memory is a Rust memory layer for agent systems. It stores episodes,
-facts, notes, skills, bad patterns, work items, core memory, and audit events in
-[`selene-db`](https://github.com/jscott3201/selene-db), then retrieves
-relevant context with lexical anchors, vector search, graph traversal, recency,
-importance, and trust signals.
+Aionforge Memory gives agents a durable memory store they can recall across
+sessions. It stores captured episodes, derived facts and notes, procedural
+memory, work items, provenance, and audit events in
+[`selene-db`](https://github.com/jscott3201/selene-db), then recalls relevant
+context with lexical search, vector search, graph signals, recency, importance,
+and trust-aware ranking.
 
-Use it when an agent or a group of agents needs memory that survives across
-sessions, keeps provenance, and can be searched without treating recalled text as
-new instructions.
+Use it when you want an agent or a team of agents to remember decisions,
+handoffs, failures, procedures, project facts, and open work without treating
+recalled text as new instructions.
 
-## What it does
+## Quick Start
 
-- Captures agent observations, decisions, procedures, and failures as durable
-  memory records.
-- Extracts facts and entities in the background while keeping the capture path
-  fast.
-- Searches with BM25 lexical anchors, dense vectors, graph expansion, recency,
-  importance, and trust-aware ranking.
-- Preserves event time and transaction time, so corrections supersede older
-  facts instead of overwriting history.
-- Keeps namespace boundaries explicit: agent-private, team, global, and system
-  memory are separate policy surfaces.
-- Records provenance for writes, with optional signed writes, audit signing, and
-  quorum-gated promotion across namespaces.
-- Runs as a Rust library, a single CLI binary, or an MCP server over stdio or
-  Streamable HTTP.
-
-## Plugins and skills
-
-The repository ships an agent plugin at
-[`plugins/aionforge-memory`](plugins/aionforge-memory/README.md) that keeps memory
-*in the task loop* rather than as an afterthought. It packages small, single-sourced
-Agent Skills for an externally configured Aionforge Memory MCP server:
-
-- `memory-bootstrap` — one-time, idempotent cold-start setup that seeds a foundational substrate for a fresh project (identity, conventions, architecture decisions, backlog skeleton), so the next session recalls real context.
-- `memory-recall` — search durable memory before planning, coding, review, or release.
-- `memory-capture` — write decisions, facts, validation results, corrections, and handoffs *as they happen*.
-- `work-tracking` — track tasks, blockers, TODOs, and plans as durable **work items** (`work_create` → `work_advance` → `work_link`), distinct from decaying memory episodes.
-- `memory-loop` — use all of the above through a whole task: recall first, capture and track continuously, finish with a handoff.
-- `memory-maintenance` — inspect backlog, audit provenance, consolidate, forget, or restore.
-
-The skills are plain `SKILL.md` Agent Skills, so the same instructions work across
-clients that support the format. **Claude Code** and **Codex** get the deepest
-integration; the plugin also includes compatibility manifests for Cursor. For Claude
-Code it additionally ships a default `aionforge-memory-steward` agent, the
-`/aionforge-memory:memory-bootstrap`, `/aionforge-memory:memory-session`, and
-`/aionforge-memory:memory-handoff` commands, and a `SessionStart` hook that re-seeds
-the capture/work-tracking cadence into a fresh context after a startup, resume, or
-context compaction.
-
-The plugin never registers an MCP server of its own — configure the standalone
-`aionforge-memory` server separately (see
-[docs/mcp-clients.md](docs/mcp-clients.md)); the skills assume it exists. See the
-[plugin README](plugins/aionforge-memory/README.md) for install and identity details.
-
-## What it is not
-
-Aionforge Memory is retrieval memory, not model training. It does not fine-tune a
-model, make the model smarter, or route work across multiple model providers.
-Embeddings are handled by a thin client (`aionforge-embed`) that talks to the
-OpenAI-compatible provider you configure. Consolidation is deterministic and
-rule-based; the substrate calls no chat/completion model.
-
-Several subsystems are off by default and must be enabled per deployment:
-forgetting, read-time importance decay, cross-namespace promotion, and off-cursor
-note link evolution. Link evolution writes derived, non-canonical `RELATES_TO`
-edges and cannot change deterministic capture or recall for the same graph state.
-
-The honest scope boundary is documented in
-[docs/honest-scope.md](docs/honest-scope.md).
-
-## MCP surface
-
-The MCP server supports stdio and local Streamable HTTP. Put an OAuth-aware
-front end in front of HTTP before exposing it beyond loopback.
-
-Read-like tools (allowed without a prompt):
-
-- `search`
-- `read_memory`
-- `session_manifest`
-- `consolidation_status`
-- `audit_history`
-- `server_status`
-- `work_tree`
-- `work_query`
-
-Mutating tools (gated by the client approval policy):
-
-- `capture`
-- `batch_capture`
-- `forget`
-- `unforget`
-- `pin`
-- `unpin`
-- `consolidate`
-- `work_create`
-- `work_advance`
-- `work_link`
-
-Each tool is annotated with MCP safety hints. Responses are compact receipt
-lines rather than large JSON payloads. Recalled memory is wrapped in a
-`<recalled-memory-context>` envelope and marked as third-party data, not
-instructions.
-
-The server also publishes client setup resources such as
-`aionforge://client/claude-code/mcp.json`, with equivalents for Codex, Cursor,
-and OpenCode. Plugin setup guidance is available at
-`aionforge://plugin/aionforge-memory`.
-
-## Architecture
-
-- **Storage and search:** `selene-db` provides persistence, BM25 search, vector
-  indexes, graph traversal, and graph algorithms.
-- **Write path:** capture redacts secrets, removes known prompt-injection
-  markers, refuses residue-only captures, deduplicates cleaned content, and
-  records provenance before derived work runs.
-- **Consolidation:** deterministic background passes extract facts, resolve entities,
-  supersede stale facts, quarantine contradictions, summarize notes, and optionally
-  induce reusable skills.
-- **Retrieval:** query routing chooses the relevant mix of lexical,
-  lexical-anchor, dense, graph, recency, importance, and trust signals, then
-  rank-fuses the results.
-- **Security:** namespace authorization, signed writes, audit signing, system
-  memory exclusion, untrusted recall envelopes, cross-family guards, and red-team
-  probes are part of the main build and CI gates.
-- **Determinism:** canonical capture, consolidation, and retrieval are
-  deterministic for the same inputs and graph state. Off-cursor note link
-  evolution stays outside that canonical path.
-
-For the full subsystem map, see [docs/README.md](docs/README.md).
-
-## Build from source
-
-You need the Rust toolchain pinned in [rust-toolchain.toml](rust-toolchain.toml)
-(Rust 1.95.0, edition 2024).
-
-Aionforge Memory depends on the public
-[`selene-db`](https://github.com/jscott3201/selene-db) substrate, consumed
-from crates.io and pinned to `1.2.0`. The published crates (`selene-db-core`,
-`-graph`, `-persist`, `-gql`, `-algorithms`) are aliased to stable local keys
-(`selene-core`, ...) via Cargo's `package =` rename, so only `aionforge-store`
-ever names them.
+These commands build the local binary and start an MCP server on loopback.
+Embedding is disabled in this first config so you can verify the server without
+running an OpenAI-compatible embedding provider.
 
 ```bash
-cargo build --workspace --locked
-cargo nextest run --workspace --locked --all-features
+cargo build --locked --release -p aionforge-cli
+
+mkdir -p .aionforge
+cat > .aionforge/config.toml <<'TOML'
+[persistence]
+data_dir = ".aionforge/data"
+
+[embedder]
+enabled = false
+TOML
+
+./target/release/aionforge --config .aionforge/config.toml doctor
+./target/release/aionforge --config .aionforge/config.toml \
+  serve http --listen 127.0.0.1:3918
 ```
 
-To pull a newer selene-db `1.x` release, run:
+Then point your MCP client at:
+
+```text
+http://127.0.0.1:3918/mcp
+```
+
+For production-quality semantic recall, configure embeddings instead of leaving
+them disabled. Start with the [embedding guide](docs/embedding-guide.md).
+
+## What You Get
+
+- Durable capture of agent observations, decisions, handoffs, and failures.
+- Hybrid recall across lexical matches, vectors, graph expansion, recency,
+  importance, and trust signals.
+- Explicit agent-private, team, global, and system namespaces.
+- Provenance and audit records for writes.
+- A single `aionforge` binary with `doctor`, `recover`, and `serve`.
+- MCP over stdio or Streamable HTTP.
+- A repo-shipped agent plugin with memory workflow skills for Codex, Claude
+  Code, Cursor, and compatible clients.
+
+Aionforge Memory is retrieval memory, not model training. It does not fine-tune
+models or execute recalled content as instructions. See
+[honest scope](docs/honest-scope.md) for the current boundaries and deferred
+work.
+
+## Configure A Client
+
+The server publishes MCP tools, resources, and prompts. For a local HTTP server,
+most clients only need the endpoint URL above plus a stable agent UUID.
+
+Client-specific setup lives in [MCP client support](docs/mcp-clients.md):
+
+- Codex CLI
+- Claude Code
+- OpenCode
+- Cursor
+
+The important safety rule is simple: recalled memory is wrapped as
+third-party data and should be treated as context, not instruction text.
+
+## Use The Agent Plugin
+
+The plugin at [plugins/aionforge-memory](plugins/aionforge-memory/README.md)
+adds reusable Agent Skills for the memory workflow:
+
+- recall before substantial work
+- capture durable facts as they happen
+- track tasks and blockers as durable work items
+- finish sessions with a handoff
+
+The plugin does not start or register an MCP server by itself. Run the
+`aionforge` MCP server separately, then configure the plugin-enabled client to
+use that server.
+
+See [Agent plugin](docs/plugins.md) for install and identity setup.
+
+## Run With Docker
+
+Published images are available for `linux/amd64` and `linux/arm64`:
 
 ```bash
-cargo update -p selene-db-core -p selene-db-graph -p selene-db-persist -p selene-db-gql -p selene-db-algorithms
+docker pull ghcr.io/jscott3201/aionforge-memory:0.3.0
 ```
 
-For local co-development against a sibling `selene-db` checkout, uncomment the
-`[patch]` block at the bottom of [Cargo.toml](Cargo.toml) and point it at that
-checkout. Do not commit the uncommented form.
-
-Set up the shared git hooks once after cloning:
+Run a local smoke-test server with embeddings disabled:
 
 ```bash
-bash scripts/install-hooks.sh
-```
-
-## Run the MCP server
-
-Start with `doctor` before exposing the server:
-
-```bash
-aionforge doctor
-aionforge recover --json   # validates an existing WAL-backed store; does not create one
-```
-
-Run over stdio for a local client process:
-
-```bash
-aionforge serve stdio
-```
-
-`serve` reports the configured embedder identity to stderr at startup. When
-embedding is enabled, it sends one health probe and refuses to serve if the
-endpoint cannot return a vector with the configured dimension.
-
-Run over local Streamable HTTP:
-
-```bash
-aionforge serve http --listen 127.0.0.1:3918
-```
-
-Then point your MCP client at `http://127.0.0.1:3918/mcp`. Keep the built-in
-HTTP server on loopback; put a real OAuth resource-server verifier in front of
-`/mcp` before exposing it to a shared network.
-
-## Logging and traffic
-
-The binary logs through `tracing` to **stderr** (stdout is reserved for the MCP
-stdio JSON-RPC protocol and for `doctor`/`recover` reports). Logs are
-human-readable text by default, or structured JSON for log shippers:
-
-```bash
-aionforge serve http --log-format json     # or: AIONFORGE_LOG_FORMAT=json
-RUST_LOG=aionforge_mcp=debug aionforge serve http   # standard tracing EnvFilter
-```
-
-`--log-format` is global (works on `serve`, `doctor`, `recover`); precedence is
-flag → `AIONFORGE_LOG_FORMAT` → default `text`. Level filtering is `RUST_LOG`
-(default `info`).
-
-A periodic **traffic heartbeat** logs cumulative and per-interval bytes/tokens
-**in** (memory content captured) and **out** (recall responses served), every
-five minutes by default, with a final summary on shutdown:
-
-```
-INFO aionforge::traffic: memory traffic phase=heartbeat
-     bytes_in_total=… bytes_out_total=… bytes_in_delta=… bytes_out_delta=…
-     est_tokens_in_total=… est_tokens_out_total=… est_tokens_in_delta=… est_tokens_out_delta=…
-```
-
-Tune or disable the cadence with `AIONFORGE_TRAFFIC_HEARTBEAT_SECS` (seconds;
-`0` disables).
-
-> **Token counts are estimates, not exact.** The server cannot run the calling
-> client's tokenizer, so `est_tokens` is a deliberately coarse proxy — roughly
-> **bytes ÷ 4** (≈4 characters per token). Bytes are the authoritative measure;
-> treat tokens as an order-of-magnitude figure for capacity and cost intuition,
-> never as an exact count or a billing source.
-
-Logs never contain memory content, embeddings, tokens, or keys — only ids, kinds,
-counts, sizes, and outcomes (a CI gate enforces this). See
-[Observability](docs/observability.md) for levels, targets, span fields, and the
-full metrics catalog.
-
-## Run in Docker
-
-Published images are available from GitHub Container Registry for
-`linux/amd64` and `linux/arm64`:
-
-```bash
-docker pull ghcr.io/jscott3201/aionforge-memory:0.2.2
-```
-
-Build a local image when working from source:
-
-```bash
-docker build -t aionforge-memory:dev .
 docker run --rm \
   -p 127.0.0.1:3918:3918 \
   -v aionforge-data:/data \
-  aionforge-memory:dev
+  -e AIONFORGE_EMBEDDER__ENABLED=false \
+  ghcr.io/jscott3201/aionforge-memory:0.3.0
 ```
 
-On Apple silicon Macs running macOS 26, the published OCI image can run with
-Apple's `container` runtime. See [Apple container](docs/apple-container.md) for
-the local run helper and named-container persistence notes.
+For bind mounts, use an owner-only data directory. The container runs as
+UID/GID `10001:10001`, and the store refuses unsafe data directory permissions.
+Operations details are in [Operations and recovery](docs/operations-recovery.md).
 
-Persistent stores require an owner-only data directory on Unix. A fresh
-directory is created as `0700`; an existing directory with group or other access,
-or a symlink, is refused. For Docker bind mounts, make the host directory owned
-by UID/GID `10001:10001` and mode `0700` before starting the container.
+## Use The Rust Library
 
-See [Operations and recovery](docs/operations-recovery.md) for config layering,
-production signing posture, backup, volume migration, and WAL-backed recovery.
-
-## Use the Rust library
-
-Rust hosts can link the `aionforge` crate directly and provide an implementation
-of the `Embedder` trait. The public API re-exports the `Memory` facade and the
-domain types used in its signatures.
+Rust hosts can link the `aionforge` crate directly and provide an `Embedder`
+implementation:
 
 ```rust
 use aionforge::{CaptureRequest, Embedder, Memory, MemoryConfig, Principal, RecallQuery};
@@ -290,8 +136,6 @@ use aionforge::{CaptureRequest, Embedder, Memory, MemoryConfig, Principal, Recal
 let now = "2026-06-06T09:30:00-05:00[America/Chicago]".parse()?;
 let memory = Memory::open_in_memory(embedder, &now, MemoryConfig::default())?;
 
-// Fill CaptureRequest with the writer, namespace, role, and captured_at data
-// your host already knows, then call memory.capture(request).await.
 let viewer = Principal::agent("0197b0aa-3c5e-8000-8000-000000000001".parse()?);
 let bundle = memory.search(RecallQuery::new("graph databases", viewer, 5)).await?;
 println!("{}", bundle.rendered);
@@ -299,42 +143,38 @@ println!("{}", bundle.rendered);
 # }
 ```
 
-See [crates/aionforge/src/lib.rs](crates/aionforge/src/lib.rs) and the
-integration tests under [crates/aionforge/tests/](crates/aionforge/tests/) for
-complete call shapes.
+For complete call shapes, see [crates/aionforge/src/lib.rs](crates/aionforge/src/lib.rs)
+and the integration tests under [crates/aionforge/tests](crates/aionforge/tests).
 
 ## Documentation
 
-Start with:
+Start here:
 
-- [Getting started](docs/getting-started.md)
-- [Embedding and provider guide](docs/embedding-guide.md)
-- [Security model](docs/security-model.md)
-- [Observability (logging, traffic, metrics)](docs/observability.md)
-- [MCP client support](docs/mcp-clients.md)
-- [Agent plugin](docs/plugins.md)
-- [Honest scope and deferred work](docs/honest-scope.md)
+- [Getting started](docs/getting-started.md) - build, configure, validate, and run.
+- [Data model and mental model](docs/data-model.md) - what gets stored and recalled.
+- [Embedding guide](docs/embedding-guide.md) - providers, dimensions, and secrets.
+- [MCP client support](docs/mcp-clients.md) - Codex, Claude Code, OpenCode, Cursor.
+- [Agent plugin](docs/plugins.md) - skills, identity, and client notes.
+- [Security model](docs/security-model.md) - namespaces, untrusted recall, signing.
+- [Operations and recovery](docs/operations-recovery.md) - production setup and WAL recovery.
+- [Honest scope](docs/honest-scope.md) - what is shipped, experimental, or deferred.
+
+The full subsystem map is in [docs/README.md](docs/README.md).
 
 ## Contributing
 
-This project is public and pre-1.0. Issues and pull requests are welcome. Open
-an issue before large design changes; substantial designs are explored as
-RFC-style proposals first.
+This project is public and pre-1.0. Issues and pull requests are welcome.
+Open an issue before large design changes.
 
-- **[CONTRIBUTING.md](CONTRIBUTING.md)** — setup, the branch and release model,
-  the commit convention, and the gate block to run before opening a PR.
-- **[AGENTS.md](AGENTS.md)** — the authoritative gate commands, crate layering,
-  and core invariants for contributors and agents.
-- **Bugs, features, and RFCs** — file through the issue forms in the
-  [new-issue chooser](../../issues/new/choose).
+- [CONTRIBUTING.md](CONTRIBUTING.md) covers setup, branch flow, commit style, and local gates.
+- [AGENTS.md](AGENTS.md) covers crate layering, invariants, and agent-facing validation.
+- Use the [issue chooser](../../issues/new/choose) for bugs, features, and design proposals.
 
-Keep PR descriptions public-safe and focused on code, behavior, and validation.
-The repository PR template includes a public-repo check for that reason. Do not
-include private planning notes, internal handoff text, or agent transcripts in PR
-bodies.
+Do not include private planning notes, secrets, internal handoff text, or agent
+transcripts in public issues or PRs.
 
 ## License
 
-Dual-licensed under either [Apache 2.0](LICENSE-APACHE) or
-[MIT](LICENSE-MIT), at your option. Contributions are accepted under the same
-dual license unless stated otherwise.
+Dual-licensed under either [Apache 2.0](LICENSE-APACHE) or [MIT](LICENSE-MIT),
+at your option. Contributions are accepted under the same dual license unless
+stated otherwise.
