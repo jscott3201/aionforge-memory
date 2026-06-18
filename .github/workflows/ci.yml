@@ -8,8 +8,8 @@
 # the GQL parameter-binding gate, the no-log-leakage gate, the store-only-selene gate,
 # the audit-keygen confinement gate, and the principal mint-site gate. A cached
 # rustdoc (-D warnings) job also runs.
-# Console changes additionally run Svelte format/lint/type/build checks. When dependency
-# manifests change, cargo-deny + THIRDPARTY.md currency run too.
+# Console changes additionally run Svelte format/lint/type/build plus Playwright e2e checks.
+# When dependency manifests change, cargo-deny + THIRDPARTY.md currency run too.
 #
 # The heavyweight ubuntu build/clippy/test suite deliberately does NOT run on dev
 # PRs. It runs once per release batch at the `development` -> `main` release gate
@@ -196,6 +196,12 @@ jobs:
       - name: build
         working-directory: ui/console
         run: pnpm build
+      - name: install playwright browsers
+        working-directory: ui/console
+        run: pnpm exec playwright install --with-deps chromium
+      - name: e2e
+        working-directory: ui/console
+        run: pnpm e2e
 
   deny:
     name: cargo-deny
