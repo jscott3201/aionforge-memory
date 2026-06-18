@@ -7,8 +7,8 @@ follow the links in [the docs index](README.md).
 ## Build from source
 
 Aionforge Memory is a Rust workspace pinned to the toolchain in
-`rust-toolchain.toml`. It depends on the public `selene-db` repository as a git
-dependency, and `Cargo.lock` pins the exact substrate commit used by this
+`rust-toolchain.toml`. It depends on the public `selene-db` 1.3 crates from
+crates.io, and `Cargo.lock` pins the exact substrate versions used by this
 workspace.
 
 ```bash
@@ -97,17 +97,19 @@ Published runtime images are available from GitHub Container Registry for
 `linux/amd64` and `linux/arm64`:
 
 ```bash
-docker pull ghcr.io/jscott3201/aionforge-memory:0.2.2
+docker pull ghcr.io/jscott3201/aionforge-memory:0.3.0
 ```
 
-The repository Dockerfile builds the binary with an Alpine builder and runs it
-as UID/GID `10001` in an Alpine runtime image:
+The repository Dockerfile builds the binary with the pinned Rust toolchain and
+runs it as UID/GID `10001` in a Debian runtime image. For a local smoke test
+without an embedding provider, disable embeddings explicitly:
 
 ```bash
 docker build -t aionforge-memory:dev .
 docker run --rm \
   -p 127.0.0.1:3918:3918 \
   -v aionforge-data:/data \
+  -e AIONFORGE_EMBEDDER__ENABLED=false \
   aionforge-memory:dev
 ```
 

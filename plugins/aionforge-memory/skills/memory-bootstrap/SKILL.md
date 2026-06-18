@@ -3,7 +3,7 @@ name: memory-bootstrap
 description: One-time setup that lays a foundational Aionforge Memory substrate for a fresh project — resolve identity, seed conventions and architecture decisions as captures, stand up a work-item backlog skeleton, and verify recall. Use when a project's memory is empty or new, or when the user asks to set up, bootstrap, initialize, or seed project memory.
 license: MIT OR Apache-2.0
 metadata:
-  aionforge-version: "0.2.2"
+  aionforge-version: "0.3.0"
 ---
 
 # Memory Bootstrap

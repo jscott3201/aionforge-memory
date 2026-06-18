@@ -12,13 +12,13 @@ description = "Retrieval-quality eval harness for Aionforge Memory: off-topic-re
 [dependencies]
 # Lightweight, always-compiled lib surface: metrics over the public RecallBundle, the
 # fixture loader, and the scrub gate. No network, no store.
-aionforge-domain = { path = "../aionforge-domain", version = "0.2.2" }
-aionforge-retrieval = { path = "../aionforge-retrieval", version = "0.2.2" }
+aionforge-domain = { path = "../aionforge-domain", version = "0.3.0" }
+aionforge-retrieval = { path = "../aionforge-retrieval", version = "0.3.0" }
 # The public ingest adapter seeds stores and can drain the deterministic consolidation
 # pipeline. This crate is still a leaf eval harness; nothing in the shipped binary
 # depends on it.
-aionforge-store = { path = "../aionforge-store", version = "0.2.2" }
-aionforge-consolidate = { path = "../aionforge-consolidate", version = "0.2.2" }
+aionforge-store = { path = "../aionforge-store", version = "0.3.0" }
+aionforge-consolidate = { path = "../aionforge-consolidate", version = "0.3.0" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 regex = { workspace = true }
@@ -27,7 +27,7 @@ regex = { workspace = true }
 # Heavy, on-demand-only: the real network embedder and the async runtime are used solely
 # by the #[ignore] floor-sweep/smoke runners. Nothing depends on this crate, so even
 # these never reach the shipped binary.
-aionforge-embed = { path = "../aionforge-embed", version = "0.2.2" }
+aionforge-embed = { path = "../aionforge-embed", version = "0.3.0" }
 secrecy = { workspace = true }
 tokio = { workspace = true }
 # The seed-once/sweep-via-search runner (tests/beam_seed_sweep.rs) drives a LIVE MCP

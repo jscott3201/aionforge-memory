@@ -15,7 +15,7 @@ description = "L0 storage over the selene-db SharedGraph: typed read/write, para
 test-support = []
 
 [dependencies]
-aionforge-domain = { path = "../aionforge-domain", version = "0.2.2" }
+aionforge-domain = { path = "../aionforge-domain", version = "0.3.0" }
 # `metrics` lights up selene-db's internal instrumentation (queries, commits, WAL,
 # snapshots, recoveries, cancellations, CALL-plan-cache hits, node/edge gauges) through
 # the same `metrics` 0.24 facade this workspace already records on. Off, every selene
@@ -42,7 +42,7 @@ tracing = { workspace = true }
 [dev-dependencies]
 # Self-path dev-dep so this crate's OWN integration tests build the linked lib with the
 # `test-support` feature on (it must be enabled for the lib the integration test links).
-aionforge-store = { path = ".", version = "0.2.2", features = ["test-support"] }
+aionforge-store = { path = ".", version = "0.3.0", features = ["test-support"] }
 proptest = { workspace = true }
 jiff = { workspace = true }
 

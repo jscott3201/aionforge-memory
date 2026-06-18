@@ -10,8 +10,8 @@ homepage.workspace = true
 description = "Layered configuration (file + environment + flags) for Aionforge Memory, with documented precedence and secrets that never log."
 
 [dependencies]
-aionforge-domain = { path = "../aionforge-domain", version = "0.2.2" }
-aionforge-store = { path = "../aionforge-store", version = "0.2.2" }
+aionforge-domain = { path = "../aionforge-domain", version = "0.3.0" }
+aionforge-store = { path = "../aionforge-store", version = "0.3.0" }
 serde = { workspace = true }
 figment = { workspace = true }
 secrecy = { workspace = true }

@@ -3,7 +3,7 @@ name: memory-loop
 description: Use Aionforge Memory as the working substrate for a multi-step task. Trigger for implementation, debugging, review, release, planning, incidents, handoffs, or any session where prior context and durable follow-up matter.
 license: MIT OR Apache-2.0
 metadata:
-  aionforge-version: "0.2.2"
+  aionforge-version: "0.3.0"
 ---
 
 # Memory Loop

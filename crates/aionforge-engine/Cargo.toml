@@ -10,16 +10,16 @@ homepage.workspace = true
 description = "The Aionforge Memory facade: composes the subsystems, owns lifecycle, and enforces cross-cutting policy."
 
 [dependencies]
-aionforge-domain = { path = "../aionforge-domain", version = "0.2.2" }
-aionforge-store = { path = "../aionforge-store", version = "0.2.2" }
-aionforge-embed = { path = "../aionforge-embed", version = "0.2.2" }
-aionforge-capture = { path = "../aionforge-capture", version = "0.2.2" }
-aionforge-retrieval = { path = "../aionforge-retrieval", version = "0.2.2" }
-aionforge-consolidate = { path = "../aionforge-consolidate", version = "0.2.2" }
-aionforge-procedural = { path = "../aionforge-procedural", version = "0.2.2" }
-aionforge-trust = { path = "../aionforge-trust", version = "0.2.2" }
-aionforge-forget = { path = "../aionforge-forget", version = "0.2.2" }
-aionforge-security = { path = "../aionforge-security", version = "0.2.2" }
+aionforge-domain = { path = "../aionforge-domain", version = "0.3.0" }
+aionforge-store = { path = "../aionforge-store", version = "0.3.0" }
+aionforge-embed = { path = "../aionforge-embed", version = "0.3.0" }
+aionforge-capture = { path = "../aionforge-capture", version = "0.3.0" }
+aionforge-retrieval = { path = "../aionforge-retrieval", version = "0.3.0" }
+aionforge-consolidate = { path = "../aionforge-consolidate", version = "0.3.0" }
+aionforge-procedural = { path = "../aionforge-procedural", version = "0.3.0" }
+aionforge-trust = { path = "../aionforge-trust", version = "0.3.0" }
+aionforge-forget = { path = "../aionforge-forget", version = "0.3.0" }
+aionforge-security = { path = "../aionforge-security", version = "0.3.0" }
 thiserror = { workspace = true }
 # The audit-signing seed crosses the engine as a host-resolved SecretString (the engine
 # never reads the environment itself); same redaction/zeroize posture as the config crate.
@@ -31,8 +31,8 @@ metrics = { workspace = true }
 serde_json = { workspace = true }
 
 [dev-dependencies]
-aionforge-domain = { path = "../aionforge-domain", version = "0.2.2" }
-aionforge-store = { path = "../aionforge-store", version = "0.2.2", features = ["test-support"] }
+aionforge-domain = { path = "../aionforge-domain", version = "0.3.0" }
+aionforge-store = { path = "../aionforge-store", version = "0.3.0", features = ["test-support"] }
 tokio = { workspace = true }
 # Test-only: sign provenance payloads with a fixed-seed keypair to exercise the signed-write
 # gate end to end (M4.T03). Already pinned at the workspace; no new versions enter the tree.
