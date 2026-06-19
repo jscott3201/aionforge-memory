@@ -1,0 +1,49 @@
+.route-panel {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr);
+  gap: 18px;
+  padding: 18px;
+}
+
+.route-panel-icon {
+  display: grid;
+  width: 52px;
+  height: 52px;
+  place-items: center;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  background: var(--bg-inset);
+  color: var(--accent-2);
+}
+
+.route-panel-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.route-panel-grid span {
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: var(--bg-inset);
+  padding: 12px;
+  color: var(--text-soft);
+  font-size: 13px;
+}
+
+.route-table {
+  margin-top: 16px;
+}
+
+@media (max-width: 980px) {
+  .route-panel-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .route-panel,
+  .route-panel-grid {
+    grid-template-columns: 1fr;
+  }
+}

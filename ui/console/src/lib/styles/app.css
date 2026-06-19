@@ -2,6 +2,9 @@
 @import "tw-animate-css";
 @import "shadcn-svelte/tailwind.css";
 @import "@fontsource-variable/inter";
+@import "./dashboard.css";
+@import "./records.css";
+@import "./route-panel.css";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -602,56 +605,6 @@ main {
   font-size: 12px;
 }
 
-.live-count-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.live-count-grid p {
-  display: grid;
-  min-height: 72px;
-  align-content: center;
-  gap: 5px;
-  margin: 0;
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius-sm);
-  background: var(--bg-inset);
-  padding: 12px;
-}
-
-.live-count-grid strong {
-  color: var(--text);
-  font-size: 24px;
-  line-height: 1;
-}
-
-.live-count-grid span,
-.live-meta span {
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.live-meta {
-  display: grid;
-  gap: 9px;
-  margin-top: 14px;
-}
-
-.live-meta p {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin: 0;
-  border-top: 1px solid var(--border-soft);
-  padding-top: 9px;
-}
-
-.live-meta strong {
-  font-size: 12px;
-}
-
 .dot {
   display: inline-block;
   width: 7px;
@@ -682,43 +635,6 @@ main {
   color: var(--text-muted);
 }
 
-.route-panel {
-  display: grid;
-  grid-template-columns: 58px minmax(0, 1fr);
-  gap: 18px;
-  padding: 18px;
-}
-
-.route-panel-icon {
-  display: grid;
-  width: 52px;
-  height: 52px;
-  place-items: center;
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius);
-  background: var(--bg-inset);
-  color: var(--accent-2);
-}
-
-.route-panel-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.route-panel-grid span {
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius-sm);
-  background: var(--bg-inset);
-  padding: 12px;
-  color: var(--text-soft);
-  font-size: 13px;
-}
-
-.route-table {
-  margin-top: 16px;
-}
-
 @media (max-width: 980px) {
   .app-shell {
     grid-template-columns: 1fr;
@@ -747,8 +663,7 @@ main {
 
   .status-grid,
   .dashboard-grid,
-  .dashboard-grid.secondary,
-  .route-panel-grid {
+  .dashboard-grid.secondary {
     grid-template-columns: 1fr 1fr;
   }
 }
@@ -762,13 +677,7 @@ main {
 
   .status-grid,
   .dashboard-grid,
-  .dashboard-grid.secondary,
-  .route-panel,
-  .route-panel-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .live-count-grid {
+  .dashboard-grid.secondary {
     grid-template-columns: 1fr;
   }
 }
