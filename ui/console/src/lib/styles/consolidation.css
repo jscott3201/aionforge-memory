@@ -21,7 +21,7 @@
   margin: 0;
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-sm);
-  background: var(--bg-inset);
+  background: transparent;
   padding: 12px;
 }
 
@@ -49,7 +49,7 @@
   margin-top: 16px;
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-sm);
-  background: var(--bg-inset);
+  background: transparent;
   padding: 18px;
 }
 
@@ -65,7 +65,7 @@
 }
 
 .consolidation-empty-state.tone-danger {
-  box-shadow: inset 3px 0 0 var(--danger);
+  border-color: color-mix(in oklab, var(--danger) 62%, var(--border-soft));
 }
 
 .consolidation-ledger {
@@ -102,13 +102,6 @@
 .consolidation-refresh {
   margin-top: 16px;
   width: 100%;
-}
-
-.state-badge {
-  border-color: var(--border-soft);
-  background: var(--bg-panel);
-  box-shadow: none;
-  color: var(--text-muted);
 }
 
 @media (max-width: 980px) {

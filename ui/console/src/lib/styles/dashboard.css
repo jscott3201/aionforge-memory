@@ -12,7 +12,7 @@
   margin: 0;
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-sm);
-  background: var(--bg-inset);
+  background: transparent;
   padding: 12px;
 }
 

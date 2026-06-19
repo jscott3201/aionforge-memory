@@ -37,7 +37,7 @@
   min-height: 76px;
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-sm);
-  background: var(--bg-inset);
+  background: transparent;
   color: var(--text);
   padding: 12px;
   text-align: left;
@@ -47,10 +47,6 @@
 .records-list button:hover,
 .records-list button.active {
   border-color: color-mix(in oklab, var(--accent-2) 58%, var(--border-soft));
-}
-
-.records-list button.active {
-  box-shadow: inset 3px 0 0 var(--accent-2);
 }
 
 .records-list button span {
@@ -87,7 +83,7 @@
   margin-top: 16px;
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-sm);
-  background: var(--bg-inset);
+  background: transparent;
   padding: 18px;
 }
 
@@ -103,7 +99,7 @@
 }
 
 .records-empty-state.tone-danger {
-  box-shadow: inset 3px 0 0 var(--danger);
+  border-color: color-mix(in oklab, var(--danger) 62%, var(--border-soft));
 }
 
 .record-detail {
@@ -123,7 +119,7 @@
   margin: 0;
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-sm);
-  background: var(--bg-inset);
+  background: transparent;
   padding: 16px;
   color: var(--text-soft);
   font-size: 13px;
