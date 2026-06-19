@@ -10,6 +10,7 @@
     "dev": "vite dev --host 127.0.0.1",
     "build": "vite build",
     "e2e": "playwright test",
+    "e2e:live": "pnpm build && AIONFORGE_CONSOLE_E2E_LIVE=1 playwright test --config playwright.live.config.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "eslint .",

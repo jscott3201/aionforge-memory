@@ -3,6 +3,7 @@
 use std::convert::Infallible;
 use std::path::{Component, Path, PathBuf};
 
+use aionforge_mcp::STREAMABLE_HTTP_ENDPOINT;
 use axum::Router;
 use axum::body::Body;
 use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE};
@@ -19,6 +20,7 @@ const CONTAINER_DIST_DIR: &str = "/usr/local/share/aionforge/console";
 const DEFAULT_DIST_HINT: &str =
     "ui/console/build, executable-adjacent console/, ./console, /usr/local/share/aionforge/console";
 const SPA_SHELL: &str = "200.html";
+const RUNTIME_GLOBAL: &str = "__AIONFORGE_CONSOLE_RUNTIME__";
 
 pub(crate) fn resolve_dist_dir() -> Option<PathBuf> {
     if let Some(configured) = std::env::var_os(DIST_ENV)
@@ -156,6 +158,7 @@ fn clean_relative_path(path: &str) -> Option<PathBuf> {
 }
 
 fn shell_response(method: &Method, bytes: Vec<u8>) -> Response<Body> {
+    let bytes = inject_runtime_bootstrap(bytes);
     let body = if method == Method::HEAD {
         Body::empty()
     } else {
@@ -167,6 +170,29 @@ fn shell_response(method: &Method, bytes: Vec<u8>) -> Response<Body> {
         .header(CACHE_CONTROL, "no-cache")
         .body(body)
         .expect("valid console shell response")
+}
+
+fn inject_runtime_bootstrap(bytes: Vec<u8>) -> Vec<u8> {
+    let mut html = match String::from_utf8(bytes) {
+        Ok(html) => html,
+        Err(error) => return error.into_bytes(),
+    };
+    if html.contains(RUNTIME_GLOBAL) {
+        return html.into_bytes();
+    }
+
+    let bootstrap = runtime_bootstrap();
+    match html.find("</head>") {
+        Some(index) => html.insert_str(index, &bootstrap),
+        None => html.push_str(&bootstrap),
+    }
+    html.into_bytes()
+}
+
+fn runtime_bootstrap() -> String {
+    format!(
+        r#"<script>globalThis.{RUNTIME_GLOBAL}={{"mcpEndpoint":"{STREAMABLE_HTTP_ENDPOINT}"}};</script>"#
+    )
 }
 
 fn plain_body_response(status: StatusCode, body: &'static str) -> Response<Body> {
@@ -221,5 +247,24 @@ mod tests {
                 "{asset:?} should not fall back to the SPA shell"
             );
         }
+    }
+
+    #[test]
+    fn runtime_bootstrap_is_injected_before_head_end() {
+        let bytes = b"<html><head></head><body></body></html>".to_vec();
+        let html = String::from_utf8(inject_runtime_bootstrap(bytes)).expect("utf8");
+
+        let bootstrap_index = html.find(RUNTIME_GLOBAL).expect("runtime global");
+        let head_end_index = html.find("</head>").expect("head end");
+        assert!(bootstrap_index < head_end_index);
+        assert!(html.contains(r#""mcpEndpoint":"/mcp""#));
+    }
+
+    #[test]
+    fn runtime_bootstrap_is_idempotent() {
+        let bytes = inject_runtime_bootstrap(b"<html><head></head></html>".to_vec());
+        let html = String::from_utf8(inject_runtime_bootstrap(bytes)).expect("utf8");
+
+        assert_eq!(html.matches(RUNTIME_GLOBAL).count(), 1);
     }
 }
