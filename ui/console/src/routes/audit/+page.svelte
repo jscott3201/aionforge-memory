@@ -96,16 +96,6 @@
     return "error";
   }
 
-  function stateTone(state: AuditState): string {
-    if (state.state === "ready") {
-      return "good";
-    }
-    if (state.state === "error") {
-      return "danger";
-    }
-    return "muted";
-  }
-
   function nextCursorLabel(
     value: AuditHistoryStructuredContent | null,
   ): string {
@@ -138,10 +128,8 @@
     <Card.Header class="panel-title">
       <ScrollText size="18" />
       <Card.Title>History query</Card.Title>
-      <Badge
-        class={`state-badge tone-${stateTone(auditState)}`}
-        data-testid="audit-state"
-        variant="outline">{stateLabel(auditState)}</Badge
+      <Badge class="state-badge" data-testid="audit-state" variant="outline"
+        >{stateLabel(auditState)}</Badge
       >
     </Card.Header>
     <Separator class="panel-separator" />

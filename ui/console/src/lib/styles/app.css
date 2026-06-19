@@ -256,10 +256,6 @@ a {
   color: var(--text);
 }
 
-.nav-group a.active {
-  box-shadow: inset 3px 0 0 var(--brand-accent);
-}
-
 .sidebar-status {
   display: grid;
   gap: 8px;
@@ -280,7 +276,7 @@ a {
   justify-content: flex-start;
   gap: 5px;
   border-color: var(--border-soft);
-  background: var(--bg-inset);
+  background: transparent;
   color: var(--text-muted);
 }
 
@@ -325,7 +321,7 @@ a {
   gap: 8px;
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-sm);
-  background: var(--bg-inset);
+  background: transparent;
   padding: 0 10px;
 }
 
@@ -374,7 +370,7 @@ a {
   gap: 8px;
   border: 1px solid var(--border-soft);
   border-radius: 999px;
-  background: var(--bg-inset);
+  background: transparent;
   padding: 3px 10px 3px 4px;
   font-size: 12px;
 }
@@ -458,20 +454,11 @@ main {
   line-height: 1;
 }
 
-.tone-good:not(.state-badge) {
-  box-shadow: inset 0 3px 0 var(--success);
-}
-
-.tone-warn:not(.state-badge) {
-  box-shadow: inset 0 3px 0 var(--warn);
-}
-
-.tone-danger:not(.state-badge) {
-  box-shadow: inset 0 3px 0 var(--danger);
-}
-
-.tone-muted:not(.state-badge) {
-  box-shadow: inset 0 3px 0 var(--text-muted);
+.state-badge {
+  border-color: var(--border-soft);
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-muted);
 }
 
 .dashboard-grid {
@@ -633,7 +620,7 @@ main {
 .security-list [data-slot="badge"] {
   border: 1px solid var(--border-soft);
   border-radius: 999px;
-  background: var(--bg-inset);
+  background: transparent;
   padding: 7px 10px;
   color: var(--text-muted);
 }

@@ -69,21 +69,6 @@
     return "error";
   }
 
-  function stateTone(
-    value: ConsolidationStatusStructuredContent | null,
-  ): string {
-    if (!value) {
-      return "muted";
-    }
-    if (value.state === "attention_required") {
-      return "danger";
-    }
-    if (value.state === "backlog_pending") {
-      return "warn";
-    }
-    return "good";
-  }
-
   function countValue(value: number | undefined): string {
     return value === undefined ? "0" : countFormat.format(value);
   }
@@ -126,7 +111,7 @@
       <Flame size="18" />
       <Card.Title>Backlog status</Card.Title>
       <Badge
-        class={`state-badge tone-${stateTone(currentStatus(consolidationState))}`}
+        class="state-badge"
         data-testid="consolidation-state"
         variant="outline">{statusLabel(consolidationState)}</Badge
       >

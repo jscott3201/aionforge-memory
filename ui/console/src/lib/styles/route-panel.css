@@ -12,7 +12,7 @@
   place-items: center;
   border: 1px solid var(--border-soft);
   border-radius: var(--radius);
-  background: var(--bg-inset);
+  background: transparent;
   color: var(--accent-2);
 }
 
@@ -25,7 +25,7 @@
 .route-panel-grid span {
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-sm);
-  background: var(--bg-inset);
+  background: transparent;
   padding: 12px;
   color: var(--text-soft);
   font-size: 13px;
