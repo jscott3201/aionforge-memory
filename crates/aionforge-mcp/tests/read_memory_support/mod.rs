@@ -6,7 +6,7 @@
 //! (`read_memory.rs` — episode/contract tests; `read_memory_multikind.rs` — the all-kinds
 //! tests), so each binary uses a subset and unused items here are expected per binary.
 
-#![allow(dead_code)]
+#![allow(dead_code, unused_imports)]
 
 use std::future::Future;
 use std::sync::Arc;

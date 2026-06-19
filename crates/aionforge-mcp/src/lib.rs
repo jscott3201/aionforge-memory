@@ -14,6 +14,7 @@
 //! wiring on top.
 
 mod auth_validator;
+mod census;
 mod http_body_limit;
 mod http_transport;
 mod inspect;
@@ -34,6 +35,7 @@ mod validated;
 mod work;
 
 pub use auth_validator::{AuthValidators, AuthValidatorsError};
+pub use census::{MemoryCensusCursorToolParam, MemoryCensusToolParams, memory_census_tool};
 pub use http_body_limit::{DEFAULT_MAX_REQUEST_BODY_BYTES, RequestBodyLimitService};
 pub use http_transport::{
     AionforgeStreamableHttpService, OAUTH_PROTECTED_RESOURCE_WELL_KNOWN_PREFIX,
@@ -602,6 +604,25 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
     ) -> Result<CallToolResult, String> {
         let extension = validated_principal_from_extensions(&context.extensions);
         work::work_query_tool_output(&self.memory, params.0, extension, self.auth_enabled())
+            .map(structured::call_tool_result)
+    }
+
+    #[tool(
+        description = "Count or list visible memories by namespace; list mode is paginated.",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn memory_census(
+        &self,
+        params: Parameters<MemoryCensusToolParams>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, String> {
+        let extension = validated_principal_from_extensions(&context.extensions);
+        census::memory_census_tool_output(&self.memory, params.0, extension, self.auth_enabled())
             .map(structured::call_tool_result)
     }
 }

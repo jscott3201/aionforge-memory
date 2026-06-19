@@ -10,10 +10,15 @@
   import PageHeader from "$lib/components/app/PageHeader.svelte";
   import {
     createRuntimeMcpClientConfig,
+    loadMemoryCensus,
     loadServerStatus,
     type McpClientConfig,
   } from "$lib/api/mcp-client";
-  import type { ServerStatusStructuredContent } from "$lib/api/contracts";
+  import type {
+    MemoryCensusNamespace,
+    MemoryCensusStructuredContent,
+    ServerStatusStructuredContent,
+  } from "$lib/api/contracts";
   import { Badge } from "$lib/components/ui/badge/index.js";
   import { Button } from "$lib/components/ui/button/index.js";
   import * as Card from "$lib/components/ui/card/index.js";
@@ -22,7 +27,11 @@
   type NamespaceState =
     | { state: "offline" }
     | { state: "loading" }
-    | { state: "ready"; value: ServerStatusStructuredContent }
+    | {
+        state: "ready";
+        status: ServerStatusStructuredContent;
+        census: MemoryCensusStructuredContent;
+      }
     | { state: "error"; message: string };
 
   interface CountEntry {
@@ -31,33 +40,9 @@
   }
 
   const countFormat = new Intl.NumberFormat("en-US");
-  const namespaceBoundaries = [
-    {
-      name: "Agent private",
-      scope: "agent:<id>",
-      owner: "default capture owner",
-      posture: "isolated by writer identity",
-    },
-    {
-      name: "Team",
-      scope: "team:<name>",
-      owner: "asserted team membership",
-      posture: "shared with authorized teammates",
-    },
-    {
-      name: "Global",
-      scope: "global",
-      owner: "promotion policy",
-      posture: "separate trust surface",
-    },
-    {
-      name: "System",
-      scope: "system",
-      owner: "host-controlled",
-      posture: "excluded from default recall",
-    },
-  ];
+  const localViewer = "agent:00000000-0000-4000-8000-000000000311";
   let config: McpClientConfig | null = null;
+  let viewer = localViewer;
   let namespaceState: NamespaceState = { state: "offline" };
 
   onMount(() => {
@@ -78,9 +63,17 @@
 
     namespaceState = { state: "loading" };
     try {
+      const [status, census] = await Promise.all([
+        loadServerStatus(activeConfig),
+        loadMemoryCensus(activeConfig, {
+          viewer: viewer.trim() || undefined,
+          mode: "counts",
+        }),
+      ]);
       namespaceState = {
         state: "ready",
-        value: await loadServerStatus(activeConfig),
+        status,
+        census,
       };
     } catch (error) {
       namespaceState = { state: "error", message: errorMessage(error) };
@@ -90,7 +83,13 @@
   function currentStatus(
     state: NamespaceState,
   ): ServerStatusStructuredContent | null {
-    return state.state === "ready" ? state.value : null;
+    return state.state === "ready" ? state.status : null;
+  }
+
+  function currentCensus(
+    state: NamespaceState,
+  ): MemoryCensusStructuredContent | null {
+    return state.state === "ready" ? state.census : null;
   }
 
   function stateLabel(state: NamespaceState): string {
@@ -127,6 +126,37 @@
       .replace(/\b\w/g, (match) => match.toUpperCase());
   }
 
+  function namespaceRows(
+    census: MemoryCensusStructuredContent | null,
+  ): MemoryCensusNamespace[] {
+    return [...(census?.namespaces ?? [])].sort(
+      (left, right) =>
+        right.total - left.total || left.namespace.localeCompare(right.namespace),
+    );
+  }
+
+  function namespaceDetail(namespace: MemoryCensusNamespace): string {
+    return `${countValue(memoryTotal(namespace))} memories / ${countValue(workTotal(namespace))} work`;
+  }
+
+  function memoryTotal(namespace: MemoryCensusNamespace): number {
+    return Object.values(namespace.kinds).reduce((sum, value) => sum + value, 0);
+  }
+
+  function workTotal(namespace: MemoryCensusNamespace): number {
+    return Object.values(namespace.work_statuses).reduce(
+      (sum, value) => sum + value,
+      0,
+    );
+  }
+
+  function compactEntries(record: Record<string, number>): string {
+    return entriesFromRecord(record)
+      .filter((entry) => entry.value > 0)
+      .map((entry) => `${titleCase(entry.label)} ${countValue(entry.value)}`)
+      .join(", ");
+  }
+
   function authLabel(status: ServerStatusStructuredContent | null): string {
     if (!status) {
       return "n/a";
@@ -146,9 +176,9 @@
 </script>
 
 <PageHeader
-  eyebrow="server_status"
+  eyebrow="memory_census"
   title="Namespaces"
-  detail="Live aggregate visibility posture from the MCP server."
+  detail="Viewer-scoped namespace counts from the MCP server."
 />
 
 <section class="namespaces-workspace">
@@ -165,23 +195,24 @@
     <Separator class="panel-separator" />
     <Card.Content class="panel-content">
       {@const status = currentStatus(namespaceState)}
+      {@const census = currentCensus(namespaceState)}
       <div class="namespaces-summary-grid">
         <p>
           <strong data-testid="namespaces-memory-count"
-            >{countValue(status?.counts.memories)}</strong
+            >{countValue(census?.totals.memories)}</strong
           >
           <span>memories</span>
         </p>
         <p>
           <strong data-testid="namespaces-work-count"
-            >{countValue(status?.counts.work_items)}</strong
+            >{countValue(census?.totals.work_items)}</strong
           >
           <span>work items</span>
         </p>
         <p>
           <strong data-testid="namespaces-kind-count"
             >{countValue(
-              Object.keys(status?.counts.kinds ?? {}).length,
+              Object.keys(census?.totals.kinds ?? {}).length,
             )}</strong
           >
           <span>memory kinds</span>
@@ -197,13 +228,13 @@
       {#if namespaceState.state === "offline"}
         <div class="namespaces-empty-state">
           <strong>Static preview</strong>
-          <span>memory totals, work totals, and namespace gaps</span>
+          <span>memory totals, work totals, and namespace rows</span>
         </div>
       {:else if namespaceState.state === "loading"}
         <div class="namespaces-empty-state">
           <LoaderCircle size="18" />
           <strong>Loading</strong>
-          <span>server_status</span>
+          <span>memory_census</span>
         </div>
       {:else if namespaceState.state === "error"}
         <div class="namespaces-empty-state tone-danger">
@@ -218,13 +249,17 @@
           </p>
           <p>
             <span>Recall wrapper</span>
-            <strong>{namespaceState.value.recall_wrapper}</strong>
+            <strong>{namespaceState.status.recall_wrapper}</strong>
+          </p>
+          <p>
+            <span>Viewer</span>
+            <strong>{viewer.trim() || "n/a"}</strong>
           </p>
           <p>
             <span>Read-like tools</span>
             <strong
               >{countValue(
-                namespaceState.value.surface.read_like_tools.length,
+                namespaceState.status.surface.read_like_tools.length,
               )}</strong
             >
           </p>
@@ -232,7 +267,7 @@
             <span>Mutating tools</span>
             <strong
               >{countValue(
-                namespaceState.value.surface.mutating_tools.length,
+                namespaceState.status.surface.mutating_tools.length,
               )}</strong
             >
           </p>
@@ -244,23 +279,35 @@
   <Card.Root class="panel namespaces-boundary-panel">
     <Card.Header class="panel-title">
       <ShieldCheck size="18" />
-      <Card.Title>Boundaries</Card.Title>
-      <Badge variant="outline">policy</Badge>
+      <Card.Title>Namespace census</Card.Title>
+      <Badge variant="outline"
+        >{countValue(namespaceRows(currentCensus(namespaceState)).length)}
+        namespaces</Badge
+      >
     </Card.Header>
     <Separator class="panel-separator" />
     <Card.Content class="panel-content">
+      {@const namespaces = namespaceRows(currentCensus(namespaceState))}
+      {#if namespaces.length > 0}
       <div class="namespaces-boundary-list">
-        {#each namespaceBoundaries as boundary (boundary.name)}
+        {#each namespaces as namespace (namespace.namespace)}
           <article>
             <header>
-              <strong>{boundary.name}</strong>
-              <Badge variant="secondary">{boundary.scope}</Badge>
+              <strong>{namespace.namespace}</strong>
+              <Badge variant="secondary">{countValue(namespace.total)}</Badge>
             </header>
-            <p>{boundary.owner}</p>
-            <span>{boundary.posture}</span>
+            <p>{namespaceDetail(namespace)}</p>
+            <span>{compactEntries(namespace.kinds) || "no memories"}</span>
+            <span>{compactEntries(namespace.work_statuses) || "no work items"}</span>
           </article>
         {/each}
       </div>
+      {:else}
+        <div class="namespaces-empty-state">
+          <strong>No visible namespaces</strong>
+          <span>{viewer.trim() || "n/a"}</span>
+        </div>
+      {/if}
       <Button
         class="namespaces-refresh"
         data-testid="namespaces-refresh"
@@ -286,7 +333,7 @@
       <Card.Title>Memory kinds</Card.Title>
       <Badge variant="outline"
         >{countValue(
-          entriesFromRecord(currentStatus(namespaceState)?.counts.kinds).length,
+          entriesFromRecord(currentCensus(namespaceState)?.totals.kinds).length,
         )}
         kinds</Badge
       >
@@ -294,7 +341,7 @@
     <Separator class="panel-separator" />
     <Card.Content class="panel-content">
       {@const kindEntries = entriesFromRecord(
-        currentStatus(namespaceState)?.counts.kinds,
+        currentCensus(namespaceState)?.totals.kinds,
       )}
       {#if kindEntries.length > 0}
         <div
@@ -322,8 +369,9 @@
       <Card.Title>Work statuses</Card.Title>
       <Badge variant="outline"
         >{countValue(
-          entriesFromRecord(currentStatus(namespaceState)?.counts.work_statuses)
-            .length,
+          entriesFromRecord(
+            currentCensus(namespaceState)?.totals.work_statuses,
+          ).length,
         )}
         statuses</Badge
       >
@@ -331,7 +379,7 @@
     <Separator class="panel-separator" />
     <Card.Content class="panel-content">
       {@const workEntries = entriesFromRecord(
-        currentStatus(namespaceState)?.counts.work_statuses,
+        currentCensus(namespaceState)?.totals.work_statuses,
       )}
       {#if workEntries.length > 0}
         <div
@@ -357,23 +405,28 @@
 <Card.Root class="panel namespaces-gap-panel">
   <Card.Header class="panel-title">
     <ShieldCheck size="18" />
-    <Card.Title>Backend gaps</Card.Title>
-    <Badge variant="outline">deferred</Badge>
+    <Card.Title>Census payload</Card.Title>
+    <Badge variant="outline">{currentCensus(namespaceState)?.mode ?? "pending"}</Badge>
   </Card.Header>
   <Separator class="panel-separator" />
   <Card.Content class="panel-content">
-    <div class="namespaces-gap-list" data-testid="namespaces-gap-list">
+    {@const census = currentCensus(namespaceState)}
+    <div class="namespaces-gap-list" data-testid="namespaces-census-payload">
       <p>
-        <strong>Namespace inventory</strong>
-        <span>not exposed by a console-readable MCP surface</span>
+        <strong>Schema</strong>
+        <span>{census?.schema ?? "n/a"}</span>
       </p>
       <p>
-        <strong>Principal access listing</strong>
-        <span>not exposed until a namespace census reader lands</span>
+        <strong>Namespaces</strong>
+        <span>{countValue(census?.namespaces.length)}</span>
       </p>
       <p>
-        <strong>Session visibility map</strong>
-        <span>not exposed until session access metadata is modeled</span>
+        <strong>Visible total</strong>
+        <span
+          >{countValue(census?.totals.memories)} memories / {countValue(
+            census?.totals.work_items,
+          )} work</span
+        >
       </p>
     </div>
   </Card.Content>

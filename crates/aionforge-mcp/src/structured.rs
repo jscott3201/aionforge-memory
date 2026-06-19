@@ -4,6 +4,7 @@ use rmcp::model::{CallToolResult, Content};
 use serde::Serialize;
 use serde_json::Value;
 
+pub(crate) mod census;
 pub(crate) mod inspect;
 pub(crate) mod search;
 

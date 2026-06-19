@@ -89,6 +89,7 @@ export type StructuredContentSchema =
   | "aionforge.search_results.v1"
   | "aionforge.read_memory.v1"
   | "aionforge.session_manifest.v1"
+  | "aionforge.memory_census.v1"
   | "aionforge.audit_history.v1"
   | "aionforge.work_query.v1"
   | "aionforge.work_tree.v1";
@@ -193,6 +194,32 @@ export interface SessionManifestStructuredContent {
   episodes: MemoryRecord[];
 }
 
+export interface MemoryCensusStructuredContent {
+  schema: "aionforge.memory_census.v1";
+  mode: "counts" | "list";
+  namespaces: MemoryCensusNamespace[];
+  totals: {
+    memories: number;
+    work_items: number;
+    kinds: Record<string, number>;
+    work_statuses: Record<string, number>;
+  };
+  list?: {
+    count: number;
+    total_visible: number;
+    limit: number;
+    next: Cursor | null;
+    memories: MemoryRecord[];
+  };
+}
+
+export interface MemoryCensusNamespace {
+  namespace: string;
+  kinds: Record<string, number>;
+  work_statuses: Record<string, number>;
+  total: number;
+}
+
 export interface AuditHistoryStructuredContent {
   schema: "aionforge.audit_history.v1";
   subject: string;
@@ -227,6 +254,7 @@ export type ReadLikeStructuredContent =
   | SearchResultsStructuredContent
   | ReadMemoryStructuredContent
   | SessionManifestStructuredContent
+  | MemoryCensusStructuredContent
   | AuditHistoryStructuredContent
   | WorkQueryStructuredContent
   | WorkTreeStructuredContent;

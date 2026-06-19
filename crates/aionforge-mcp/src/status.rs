@@ -379,7 +379,7 @@ mod tests {
             &AuthPosture::disabled(),
         );
         assert!(out.starts_with("[server] "), "{out}");
-        assert!(out.contains("tools=18"), "{out}");
+        assert!(out.contains("tools=19"), "{out}");
         assert!(out.contains("resources=8"), "{out}");
         assert!(out.contains("sampling=false"), "{out}");
         assert!(out.contains("memories=6"), "{out}");
@@ -482,7 +482,7 @@ mod tests {
         // The full rosters, in TOOLS order — the work tools append after the existing ones.
         assert!(
             out.contains(
-                "read_like_tools=server_status,search,read_memory,session_manifest,consolidation_status,audit_history,work_tree,work_query"
+                "read_like_tools=server_status,search,read_memory,session_manifest,memory_census,consolidation_status,audit_history,work_tree,work_query"
             ),
             "{out}"
         );

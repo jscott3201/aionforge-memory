@@ -11,7 +11,7 @@ fn mcp_tool_descriptions_stay_compact() {
     let descriptions = tool_descriptions(MCP_LIB_RS);
     assert_eq!(
         descriptions.len(),
-        18,
+        19,
         "parsed unexpected tool descriptions: {descriptions:?}"
     );
 

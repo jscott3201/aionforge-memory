@@ -41,7 +41,7 @@ struct SessionManifestCursorStructured {
 }
 
 #[derive(Serialize)]
-struct MemoryProvenance {
+pub(crate) struct MemoryProvenance {
     writer: String,
     model_family: String,
     model_version: Option<String>,
@@ -51,7 +51,7 @@ struct MemoryProvenance {
 
 #[derive(Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-enum MemoryRecord {
+pub(crate) enum MemoryRecord {
     Episode {
         id: String,
         namespace: String,
@@ -223,7 +223,7 @@ pub(crate) fn session_manifest(input: SessionManifestOutput<'_>) -> StructuredTo
     )
 }
 
-fn memory_record(
+pub(crate) fn memory_record(
     memory: &ResolvedMemory,
     superseded_by: Option<&Id>,
     provenance: Option<&ProvenanceRecord>,

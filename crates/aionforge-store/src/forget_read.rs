@@ -311,28 +311,42 @@ impl Store {
             let Some(props) = snapshot.node_properties(node) else {
                 continue;
             };
-            // Decode the kind's full body off the props already in hand, under this same
-            // snapshot. The match is exhaustive over MCP-surfaced labels; any other label
-            // (an edge kind, an internal node) is not a readable memory and is skipped.
-            let resolved = match *label {
-                Episode::LABEL => ResolvedMemory::Episode(crate::episode::from_properties(props)?),
-                Fact::LABEL => ResolvedMemory::Fact(crate::fact::from_properties(props)?),
-                Entity::LABEL => ResolvedMemory::Entity(crate::entity::from_properties(props)?),
-                Note::LABEL => ResolvedMemory::Note(crate::note::from_properties(props)?),
-                Skill::LABEL => ResolvedMemory::Skill(crate::skill::from_properties(props)?),
-                BadPattern::LABEL => {
-                    ResolvedMemory::BadPattern(crate::bad_pattern::from_properties(props)?)
-                }
-                CoreBlock::LABEL => {
-                    ResolvedMemory::Core(crate::core_block::from_properties(props)?)
-                }
-                // Identity-only kinds: decoded by their own `from_properties` (never
-                // `blocks_from_properties`, which requires a Stats block these lack).
-                WorkItem::LABEL => ResolvedMemory::WorkItem(crate::work::from_properties(props)?),
-                Tag::LABEL => ResolvedMemory::Tag(crate::tag::from_properties(props)?),
-                _ => continue,
-            };
-            return Ok(Some(resolved));
+            if let Some(resolved) = resolved_memory_from_properties(label, props)? {
+                return Ok(Some(resolved));
+            }
+        }
+        Ok(None)
+    }
+
+    /// The full typed memory stored at `node`, if it carries one of `labels`.
+    ///
+    /// This is the node-id counterpart to [`Store::resolved_memory_by_id`], used when a prior
+    /// indexed scan has already produced candidate node handles (for example, a namespace census).
+    /// The label check and decode run under one snapshot so the returned body and identity gate are
+    /// internally consistent.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if label lookup or body decode fails.
+    pub fn resolved_memory_by_node_id(
+        &self,
+        node: NodeId,
+        labels: &[&str],
+    ) -> Result<Option<ResolvedMemory>, StoreError> {
+        let snapshot = self.graph().read();
+        let Some(node_labels) = snapshot.node_labels(node) else {
+            return Ok(None);
+        };
+        let Some(props) = snapshot.node_properties(node) else {
+            return Ok(None);
+        };
+        for label in labels {
+            let db_label = db_string(label)?;
+            if !node_labels.contains(&db_label) {
+                continue;
+            }
+            if let Some(resolved) = resolved_memory_from_properties(label, props)? {
+                return Ok(Some(resolved));
+            }
         }
         Ok(None)
     }
@@ -402,6 +416,32 @@ impl Store {
         }
         Ok(false)
     }
+}
+
+fn resolved_memory_from_properties(
+    label: &str,
+    props: &PropertyMap,
+) -> Result<Option<ResolvedMemory>, StoreError> {
+    // Decode the kind's full body off the props already in hand. The match is exhaustive over
+    // MCP-surfaced labels; any other label (an edge kind, an internal node) is not a readable
+    // memory and is skipped.
+    let resolved = match label {
+        Episode::LABEL => ResolvedMemory::Episode(crate::episode::from_properties(props)?),
+        Fact::LABEL => ResolvedMemory::Fact(crate::fact::from_properties(props)?),
+        Entity::LABEL => ResolvedMemory::Entity(crate::entity::from_properties(props)?),
+        Note::LABEL => ResolvedMemory::Note(crate::note::from_properties(props)?),
+        Skill::LABEL => ResolvedMemory::Skill(crate::skill::from_properties(props)?),
+        BadPattern::LABEL => {
+            ResolvedMemory::BadPattern(crate::bad_pattern::from_properties(props)?)
+        }
+        CoreBlock::LABEL => ResolvedMemory::Core(crate::core_block::from_properties(props)?),
+        // Identity-only kinds: decoded by their own `from_properties` (never
+        // `blocks_from_properties`, which requires a Stats block these lack).
+        WorkItem::LABEL => ResolvedMemory::WorkItem(crate::work::from_properties(props)?),
+        Tag::LABEL => ResolvedMemory::Tag(crate::tag::from_properties(props)?),
+        _ => return Ok(None),
+    };
+    Ok(Some(resolved))
 }
 
 /// The `Identity` and `Stats` blocks off a sweep candidate's property map.
