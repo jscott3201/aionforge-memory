@@ -115,6 +115,14 @@ async fn read_like_transport_results_include_structured_content() -> TestResult 
             "[session_manifest] ",
         ),
         (
+            "memory_census",
+            serde_json::json!({
+                "principal": principal.clone(),
+            }),
+            "aionforge.memory_census.v1",
+            "[memory_census] ",
+        ),
+        (
             "audit_history",
             serde_json::json!({
                 "kind": "capture",

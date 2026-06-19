@@ -73,6 +73,7 @@ pub use aionforge_trust::{
 };
 
 mod audit;
+mod census;
 mod core_block;
 mod doctor;
 mod drift_sweep;
@@ -88,6 +89,7 @@ pub use aionforge_store::{
     ConsolidatingModel, MemoryCounts, NoteLineage, WorkCounts, WriterFamilySet,
 };
 pub use audit::{AuditPage, AuditRecord, AuditVerification};
+pub use census::{MemoryCensusReport, NamespaceCensus};
 pub use core_block::{CoreBlockCreate, CoreBlockDraft};
 pub use doctor::{EmbedderDoctorReport, MemoryDoctorReport};
 pub use drift_sweep::BaselineComputation;

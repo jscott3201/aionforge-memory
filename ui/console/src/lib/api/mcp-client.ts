@@ -5,6 +5,8 @@ import type {
   AuditCursor,
   AuditHistoryStructuredContent,
   ConsolidationStatusStructuredContent,
+  Cursor,
+  MemoryCensusStructuredContent,
   McpResourceDescriptor,
   ReadMemoryStructuredContent,
   SearchResultsStructuredContent,
@@ -71,6 +73,18 @@ export interface AuditHistoryRequest {
   teams?: string[];
   after?: AuditCursor;
   limit?: number;
+  verbose?: boolean;
+}
+
+export interface MemoryCensusRequest {
+  viewer?: string;
+  teams?: string[];
+  mode?: "counts" | "list";
+  namespace?: string;
+  kind?: string;
+  limit?: number;
+  after?: Cursor;
+  includeSystem?: boolean;
   verbose?: boolean;
 }
 
@@ -317,6 +331,38 @@ export async function readMemory(
   return result.structuredContent;
 }
 
+export async function loadMemoryCensus(
+  config: McpClientConfig,
+  request: MemoryCensusRequest,
+): Promise<MemoryCensusStructuredContent> {
+  const result = await callMcpTool<MemoryCensusStructuredContent>(config, {
+    tool: "memory_census",
+    params: {
+      viewer: request.viewer?.trim() || undefined,
+      teams: request.teams ?? [],
+      mode: request.mode ?? "counts",
+      namespace: request.namespace?.trim() || undefined,
+      kind: request.kind?.trim() || undefined,
+      limit: request.limit,
+      after: request.after,
+      include_system: request.includeSystem ?? false,
+      verbose: request.verbose ?? false,
+    },
+  });
+
+  if (result.isError) {
+    throw new McpClientError(
+      textResultMessage(result) ?? "memory_census failed",
+    );
+  }
+
+  if (!isMemoryCensus(result.structuredContent)) {
+    throw new McpClientError("memory_census returned an unexpected payload.");
+  }
+
+  return result.structuredContent;
+}
+
 function isServerStatusStructuredContent(
   value: unknown,
 ): value is ServerStatusStructuredContent {
@@ -395,6 +441,40 @@ function isReadMemoryStructuredContent(
   );
 }
 
+export function isMemoryCensus(
+  value: unknown,
+): value is MemoryCensusStructuredContent {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const candidate = value as Partial<MemoryCensusStructuredContent>;
+  return (
+    candidate.schema === "aionforge.memory_census.v1" &&
+    (candidate.mode === "counts" || candidate.mode === "list") &&
+    Array.isArray(candidate.namespaces) &&
+    candidate.namespaces.every(
+      (namespace) =>
+        typeof namespace.namespace === "string" &&
+        typeof namespace.total === "number" &&
+        isNumberRecord(namespace.kinds) &&
+        isNumberRecord(namespace.work_statuses),
+    ) &&
+    typeof candidate.totals?.memories === "number" &&
+    typeof candidate.totals?.work_items === "number" &&
+    isNumberRecord(candidate.totals.kinds) &&
+    isNumberRecord(candidate.totals.work_statuses) &&
+    (candidate.list === undefined ||
+      (typeof candidate.list.count === "number" &&
+        typeof candidate.list.total_visible === "number" &&
+        typeof candidate.list.limit === "number" &&
+        (candidate.list.next === null ||
+          (typeof candidate.list.next?.ingested_at === "string" &&
+            typeof candidate.list.next?.id === "string")) &&
+        Array.isArray(candidate.list.memories)))
+  );
+}
+
 function isAuditHistoryStructuredContent(
   value: unknown,
 ): value is AuditHistoryStructuredContent {
@@ -464,6 +544,14 @@ function isToolManifestStructuredContent(
         Array.isArray(tool.errors) &&
         tool.errors.every((error) => typeof error === "string"),
     )
+  );
+}
+
+function isNumberRecord(value: unknown): value is Record<string, number> {
+  return (
+    !!value &&
+    typeof value === "object" &&
+    Object.values(value).every((entry) => typeof entry === "number")
   );
 }
 

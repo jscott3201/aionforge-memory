@@ -51,8 +51,9 @@ Start locally with `aionforge serve stdio` or
 Tools:
 - server_status: version/counts/transports/tool posture.
 - search: principal-scoped recall inside <recalled-memory-context>.
-- read_memory: read 1..=16 memories by id; full=true returns full body; include_system opt-in. team:<name> works only when asserted in-call. verbose/full surface signed episode provenance; derived facts have none.
-- session_manifest: visible session handoff (after/next pagination, audit counts). Uses the session_id set at capture time; captures without one are invisible.
+- read_memory: read 1..=16 memories by id; full=true returns full body; include_system opt-in; verbose/full include episode provenance.
+- session_manifest: visible session handoff by session_id, with after/next pagination.
+- memory_census: visible namespace counts; list mode pages visible memories.
 - capture: write one event for agent_id or principal.agent_id; team target requires asserted teams.
 - batch_capture: capture an array (1..=64) under one shared writer; per-item best-effort, dup counts stored near-duplicates.
 - consolidation_status: service-wide backlog age from ingestion, not historical event time.
@@ -87,6 +88,7 @@ Read-like tools:
 - search
 - read_memory
 - session_manifest
+- memory_census
 - consolidation_status
 - audit_history
 - work_tree
@@ -104,7 +106,7 @@ Prompt-gated mutating tools:
 - work_advance
 - work_link
 
-Recommended client posture:
+Client posture:
 - Allow or approve read-like tools if the host trusts this local server.
 - Ask before capture because it persists new user-provided memory.
 - Ask before consolidate because it mutates derived memory, even though runs are bounded and deterministic.
@@ -192,6 +194,7 @@ enabled_tools = [
   "search",
   "read_memory",
   "session_manifest",
+  "memory_census",
   "server_status",
   "consolidation_status",
   "audit_history",
@@ -216,6 +219,8 @@ approval_mode = "approve"
 [mcp_servers.aionforge_memory.tools.read_memory]
 approval_mode = "approve"
 [mcp_servers.aionforge_memory.tools.session_manifest]
+approval_mode = "approve"
+[mcp_servers.aionforge_memory.tools.memory_census]
 approval_mode = "approve"
 [mcp_servers.aionforge_memory.tools.consolidation_status]
 approval_mode = "approve"
@@ -276,6 +281,7 @@ const OPENCODE_CONFIG: &str = r#"{
     "aionforge-memory_search": "allow",
     "aionforge-memory_read_memory": "allow",
     "aionforge-memory_session_manifest": "allow",
+    "aionforge-memory_memory_census": "allow",
     "aionforge-memory_server_status": "allow",
     "aionforge-memory_consolidation_status": "allow",
     "aionforge-memory_audit_history": "allow",
@@ -552,6 +558,7 @@ fn structured_output_schema(tool_name: &str) -> Option<&'static str> {
         "search" => Some("aionforge.search_results.v1"),
         "read_memory" => Some("aionforge.read_memory.v1"),
         "session_manifest" => Some("aionforge.session_manifest.v1"),
+        "memory_census" => Some("aionforge.memory_census.v1"),
         "consolidation_status" => Some("aionforge.consolidation_status.v1"),
         "audit_history" => Some("aionforge.audit_history.v1"),
         "work_tree" => Some("aionforge.work_tree.v1"),
