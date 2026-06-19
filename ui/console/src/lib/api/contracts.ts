@@ -34,6 +34,50 @@ export interface ToolSurfaceModel {
   approval: "allow" | "ask";
 }
 
+export interface McpResourceDescriptor {
+  uri: string;
+  name: string;
+  title?: string;
+  description?: string;
+  mimeType?: string;
+  size?: number;
+}
+
+export interface ToolManifestStructuredContent {
+  schema: "aionforge.mcp_tools.v1";
+  server: {
+    name: string;
+    version: string;
+    transports: string[];
+    sampling: boolean;
+    prompt_count: number;
+    resource_count: number;
+    recall_wrapper: string;
+  };
+  policy: {
+    read_like_approval: string;
+    mutating_approval: string;
+    mutation_rule: string;
+  };
+  resources: Record<string, string>;
+  tools: ToolManifestTool[];
+}
+
+export interface ToolManifestTool {
+  name: string;
+  class: "read_like" | "mutating";
+  approval: string;
+  mutates: boolean;
+  read_only_hint: boolean;
+  destructive_hint: boolean;
+  idempotent_hint: boolean;
+  open_world_hint: boolean;
+  default_output: string;
+  schema?: StructuredContentSchema;
+  verbose: boolean;
+  errors: string[];
+}
+
 export interface ConsoleSnapshot {
   endpoint: string;
   transport: string;
@@ -45,6 +89,7 @@ export interface ConsoleSnapshot {
 }
 
 export type StructuredContentSchema =
+  | "aionforge.mcp_tools.v1"
   | "aionforge.server_status.v1"
   | "aionforge.consolidation_status.v1"
   | "aionforge.search_results.v1"
