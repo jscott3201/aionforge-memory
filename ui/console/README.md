@@ -20,6 +20,14 @@ pnpm validate
 `pnpm validate` runs formatting, linting, type-checking, a production build, and
 Playwright e2e coverage against the built `/console` app.
 
+Live MCP data-flow coverage runs separately because it starts the Rust HTTP
+server with an isolated data directory, seeds a real memory through `capture`,
+and verifies the dashboard renders the live `server_status` census:
+
+```bash
+pnpm e2e:live
+```
+
 UI primitives come from `shadcn-svelte` with Tailwind CSS v4 configured in
 `components.json` and `src/lib/styles/app.css`. Add new primitives from
 `ui/console` with:

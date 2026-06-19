@@ -6,6 +6,7 @@
     Server,
     ShieldCheck,
   } from "@lucide/svelte";
+  import { onMount } from "svelte";
   import PageHeader from "$lib/components/app/PageHeader.svelte";
   import StatusTile from "$lib/components/status/StatusTile.svelte";
   import {
@@ -17,6 +18,55 @@
   import { Badge } from "$lib/components/ui/badge/index.js";
   import * as Card from "$lib/components/ui/card/index.js";
   import { Separator } from "$lib/components/ui/separator/index.js";
+  import {
+    createRuntimeMcpClientConfig,
+    loadServerStatus,
+  } from "$lib/api/mcp-client";
+  import type { ServerStatusStructuredContent } from "$lib/api/contracts";
+
+  type LiveMcpStatus =
+    | { state: "loading" }
+    | { state: "ready"; value: ServerStatusStructuredContent }
+    | { state: "unavailable" };
+
+  const countFormat = new Intl.NumberFormat("en-US");
+  let liveMcpStatus: LiveMcpStatus = { state: "loading" };
+
+  onMount(() => {
+    let mounted = true;
+    const config = createRuntimeMcpClientConfig();
+
+    if (!config) {
+      liveMcpStatus = { state: "unavailable" };
+      return () => {
+        mounted = false;
+      };
+    }
+
+    loadServerStatus(config)
+      .then((value) => {
+        if (mounted) {
+          liveMcpStatus = { state: "ready", value };
+        }
+      })
+      .catch(() => {
+        if (mounted) {
+          liveMcpStatus = { state: "unavailable" };
+        }
+      });
+
+    return () => {
+      mounted = false;
+    };
+  });
+
+  function formatCount(value: number): string {
+    return countFormat.format(value);
+  }
+
+  function transportLabel(status: ServerStatusStructuredContent): string {
+    return status.transports.join(", ");
+  }
 </script>
 
 <PageHeader
@@ -53,25 +103,67 @@
     </Card.Content>
   </Card.Root>
 
-  <Card.Root class="panel">
+  <Card.Root class="panel live-panel" aria-label="Live MCP data flow">
     <Card.Header class="panel-title">
       <Server size="18" />
-      <Card.Title>MCP tool split</Card.Title>
+      <Card.Title>Live MCP data</Card.Title>
+      {#if liveMcpStatus.state === "ready"}
+        <Badge data-testid="live-mcp-state" variant="secondary">live</Badge>
+      {:else if liveMcpStatus.state === "loading"}
+        <Badge data-testid="live-mcp-state" variant="outline">connecting</Badge>
+      {:else}
+        <Badge data-testid="live-mcp-state" variant="outline">offline</Badge>
+      {/if}
     </Card.Header>
     <Separator class="panel-separator" />
     <Card.Content class="panel-content">
-      <div class="split-meter" aria-label="Tool split">
-        <span style={`width: ${(consoleSnapshot.readLikeTools / 18) * 100}%`}
-        ></span>
-      </div>
-      <div class="split-legend">
-        <Badge variant="secondary"
-          ><i class="dot good"></i>{consoleSnapshot.readLikeTools} read-like</Badge
-        >
-        <Badge variant="outline"
-          ><i class="dot warn"></i>{consoleSnapshot.mutatingTools} mutating</Badge
-        >
-      </div>
+      {#if liveMcpStatus.state === "ready"}
+        <div class="live-count-grid">
+          <p>
+            <strong data-testid="live-memory-count"
+              >{formatCount(liveMcpStatus.value.counts.memories)}</strong
+            >
+            <span>memories</span>
+          </p>
+          <p>
+            <strong data-testid="live-work-count"
+              >{formatCount(liveMcpStatus.value.counts.work_items)}</strong
+            >
+            <span>work items</span>
+          </p>
+          <p>
+            <strong data-testid="live-tool-count"
+              >{formatCount(liveMcpStatus.value.surface.tools)}</strong
+            >
+            <span>tools</span>
+          </p>
+        </div>
+        <div class="live-meta">
+          <p>
+            <strong>Transport</strong><span
+              >{transportLabel(liveMcpStatus.value)}</span
+            >
+          </p>
+          <p>
+            <strong>Auth</strong><span
+              >{liveMcpStatus.value.auth.enabled ? "enabled" : "disabled"}</span
+            >
+          </p>
+        </div>
+      {:else}
+        <div class="split-meter" aria-label="Tool split">
+          <span style={`width: ${(consoleSnapshot.readLikeTools / 18) * 100}%`}
+          ></span>
+        </div>
+        <div class="split-legend">
+          <Badge variant="secondary"
+            ><i class="dot good"></i>{consoleSnapshot.readLikeTools} read-like</Badge
+          >
+          <Badge variant="outline"
+            ><i class="dot warn"></i>{consoleSnapshot.mutatingTools} mutating</Badge
+          >
+        </div>
+      {/if}
     </Card.Content>
   </Card.Root>
 </section>
