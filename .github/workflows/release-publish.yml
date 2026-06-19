@@ -69,6 +69,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
+      - name: compute build metadata
+        id: build-meta
+        run: |
+          echo "sha=$(git rev-parse --short=12 HEAD)" >> "$GITHUB_OUTPUT"
+          echo "status=clean" >> "$GITHUB_OUTPUT"
+          echo "timestamp=$(git show -s --format=%cI HEAD)" >> "$GITHUB_OUTPUT"
       - name: build linux binary artifact
         uses: docker/build-push-action@v6
         with:
@@ -76,6 +82,10 @@ jobs:
           target: binary-artifact
           platforms: ${{ matrix.platform }}
           outputs: type=local,dest=dist/${{ matrix.target }}
+          build-args: |
+            AIONFORGE_BUILD_SHA=${{ steps.build-meta.outputs.sha }}
+            AIONFORGE_BUILD_STATUS=${{ steps.build-meta.outputs.status }}
+            AIONFORGE_BUILD_TIMESTAMP=${{ steps.build-meta.outputs.timestamp }}
           cache-from: type=gha,scope=${{ matrix.cache-scope }}
           cache-to: type=gha,mode=max,scope=${{ matrix.cache-scope }}
       - name: package binary
@@ -118,7 +128,17 @@ jobs:
           cache-dependency-path: ui/console/pnpm-lock.yaml
       - name: add release target
         run: rustup target add "${{ matrix.target }}"
+      - name: compute build metadata
+        id: build-meta
+        run: |
+          echo "sha=$(git rev-parse --short=12 HEAD)" >> "$GITHUB_OUTPUT"
+          echo "status=clean" >> "$GITHUB_OUTPUT"
+          echo "timestamp=$(git show -s --format=%cI HEAD)" >> "$GITHUB_OUTPUT"
       - name: build release binary
+        env:
+          AIONFORGE_BUILD_SHA: ${{ steps.build-meta.outputs.sha }}
+          AIONFORGE_BUILD_STATUS: ${{ steps.build-meta.outputs.status }}
+          AIONFORGE_BUILD_TIMESTAMP: ${{ steps.build-meta.outputs.timestamp }}
         run: cargo build --locked --release -p aionforge-cli --target "${{ matrix.target }}"
       - name: build console assets
         working-directory: ui/console

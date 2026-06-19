@@ -57,6 +57,32 @@ enabled = false
     assert_eq!(server_info["name"], "aionforge-memory");
     assert_eq!(server_info["version"], env!("CARGO_PKG_VERSION"));
 
+    assert_http_get(listen_addr, "/livez", "200", "ok");
+    let version = http_get(listen_addr, "/version").expect("GET /version");
+    assert!(
+        version.status_line.contains("200"),
+        "GET /version returned {}; body: {}",
+        version.status_line,
+        version.body
+    );
+    assert!(
+        version
+            .headers
+            .to_ascii_lowercase()
+            .contains("content-type: application/json"),
+        "GET /version must be JSON: {}",
+        version.headers
+    );
+    let version_json: Value = serde_json::from_str(&version.body).expect("/version JSON");
+    assert_eq!(version_json["version"], env!("CARGO_PKG_VERSION"));
+    assert!(
+        version_json["build_sha"]
+            .as_str()
+            .is_some_and(|sha| !sha.is_empty()),
+        "/version carries a non-empty build_sha: {version_json}"
+    );
+    assert_eq!(version_json["embedder_dimension"], 1536);
+
     assert_http_get(listen_addr, "/console", "200", "Aionforge console shell");
     assert_http_get(
         listen_addr,
@@ -308,6 +334,7 @@ fn assert_http_get(
 }
 
 struct HttpGetResponse {
+    headers: String,
     status_line: String,
     body: String,
 }
@@ -360,7 +387,11 @@ fn parse_http_get_response(response: &[u8]) -> Result<HttpGetResponse, String> {
         String::from_utf8(body.to_vec())
             .map_err(|error| format!("GET response body was not utf-8: {error}"))?
     };
-    Ok(HttpGetResponse { status_line, body })
+    Ok(HttpGetResponse {
+        headers: headers.to_string(),
+        status_line,
+        body,
+    })
 }
 
 fn parse_sse_json_rpc(body: &str) -> Option<Value> {

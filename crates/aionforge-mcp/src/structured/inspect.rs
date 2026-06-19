@@ -173,35 +173,49 @@ pub(crate) fn read_memory(
     )
 }
 
+/// Inputs for attaching a structured session-manifest DTO to already-rendered text.
+pub(crate) struct SessionManifestOutput<'a> {
+    /// The compact text response already rendered for the tool.
+    pub(crate) text: String,
+    /// The requested session id.
+    pub(crate) session_id: &'a Id,
+    /// Visible episodes and their optional live replacement ids.
+    pub(crate) episodes: &'a [(Episode, Option<Id>)],
+    /// Requested result limit.
+    pub(crate) limit: usize,
+    /// Total visible episodes before page truncation.
+    pub(crate) total_visible: usize,
+    /// Superseded episodes hidden because current-only output was requested.
+    pub(crate) superseded_hidden: usize,
+    /// Next-page cursor as `(ingested_at, id)`, if another page exists.
+    pub(crate) next: Option<(String, String)>,
+    /// Maximum characters retained in rendered episode bodies.
+    pub(crate) max_chars: usize,
+}
+
 /// Attach a structured session-manifest DTO to the already-rendered text.
-pub(crate) fn session_manifest(
-    text: String,
-    session_id: &Id,
-    episodes: &[(Episode, Option<Id>)],
-    limit: usize,
-    total_visible: usize,
-    superseded_hidden: usize,
-    next: Option<(String, String)>,
-    max_chars: usize,
-) -> StructuredToolOutput {
+pub(crate) fn session_manifest(input: SessionManifestOutput<'_>) -> StructuredToolOutput {
     StructuredToolOutput::new(
-        text,
+        input.text,
         SessionManifestStructured {
             schema: "aionforge.session_manifest.v1",
-            session_id: session_id.to_string(),
-            count: episodes.len(),
-            total_visible,
-            limit,
-            superseded_hidden,
-            next: next.map(|(ingested_at, id)| SessionManifestCursorStructured { ingested_at, id }),
-            episodes: episodes
+            session_id: input.session_id.to_string(),
+            count: input.episodes.len(),
+            total_visible: input.total_visible,
+            limit: input.limit,
+            superseded_hidden: input.superseded_hidden,
+            next: input
+                .next
+                .map(|(ingested_at, id)| SessionManifestCursorStructured { ingested_at, id }),
+            episodes: input
+                .episodes
                 .iter()
                 .map(|(episode, superseded_by)| {
                     memory_record(
                         &ResolvedMemory::Episode(episode.clone()),
                         superseded_by.as_ref(),
                         None,
-                        max_chars,
+                        input.max_chars,
                     )
                 })
                 .collect(),

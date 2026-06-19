@@ -355,7 +355,7 @@
         </p>
         <p>
           <span>Build profile</span>
-          <strong>{status?.build.profile ?? "n/a"}</strong>
+          <strong>{status?.build.build_status ?? "n/a"}</strong>
         </p>
         <p>
           <span>Transport</span>

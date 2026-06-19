@@ -19,7 +19,7 @@ use axum::body::Body;
 use axum::extract::State;
 use axum::http::header::AUTHORIZATION;
 use axum::http::{Method, Request, Response, StatusCode};
-use axum::routing::any;
+use axum::routing::{any, get};
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full, combinators::BoxBody};
 use tokio::net::TcpListener;
@@ -27,6 +27,7 @@ use tokio::net::TcpListener;
 use crate::cli::{ServeArgs, ServeTransport};
 use crate::console;
 use crate::error::CliError;
+use crate::health::{self, VersionInfo};
 use crate::host::{
     HostOptions, RuntimeEmbedder, StartupEmbedderStatus, check_startup_embedder, load_config,
     open_memory, render_startup_embedder_status,
@@ -232,6 +233,7 @@ async fn serve_http(
     let state = HttpMcpState {
         inner: service,
         validators: validators.map(Arc::new),
+        version: Arc::new(VersionInfo::from_config(config)),
     };
     let console_dist = console::resolve_dist_dir();
     console::report_startup(console_dist.as_deref());
@@ -344,6 +346,8 @@ fn report_auth_startup(auth: &AuthConfig, validators: &Option<AuthValidators>) {
 fn http_router(state: HttpMcpState, console_dist: Option<PathBuf>) -> Router {
     let mut router = console::mount(
         Router::new()
+            .route("/livez", get(health::livez_handler))
+            .route("/version", get(version_handler))
             .route(STREAMABLE_HTTP_ENDPOINT, any(mcp_handler))
             .fallback(not_found_handler),
         console_dist,
@@ -360,6 +364,12 @@ struct HttpMcpState {
     /// The OAuth resource-server producer, present only when `auth.enabled`. `None` is the
     /// default-off path: no validator runs, no extension is inserted, no well-known route exists.
     validators: Option<Arc<AuthValidators>>,
+    /// Startup-captured, secret-free build/config snapshot served by `/version`.
+    version: Arc<VersionInfo>,
+}
+
+async fn version_handler(State(state): State<HttpMcpState>) -> HttpResponse {
+    health::version_response(&state.version)
 }
 
 async fn mcp_handler(
@@ -422,9 +432,12 @@ mod tests {
     };
     use aionforge_mcp::streamable_http_config;
     use aionforge_store::{BoundQuery, QueryResult};
+    use axum::http::header::CONTENT_TYPE;
+    use tower::ServiceExt;
 
     use super::*;
     use crate::cli::SessionPostureArgs;
+    use crate::host::open_memory;
 
     #[derive(Clone)]
     struct FakeEmbedder {
@@ -586,6 +599,94 @@ mod tests {
             json_response: false,
             max_request_body_bytes: None,
         }
+    }
+
+    fn unique_dir(prefix: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock after unix epoch")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("{prefix}-{}-{nanos}", std::process::id()));
+        std::fs::create_dir_all(&path).expect("create test data dir");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700))
+                .expect("restrict test data dir");
+        }
+        path
+    }
+
+    fn runtime_http_state(config: &Config) -> HttpMcpState {
+        let memory = open_memory(config).expect("open runtime memory");
+        let service = streamable_http_service_with_consolidation(
+            memory,
+            StreamableHttpOptions::default(),
+            AuthPosture::disabled(),
+            config.consolidation.enabled,
+        )
+        .expect("build streamable HTTP service");
+        HttpMcpState {
+            inner: service,
+            validators: None,
+            version: Arc::new(VersionInfo::from_config(config)),
+        }
+    }
+
+    async fn router_get(router: Router, uri: &str) -> (StatusCode, Option<String>, String) {
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(uri)
+                    .body(Body::empty())
+                    .expect("request builds"),
+            )
+            .await
+            .expect("router responds");
+        let status = response.status();
+        let content_type = response
+            .headers()
+            .get(CONTENT_TYPE)
+            .map(|value| value.to_str().expect("ascii content type").to_string());
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("collect body")
+            .to_bytes();
+        let body = String::from_utf8(body.to_vec()).expect("utf-8 body");
+        (status, content_type, body)
+    }
+
+    #[tokio::test]
+    async fn health_routes_are_registered_outside_mcp() {
+        let mut config = Config::default();
+        config.persistence.data_dir = unique_dir("aionforge-health-router");
+        config.embedder.enabled = false;
+        config.embedder.model.clear();
+        config.embedder.endpoint.clear();
+        config.embedder.dimension = 4;
+        config.embedder.native_dimension = Some(8);
+
+        let router = http_router(runtime_http_state(&config), None);
+        let (status, content_type, body) = router_get(router.clone(), "/livez").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(content_type.as_deref(), Some("text/plain"));
+        assert_eq!(body, "ok");
+
+        let (status, content_type, body) = router_get(router, "/version").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(content_type.as_deref(), Some("application/json"));
+        let version: serde_json::Value = serde_json::from_str(&body).expect("version JSON");
+        assert_eq!(version["version"], env!("CARGO_PKG_VERSION"));
+        assert_eq!(version["build_sha"], aionforge_mcp::build_sha());
+        assert_eq!(version["build_status"], aionforge_mcp::build_status());
+        assert_eq!(version["built_at"], aionforge_mcp::build_timestamp());
+        assert_eq!(version["embedder_dimension"], 4);
+        assert_eq!(version["native_dimension"], 8);
+
+        let _ = std::fs::remove_dir_all(&config.persistence.data_dir);
     }
 
     #[test]

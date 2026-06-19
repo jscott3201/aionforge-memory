@@ -25,6 +25,29 @@ const BUILD_STATUS: &str = match option_env!("AIONFORGE_BUILD_STATUS") {
     Some(status) => status,
     None => "unknown",
 };
+/// RFC3339 build timestamp baked in by CI, git, or the local compile fallback.
+const BUILD_TIMESTAMP: &str = match option_env!("AIONFORGE_BUILD_TIMESTAMP") {
+    Some(timestamp) => timestamp,
+    None => "unknown",
+};
+
+/// The short source SHA baked into this binary.
+#[must_use]
+pub fn build_sha() -> &'static str {
+    BUILD_SHA
+}
+
+/// The build cleanliness status baked into this binary.
+#[must_use]
+pub fn build_status() -> &'static str {
+    BUILD_STATUS
+}
+
+/// The RFC3339 build timestamp baked into this binary.
+#[must_use]
+pub fn build_timestamp() -> &'static str {
+    BUILD_TIMESTAMP
+}
 
 /// Parameters for the `server_status` tool.
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -52,7 +75,8 @@ struct ServerStatusStructured {
 #[derive(Serialize)]
 struct ServerStatusBuild {
     sha: &'static str,
-    profile: &'static str,
+    build_status: &'static str,
+    built_at: &'static str,
 }
 
 #[derive(Serialize)]
@@ -190,10 +214,11 @@ fn server_status_tool_output_with_traffic(
     traffic: TrafficSnapshot,
 ) -> StructuredToolOutput {
     let mut out = format!(
-        "[server] version={} build_sha={} build={} tools={} resources={} prompts={} transports={} sampling=false recall_wrapper=recalled-memory-context mutating_tools={} memories={} work_items={} auth_enabled={} auth_issuers={}",
+        "[server] version={} build_sha={} build={} built_at={} tools={} resources={} prompts={} transports={} sampling=false recall_wrapper=recalled-memory-context mutating_tools={} memories={} work_items={} auth_enabled={} auth_issuers={}",
         env!("CARGO_PKG_VERSION"),
         BUILD_SHA,
         BUILD_STATUS,
+        BUILD_TIMESTAMP,
         surface::tool_count(),
         resource_count,
         surface::PROMPT_COUNT,
@@ -257,7 +282,8 @@ fn server_status_tool_output_with_traffic(
         version: env!("CARGO_PKG_VERSION"),
         build: ServerStatusBuild {
             sha: BUILD_SHA,
-            profile: BUILD_STATUS,
+            build_status: BUILD_STATUS,
+            built_at: BUILD_TIMESTAMP,
         },
         surface: ServerStatusSurface {
             tools: surface::tool_count(),
@@ -360,9 +386,11 @@ mod tests {
         // The work-item census rides its own field, never merged into memories=.
         assert!(out.contains("work_items=4"), "{out}");
         // Build provenance rides the base line: the SHA field and a clean/dirty/unknown
-        // verdict are always present (the value is whatever the build baked in).
+        // verdict are always present (the value is whatever the build baked in), as is the
+        // RFC3339 build timestamp or the honest unknown fallback.
         assert!(out.contains("build_sha="), "{out}");
         assert!(out.contains("build="), "{out}");
+        assert!(out.contains("built_at="), "{out}");
         assert!(
             ["build=clean", "build=dirty", "build=unknown"]
                 .iter()
@@ -374,6 +402,36 @@ mod tests {
         assert!(out.contains("auth_issuers=0"), "{out}");
         // ...and never lists origins (there are none, and the verbose origins line is absent).
         assert!(!out.contains("auth_issuer_origins="), "{out}");
+    }
+
+    #[test]
+    fn structured_status_reports_build_provenance() {
+        let output = server_status_tool_output_with_traffic(
+            8,
+            sample_counts(),
+            sample_work_counts(),
+            ServerStatusToolParams { verbose: None },
+            &AuthPosture::disabled(),
+            sample_traffic(),
+        );
+        let build = output.structured.get("build").expect("structured build");
+        assert_eq!(
+            build.get("sha").and_then(serde_json::Value::as_str),
+            Some(BUILD_SHA),
+            "{build}"
+        );
+        assert_eq!(
+            build
+                .get("build_status")
+                .and_then(serde_json::Value::as_str),
+            Some(BUILD_STATUS),
+            "{build}"
+        );
+        assert_eq!(
+            build.get("built_at").and_then(serde_json::Value::as_str),
+            Some(BUILD_TIMESTAMP),
+            "{build}"
+        );
     }
 
     #[test]
