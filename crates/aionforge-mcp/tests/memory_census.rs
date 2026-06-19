@@ -222,13 +222,19 @@ fn list_mode_wraps_bodies_and_paginates_by_ingested_at_and_id() {
 }
 
 fn next_cursor(out: &str) -> MemoryCensusCursorToolParam {
+    maybe_next_cursor(out).expect("next cursor")
+}
+
+fn maybe_next_cursor(out: &str) -> Option<MemoryCensusCursorToolParam> {
     let token = out
         .split_whitespace()
-        .find_map(|part| part.strip_prefix("next="))
-        .expect("next cursor");
+        .find_map(|part| part.strip_prefix("next="))?;
+    if token == "none" {
+        return None;
+    }
     let (ingested_at, id) = token.split_once('|').expect("cursor separator");
-    MemoryCensusCursorToolParam {
+    Some(MemoryCensusCursorToolParam {
         ingested_at: ingested_at.to_string(),
         id: id.to_string(),
-    }
+    })
 }

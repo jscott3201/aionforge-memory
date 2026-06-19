@@ -2,7 +2,7 @@
 
 use aionforge_domain::contracts::Embedder;
 use aionforge_domain::namespace::Namespace;
-use aionforge_domain::nodes::episodic::Role;
+use aionforge_domain::nodes::episodic::{Episode, Role};
 use aionforge_store::{MemoryCounts, WorkCounts};
 
 use crate::{EngineError, Memory, Principal, ResolvedMemory};
@@ -41,10 +41,10 @@ impl<E: Embedder> Memory<E> {
         include_system: bool,
         namespace: Option<Namespace>,
     ) -> Result<MemoryCensusReport, EngineError> {
-        let namespaces = self.census_namespaces(principal, include_system, namespace);
+        let (surface_system, namespaces) = self.census_scope(principal, include_system, namespace);
         let memory_counts = self.store.memory_counts_by_namespace(&namespaces)?;
         let work_counts = self.store.work_counts_by_namespace(&namespaces)?;
-        let namespaces = memory_counts
+        let mut namespaces: Vec<_> = memory_counts
             .into_iter()
             .zip(work_counts)
             .map(
@@ -55,6 +55,9 @@ impl<E: Embedder> Memory<E> {
                 },
             )
             .collect();
+        if !surface_system {
+            self.subtract_system_role_episode_counts(&mut namespaces)?;
+        }
         Ok(MemoryCensusReport { namespaces })
     }
 
@@ -76,8 +79,7 @@ impl<E: Embedder> Memory<E> {
         if labels.is_empty() {
             return Ok(Vec::new());
         }
-        let surface_system = include_system && self.authorizer().may_surface_system(principal);
-        let namespaces = self.census_namespaces(principal, include_system, namespace);
+        let (surface_system, namespaces) = self.census_scope(principal, include_system, namespace);
         let nodes = self
             .store
             .live_memory_nodes_in_namespaces(labels, &namespaces)?;
@@ -94,22 +96,50 @@ impl<E: Embedder> Memory<E> {
         Ok(records)
     }
 
-    fn census_namespaces(
+    fn census_scope(
         &self,
         principal: &Principal,
         include_system: bool,
         namespace: Option<Namespace>,
-    ) -> Vec<Namespace> {
+    ) -> (bool, Vec<Namespace>) {
         let surface_system = include_system && self.authorizer().may_surface_system(principal);
         let mut visible = self.authorizer().visible_namespaces(principal);
         if surface_system {
             visible = visible.with_system();
         }
-        match namespace {
+        let namespaces = match namespace {
             Some(namespace) if visible.contains(&namespace) => vec![namespace],
             Some(_) => Vec::new(),
             None => visible.namespaces(),
+        };
+        (surface_system, namespaces)
+    }
+
+    fn subtract_system_role_episode_counts(
+        &self,
+        report: &mut [NamespaceCensus],
+    ) -> Result<(), EngineError> {
+        let namespaces: Vec<Namespace> = report
+            .iter()
+            .map(|namespace| namespace.namespace.clone())
+            .collect();
+        let nodes = self
+            .store
+            .live_memory_nodes_in_namespaces(&[Episode::LABEL], &namespaces)?;
+        for node in nodes {
+            if let Some(ResolvedMemory::Episode(episode)) = self
+                .store
+                .resolved_memory_by_node_id(node, &[Episode::LABEL])?
+                && episode.role == Role::System
+                && episode.identity.expired_at.is_none()
+                && let Some(namespace) = report
+                    .iter_mut()
+                    .find(|namespace| namespace.namespace == episode.identity.namespace)
+            {
+                namespace.memories.episodes = namespace.memories.episodes.saturating_sub(1);
+            }
         }
+        Ok(())
     }
 }
 

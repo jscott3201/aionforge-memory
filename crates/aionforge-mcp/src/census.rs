@@ -9,7 +9,7 @@ use aionforge_domain::nodes::associative::Note;
 use aionforge_domain::nodes::episodic::Episode;
 use aionforge_domain::nodes::procedural::{BadPattern, Skill};
 use aionforge_domain::nodes::semantic::{Entity, Fact};
-use aionforge_domain::time::Timestamp;
+use aionforge_domain::time::{Timestamp, to_utc};
 use aionforge_engine::{Memory, MemoryCensusReport, ResolvedMemory};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -284,19 +284,16 @@ fn parse_cursor(cursor: MemoryCensusCursorToolParam) -> Result<MemoryCensusCurso
 fn compare_memory_cursor_key(left: &ResolvedMemory, right: &ResolvedMemory) -> std::cmp::Ordering {
     let left_identity = left.identity();
     let right_identity = right.identity();
-    left_identity
-        .ingested_at
-        .to_string()
-        .cmp(&right_identity.ingested_at.to_string())
+    to_utc(&left_identity.ingested_at)
+        .cmp(&to_utc(&right_identity.ingested_at))
         .then_with(|| left_identity.id.cmp(&right_identity.id))
 }
 
 fn memory_after_cursor(memory: &ResolvedMemory, cursor: &MemoryCensusCursor) -> bool {
     let identity = memory.identity();
-    let memory_time = identity.ingested_at.to_string();
-    let cursor_time = cursor.ingested_at.to_string();
-    memory_time > cursor_time
-        || (memory_time == cursor_time && identity.id.to_string() > cursor.id.to_string())
+    let memory_time = to_utc(&identity.ingested_at);
+    let cursor_time = to_utc(&cursor.ingested_at);
+    memory_time > cursor_time || (memory_time == cursor_time && identity.id > cursor.id)
 }
 
 fn cursor_for_memory(memory: &ResolvedMemory) -> MemoryCensusCursor {
