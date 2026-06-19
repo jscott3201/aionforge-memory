@@ -131,7 +131,8 @@
   ): MemoryCensusNamespace[] {
     return [...(census?.namespaces ?? [])].sort(
       (left, right) =>
-        right.total - left.total || left.namespace.localeCompare(right.namespace),
+        right.total - left.total ||
+        left.namespace.localeCompare(right.namespace),
     );
   }
 
@@ -140,7 +141,10 @@
   }
 
   function memoryTotal(namespace: MemoryCensusNamespace): number {
-    return Object.values(namespace.kinds).reduce((sum, value) => sum + value, 0);
+    return Object.values(namespace.kinds).reduce(
+      (sum, value) => sum + value,
+      0,
+    );
   }
 
   function workTotal(namespace: MemoryCensusNamespace): number {
@@ -289,19 +293,22 @@
     <Card.Content class="panel-content">
       {@const namespaces = namespaceRows(currentCensus(namespaceState))}
       {#if namespaces.length > 0}
-      <div class="namespaces-boundary-list">
-        {#each namespaces as namespace (namespace.namespace)}
-          <article>
-            <header>
-              <strong>{namespace.namespace}</strong>
-              <Badge variant="secondary">{countValue(namespace.total)}</Badge>
-            </header>
-            <p>{namespaceDetail(namespace)}</p>
-            <span>{compactEntries(namespace.kinds) || "no memories"}</span>
-            <span>{compactEntries(namespace.work_statuses) || "no work items"}</span>
-          </article>
-        {/each}
-      </div>
+        <div class="namespaces-boundary-list">
+          {#each namespaces as namespace (namespace.namespace)}
+            <article>
+              <header>
+                <strong>{namespace.namespace}</strong>
+                <Badge variant="secondary">{countValue(namespace.total)}</Badge>
+              </header>
+              <p>{namespaceDetail(namespace)}</p>
+              <span>{compactEntries(namespace.kinds) || "no memories"}</span>
+              <span
+                >{compactEntries(namespace.work_statuses) ||
+                  "no work items"}</span
+              >
+            </article>
+          {/each}
+        </div>
       {:else}
         <div class="namespaces-empty-state">
           <strong>No visible namespaces</strong>
@@ -369,9 +376,8 @@
       <Card.Title>Work statuses</Card.Title>
       <Badge variant="outline"
         >{countValue(
-          entriesFromRecord(
-            currentCensus(namespaceState)?.totals.work_statuses,
-          ).length,
+          entriesFromRecord(currentCensus(namespaceState)?.totals.work_statuses)
+            .length,
         )}
         statuses</Badge
       >
@@ -406,7 +412,9 @@
   <Card.Header class="panel-title">
     <ShieldCheck size="18" />
     <Card.Title>Census payload</Card.Title>
-    <Badge variant="outline">{currentCensus(namespaceState)?.mode ?? "pending"}</Badge>
+    <Badge variant="outline"
+      >{currentCensus(namespaceState)?.mode ?? "pending"}</Badge
+    >
   </Card.Header>
   <Separator class="panel-separator" />
   <Card.Content class="panel-content">
