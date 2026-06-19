@@ -44,8 +44,18 @@
   let detailState: DetailState = { state: "empty" };
 
   onMount(() => {
+    const routeQuery = new URLSearchParams(window.location.search)
+      .get("q")
+      ?.trim();
+    if (routeQuery) {
+      query = routeQuery;
+    }
+
     config = createRuntimeMcpClientConfig();
     searchState = config ? { state: "idle" } : { state: "offline" };
+    if (config && routeQuery) {
+      void runSearch();
+    }
   });
 
   async function runSearch(): Promise<void> {

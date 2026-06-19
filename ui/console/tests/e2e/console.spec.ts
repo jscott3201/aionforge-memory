@@ -22,7 +22,7 @@ test("renders the operator dashboard at /console", async ({ page }) => {
   await expect(
     page.getByRole("heading", { name: "Operator dashboard" }),
   ).toBeVisible();
-  await expect(page.getByText("Base path")).toBeVisible();
+  await expect(page.getByText("Runtime surface")).toBeVisible();
   await expect(page.getByLabel("Console base")).toContainText("/console");
   await expect(errors).toEqual([]);
 });
@@ -37,7 +37,7 @@ test("supports static SPA deep links and basic controls", async ({ page }) => {
     page.getByText("Search-backed records with read_memory detail panes."),
   ).toBeVisible();
 
-  const search = page.getByLabel("Search memory");
+  const search = page.getByTestId("global-search-input");
   if (await search.isVisible()) {
     await search.fill("audit");
     await expect(search).toHaveValue("audit");

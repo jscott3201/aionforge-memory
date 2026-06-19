@@ -48,8 +48,117 @@
   font-size: 12px;
 }
 
+.dashboard-runtime-list,
+.dashboard-flow-list,
+.dashboard-census-list,
+.dashboard-tool-list {
+  display: grid;
+  gap: 10px;
+}
+
+.dashboard-runtime-list p,
+.dashboard-census-list p,
+.dashboard-tool-list p {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.75fr) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  margin: 0;
+  border-top: 1px solid var(--border-soft);
+  padding: 10px 0 0;
+}
+
+.dashboard-runtime-list p {
+  grid-template-columns: minmax(120px, 0.6fr) minmax(0, 1fr);
+}
+
+.dashboard-runtime-list p:first-child,
+.dashboard-census-list p:first-child,
+.dashboard-tool-list p:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.dashboard-runtime-list strong,
+.dashboard-census-list strong,
+.dashboard-tool-list strong {
+  min-width: 0;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.dashboard-runtime-list span,
+.dashboard-census-list span,
+.dashboard-tool-list span,
+.dashboard-link-row small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.dashboard-inline-state {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  padding: 10px 12px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.dashboard-inline-state.tone-warn {
+  border-color: color-mix(in oklab, var(--warn) 48%, var(--border-soft));
+}
+
+.dashboard-link-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 62px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  padding: 11px;
+  color: var(--text);
+}
+
+.dashboard-link-row:hover {
+  border-color: var(--border);
+  background: color-mix(in oklab, var(--accent) 18%, transparent);
+}
+
+.dashboard-link-icon {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+}
+
+.dashboard-link-row > span:nth-child(2) {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.dashboard-link-row strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
 @media (max-width: 640px) {
-  .live-count-grid {
+  .live-count-grid,
+  .dashboard-runtime-list p,
+  .dashboard-census-list p,
+  .dashboard-tool-list p,
+  .dashboard-link-row {
     grid-template-columns: 1fr;
   }
 }

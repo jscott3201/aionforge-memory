@@ -17,6 +17,7 @@
   } from "$lib/stores/theme";
 
   let { children }: { children: Snippet } = $props();
+  let globalSearch = $state("");
 
   const groupedRoutes = [
     {
@@ -96,14 +97,23 @@
         <strong>{consoleSnapshot.transport}</strong>
         <span>{consoleSnapshot.endpoint}</span>
       </div>
-      <label class="search-box">
+      <form
+        class="search-box"
+        role="search"
+        action={resolve("/records")}
+        method="get"
+        data-testid="global-search-form"
+      >
         <Search size="16" />
         <Input
           class="search-input"
           aria-label="Search memory"
+          data-testid="global-search-input"
+          name="q"
           placeholder="Search memory"
+          bind:value={globalSearch}
         />
-      </label>
+      </form>
       <Button
         class="icon-button"
         variant="outline"

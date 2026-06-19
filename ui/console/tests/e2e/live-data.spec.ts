@@ -265,6 +265,37 @@ test.describe("live data flow", () => {
     await expect(errors).toEqual([]);
   });
 
+  test("hands global search to the live records workflow", async ({
+    page,
+    baseURL,
+  }) => {
+    if (!baseURL) {
+      throw new Error(
+        "Playwright baseURL is required for live data-flow tests.",
+      );
+    }
+
+    const seed = uniqueSeed("console global search live e2e");
+    await captureLiveMemory(baseURL, seed);
+    const errors = collectRuntimeErrors(page);
+
+    await page.goto("/console");
+    await expect(page.getByTestId("live-mcp-state")).toContainText("live");
+    await page.getByTestId("global-search-input").fill(seed);
+    await page.getByTestId("global-search-input").press("Enter");
+
+    await expect(page).toHaveURL(/\/console\/records\?q=/);
+    await expect(page.getByTestId("records-search-input")).toHaveValue(seed);
+    await expect(page.getByTestId("records-result-count")).toContainText(
+      "returned",
+    );
+    await expect(page.getByTestId("records-result-item").first()).toContainText(
+      seed,
+    );
+    await expect(page.getByTestId("records-detail-body")).toContainText(seed);
+    await expect(errors).toEqual([]);
+  });
+
   test("runs retrieval search against real memory", async ({
     page,
     baseURL,
