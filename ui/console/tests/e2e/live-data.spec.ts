@@ -106,6 +106,56 @@ test.describe("live data flow", () => {
     await expect(errors).toEqual([]);
   });
 
+  test("renders real namespace aggregate counts", async ({ page, baseURL }) => {
+    if (!baseURL) {
+      throw new Error(
+        "Playwright baseURL is required for live data-flow tests.",
+      );
+    }
+
+    const status = await seedLiveMemory(baseURL);
+    const firstKind = Object.entries(status.counts.kinds).sort(
+      ([left], [right]) => left.localeCompare(right),
+    )[0];
+    const firstWorkStatus = Object.entries(status.counts.work_statuses).sort(
+      ([left], [right]) => left.localeCompare(right),
+    )[0];
+    if (!firstKind) {
+      throw new Error("server_status did not return memory kind counts.");
+    }
+    const errors = collectRuntimeErrors(page);
+
+    await page.goto("/console/namespaces");
+
+    await expect(page.getByTestId("namespaces-state")).toContainText("live");
+    await expect(page.getByTestId("namespaces-memory-count")).toContainText(
+      status.counts.memories.toString(),
+    );
+    await expect(page.getByTestId("namespaces-work-count")).toContainText(
+      status.counts.work_items.toString(),
+    );
+    await expect(page.getByTestId("namespaces-kind-count")).toContainText(
+      Object.keys(status.counts.kinds).length.toString(),
+    );
+    await expect(page.getByTestId("namespaces-kind-census")).toContainText(
+      titleCase(firstKind[0]),
+    );
+    await expect(
+      page
+        .getByTestId("namespaces-kind-row")
+        .filter({ hasText: titleCase(firstKind[0]) }),
+    ).toContainText(firstKind[1].toString());
+    if (firstWorkStatus) {
+      await expect(page.getByTestId("namespaces-work-census")).toContainText(
+        titleCase(firstWorkStatus[0]),
+      );
+    }
+    await expect(page.getByTestId("namespaces-gap-list")).toContainText(
+      "not exposed",
+    );
+    await expect(errors).toEqual([]);
+  });
+
   test("searches and reads real memory records", async ({ page, baseURL }) => {
     if (!baseURL) {
       throw new Error(
@@ -534,4 +584,10 @@ function uniqueSeed(prefix: string): string {
   const time = Date.now().toString(36);
   const nonce = Math.random().toString(36).slice(2, 8);
   return `${prefix} ${time} ${nonce}`;
+}
+
+function titleCase(value: string): string {
+  return value
+    .replaceAll("_", " ")
+    .replace(/\b\w/g, (match) => match.toUpperCase());
 }
