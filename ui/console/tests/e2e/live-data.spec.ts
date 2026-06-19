@@ -48,6 +48,35 @@ test.describe("live data flow", () => {
     );
     await expect(errors).toEqual([]);
   });
+
+  test("searches and reads real memory records", async ({ page, baseURL }) => {
+    if (!baseURL) {
+      throw new Error(
+        "Playwright baseURL is required for live data-flow tests.",
+      );
+    }
+
+    const seed = `console records live e2e ${Date.now()}`;
+    await captureLiveMemory(baseURL, seed);
+    const errors = collectRuntimeErrors(page);
+
+    await page.goto("/console/records");
+    await page.getByTestId("records-search-input").fill(seed);
+    await page
+      .getByTestId("records-viewer-input")
+      .fill(`agent:${LIVE_AGENT_ID}`);
+    await page.getByTestId("records-search-submit").click();
+
+    await expect(page.getByTestId("records-result-count")).toContainText(
+      "returned",
+    );
+    await expect(page.getByTestId("records-result-item").first()).toContainText(
+      seed,
+    );
+    await page.getByTestId("records-result-item").first().click();
+    await expect(page.getByTestId("records-detail-body")).toContainText(seed);
+    await expect(errors).toEqual([]);
+  });
 });
 
 async function seedLiveMemory(
@@ -61,16 +90,7 @@ async function seedLiveMemory(
 
   try {
     await client.connect(transport);
-    await client.callTool({
-      name: "capture",
-      arguments: {
-        agent_id: LIVE_AGENT_ID,
-        content: `console live e2e seed ${Date.now()}`,
-        role: "event",
-        trust: 0.8,
-        model_family: "console-e2e",
-      },
-    });
+    await captureWithClient(client, `console live e2e seed ${Date.now()}`);
 
     const result = await client.callTool({
       name: "server_status",
@@ -86,6 +106,40 @@ async function seedLiveMemory(
   } finally {
     await client.close().catch(() => undefined);
   }
+}
+
+async function captureLiveMemory(
+  baseURL: string,
+  content: string,
+): Promise<void> {
+  const client = new Client({
+    name: "aionforge-console-e2e",
+    version: "0.0.0",
+  });
+  const transport = new StreamableHTTPClientTransport(new URL("/mcp", baseURL));
+
+  try {
+    await client.connect(transport);
+    await captureWithClient(client, content);
+  } finally {
+    await client.close().catch(() => undefined);
+  }
+}
+
+async function captureWithClient(
+  client: Client,
+  content: string,
+): Promise<void> {
+  await client.callTool({
+    name: "capture",
+    arguments: {
+      agent_id: LIVE_AGENT_ID,
+      content,
+      role: "event",
+      trust: 0.8,
+      model_family: "console-e2e",
+    },
+  });
 }
 
 function isServerStatusStructuredContent(

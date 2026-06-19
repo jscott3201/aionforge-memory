@@ -1,0 +1,55 @@
+.live-count-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.live-count-grid p {
+  display: grid;
+  min-height: 72px;
+  align-content: center;
+  gap: 5px;
+  margin: 0;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: var(--bg-inset);
+  padding: 12px;
+}
+
+.live-count-grid strong {
+  color: var(--text);
+  font-size: 24px;
+  line-height: 1;
+}
+
+.live-count-grid span,
+.live-meta span {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.live-meta {
+  display: grid;
+  gap: 9px;
+  margin-top: 14px;
+}
+
+.live-meta p {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0;
+  border-top: 1px solid var(--border-soft);
+  padding-top: 9px;
+}
+
+.live-meta strong {
+  font-size: 12px;
+}
+
+@media (max-width: 640px) {
+  .live-count-grid {
+    grid-template-columns: 1fr;
+  }
+}
