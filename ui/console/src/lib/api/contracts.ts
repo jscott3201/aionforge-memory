@@ -25,13 +25,7 @@ export interface StatusTileModel {
   value: string;
   detail: string;
   tone: StatusTone;
-}
-
-export interface ToolSurfaceModel {
-  name: string;
-  toolClass: ToolClass;
-  output: string;
-  approval: "allow" | "ask";
+  testId?: string;
 }
 
 export interface McpResourceDescriptor {

@@ -1,5 +1,4 @@
 import {
-  Activity,
   Cpu,
   Database,
   Flame,
@@ -10,12 +9,7 @@ import {
   Server,
   ShieldCheck,
 } from "@lucide/svelte";
-import type {
-  ConsoleRoute,
-  ConsoleSnapshot,
-  StatusTileModel,
-  ToolSurfaceModel,
-} from "./contracts";
+import type { ConsoleRoute, ConsoleSnapshot } from "./contracts";
 
 export const consoleRoutes: ConsoleRoute[] = [
   { path: "/", label: "Dashboard", group: "Operate", icon: LayoutDashboard },
@@ -56,70 +50,8 @@ export const consoleSnapshot: ConsoleSnapshot = {
   releaseBase: "/console",
   readLikeTools: 8,
   mutatingTools: 10,
-  structuredContent: "pending",
+  structuredContent: "ready",
 };
-
-export const statusTiles: StatusTileModel[] = [
-  {
-    label: "MCP endpoint",
-    value: "/mcp",
-    detail: "explicit route",
-    tone: "good",
-  },
-  {
-    label: "Console base",
-    value: "/console",
-    detail: "static SPA",
-    tone: "good",
-  },
-  {
-    label: "Tool surface",
-    value: "18",
-    detail: "8 read-like, 10 mutating",
-    tone: "muted",
-  },
-  {
-    label: "DTO layer",
-    value: "pending",
-    detail: "structuredContent PR next",
-    tone: "warn",
-  },
-];
-
-export const toolSurface: ToolSurfaceModel[] = [
-  ...[
-    "server_status",
-    "search",
-    "read_memory",
-    "session_manifest",
-    "consolidation_status",
-    "audit_history",
-    "work_tree",
-    "work_query",
-  ].map((name) => ({
-    name,
-    toolClass: "read-like" as const,
-    output: "recalled-memory-context or compact status text",
-    approval: "allow" as const,
-  })),
-  ...[
-    "capture",
-    "batch_capture",
-    "consolidate",
-    "forget",
-    "unforget",
-    "pin",
-    "unpin",
-    "work_create",
-    "work_advance",
-    "work_link",
-  ].map((name) => ({
-    name,
-    toolClass: "mutating" as const,
-    output: "compact receipt text",
-    approval: "ask" as const,
-  })),
-];
 
 export const routeSummaries = {
   records: {
@@ -163,17 +95,3 @@ export const routeSummaries = {
     items: ["OAuth", "Audit signer", "Redaction", "Guards"],
   },
 };
-
-export const dashboardActivity = [
-  {
-    icon: Activity,
-    label: "Server status",
-    value: "waiting for live MCP session",
-  },
-  {
-    icon: Database,
-    label: "Records",
-    value: "search-backed list route staged",
-  },
-  { icon: Flame, label: "Consolidation", value: "status route staged" },
-];

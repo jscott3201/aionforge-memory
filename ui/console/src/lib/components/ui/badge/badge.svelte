@@ -6,15 +6,15 @@
     variants: {
       variant: {
         default:
-          "border-transparent bg-primary text-primary-foreground [a]:hover:bg-primary/90",
+          "border-border bg-transparent text-foreground [a]:hover:border-ring [a]:hover:bg-transparent",
         secondary:
-          "border-border bg-muted text-secondary-foreground [a]:hover:bg-muted/80",
+          "border-border bg-transparent text-secondary-foreground [a]:hover:border-ring [a]:hover:bg-transparent [a]:hover:text-foreground",
         destructive:
           "border-destructive/30 bg-transparent text-destructive [a]:hover:bg-destructive/10 focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40",
         outline:
-          "border-border bg-transparent text-muted-foreground [a]:hover:bg-muted/70 [a]:hover:text-foreground",
+          "border-border bg-transparent text-muted-foreground [a]:hover:border-ring [a]:hover:bg-transparent [a]:hover:text-foreground",
         ghost:
-          "border-transparent bg-transparent hover:bg-muted hover:text-muted-foreground dark:hover:bg-muted/50",
+          "border-transparent bg-transparent hover:bg-transparent hover:text-muted-foreground",
         link: "text-primary underline-offset-4 hover:underline",
       },
     },

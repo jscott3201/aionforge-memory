@@ -47,7 +47,7 @@
 .records-list button:hover,
 .records-list button.active {
   border-color: var(--border);
-  background: color-mix(in oklab, var(--accent) 42%, transparent);
+  background: color-mix(in oklab, var(--accent) 18%, transparent);
 }
 
 .records-list button span {

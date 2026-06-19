@@ -8,6 +8,7 @@
 <Card.Root
   class={`status-tile tone-${tile.tone}`}
   aria-label={tile.label}
+  data-testid={tile.testId}
   size="sm"
 >
   <span>{tile.label}</span>
