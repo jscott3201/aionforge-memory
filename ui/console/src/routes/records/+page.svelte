@@ -200,6 +200,7 @@
           data-testid="records-search-submit"
           type="submit"
           disabled={!config || !query.trim() || searchState.state === "loading"}
+          variant="outline"
         >
           {#if searchState.state === "loading"}
             <LoaderCircle size="16" />

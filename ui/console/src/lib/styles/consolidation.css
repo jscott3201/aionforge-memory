@@ -104,16 +104,11 @@
   width: 100%;
 }
 
-.state-badge.tone-good {
-  border-color: color-mix(in oklab, var(--success) 55%, var(--border-soft));
-}
-
-.state-badge.tone-warn {
-  border-color: color-mix(in oklab, var(--warn) 55%, var(--border-soft));
-}
-
-.state-badge.tone-danger {
-  border-color: color-mix(in oklab, var(--danger) 55%, var(--border-soft));
+.state-badge {
+  border-color: var(--border-soft);
+  background: var(--bg-panel);
+  box-shadow: none;
+  color: var(--text-muted);
 }
 
 @media (max-width: 980px) {
