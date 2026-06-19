@@ -2,18 +2,19 @@
   import { type VariantProps, tv } from "tailwind-variants";
 
   export const badgeVariants = tv({
-    base: "h-5 gap-1 rounded-md border border-transparent px-2 py-0.5 text-xs font-medium transition-all has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&>svg]:size-3! focus-visible:border-ring focus-visible:ring-ring/50 aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive group/badge inline-flex w-fit shrink-0 items-center justify-center overflow-hidden whitespace-nowrap transition-colors focus-visible:ring-[3px] [&>svg]:pointer-events-none",
+    base: "h-5 gap-1 rounded-[var(--radius-sm)] border border-transparent bg-clip-padding px-2 py-0.5 text-xs font-medium shadow-none transition-colors has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&>svg]:size-3! focus-visible:border-ring focus-visible:ring-ring/50 aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive group/badge inline-flex w-fit shrink-0 items-center justify-center overflow-hidden whitespace-nowrap focus-visible:ring-[3px] [&>svg]:pointer-events-none",
     variants: {
       variant: {
-        default: "bg-primary text-primary-foreground [a]:hover:bg-primary/80",
+        default:
+          "border-transparent bg-primary text-primary-foreground [a]:hover:bg-primary/90",
         secondary:
-          "border-border bg-background text-secondary-foreground [a]:hover:bg-muted",
+          "border-border bg-muted text-secondary-foreground [a]:hover:bg-muted/80",
         destructive:
-          "bg-destructive/10 [a]:hover:bg-destructive/20 focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40 text-destructive dark:bg-destructive/20",
+          "border-destructive/30 bg-transparent text-destructive [a]:hover:bg-destructive/10 focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40",
         outline:
-          "border-border bg-background text-muted-foreground [a]:hover:bg-muted [a]:hover:text-foreground",
+          "border-border bg-transparent text-muted-foreground [a]:hover:bg-muted/70 [a]:hover:text-foreground",
         ghost:
-          "hover:bg-muted hover:text-muted-foreground dark:hover:bg-muted/50",
+          "border-transparent bg-transparent hover:bg-muted hover:text-muted-foreground dark:hover:bg-muted/50",
         link: "text-primary underline-offset-4 hover:underline",
       },
     },

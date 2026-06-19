@@ -11,6 +11,7 @@
 @import "./records.css";
 @import "./retrieval.css";
 @import "./route-panel.css";
+@import "./security.css";
 
 @custom-variant dark (&:is(.dark *));
 
