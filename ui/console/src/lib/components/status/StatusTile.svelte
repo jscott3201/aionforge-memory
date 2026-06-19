@@ -1,11 +1,16 @@
 <script lang="ts">
   import type { StatusTileModel } from "$lib/api/contracts";
+  import * as Card from "$lib/components/ui/card/index.js";
 
   let { tile }: { tile: StatusTileModel } = $props();
 </script>
 
-<section class={`status-tile tone-${tile.tone}`} aria-label={tile.label}>
+<Card.Root
+  class={`status-tile tone-${tile.tone}`}
+  aria-label={tile.label}
+  size="sm"
+>
   <span>{tile.label}</span>
   <strong>{tile.value}</strong>
   <small>{tile.detail}</small>
-</section>
+</Card.Root>

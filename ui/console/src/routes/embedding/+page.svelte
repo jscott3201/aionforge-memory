@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Cpu } from "svelte-lucide";
+  import { Cpu } from "@lucide/svelte";
   import RoutePanel from "$lib/components/app/RoutePanel.svelte";
   import { routeSummaries } from "$lib/api/status";
 </script>

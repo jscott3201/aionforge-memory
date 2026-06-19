@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ScrollText } from "svelte-lucide";
+  import { ScrollText } from "@lucide/svelte";
   import RoutePanel from "$lib/components/app/RoutePanel.svelte";
   import { routeSummaries } from "$lib/api/status";
 </script>

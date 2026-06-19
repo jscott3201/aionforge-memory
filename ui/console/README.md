@@ -19,3 +19,15 @@ pnpm validate
 
 `pnpm validate` runs formatting, linting, type-checking, a production build, and
 Playwright e2e coverage against the built `/console` app.
+
+UI primitives come from `shadcn-svelte` with Tailwind CSS v4 configured in
+`components.json` and `src/lib/styles/app.css`. Add new primitives from
+`ui/console` with:
+
+```bash
+pnpm dlx shadcn-svelte@latest add <component>
+```
+
+Local build output, dependency directories, Playwright reports, and screenshots
+remain ignored by `ui/console/.gitignore` and the repository `_*/` scratch
+directory convention.

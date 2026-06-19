@@ -9,7 +9,7 @@ import {
   ScrollText,
   Server,
   ShieldCheck,
-} from "svelte-lucide";
+} from "@lucide/svelte";
 import type {
   ConsoleRoute,
   ConsoleSnapshot,

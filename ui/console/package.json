@@ -18,23 +18,33 @@
     "validate": "pnpm format:check && pnpm lint && pnpm check && pnpm build && pnpm e2e"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.29.0",
-    "svelte-lucide": "3.0.1"
+    "@modelcontextprotocol/sdk": "1.29.0"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
+    "@fontsource-variable/inter": "5.2.8",
+    "@internationalized/date": "3.12.2",
+    "@lucide/svelte": "1.20.0",
     "@playwright/test": "1.61.0",
     "@sveltejs/adapter-static": "3.0.10",
     "@sveltejs/kit": "2.65.2",
     "@sveltejs/vite-plugin-svelte": "7.1.2",
+    "@tailwindcss/vite": "4.3.1",
     "@types/node": "25.9.3",
+    "bits-ui": "2.18.1",
+    "clsx": "2.1.1",
     "eslint": "10.5.0",
     "eslint-plugin-svelte": "3.19.0",
     "globals": "17.6.0",
     "prettier": "3.8.4",
     "prettier-plugin-svelte": "4.1.1",
+    "shadcn-svelte": "1.3.0",
     "svelte": "5.56.3",
     "svelte-check": "4.6.0",
+    "tailwind-merge": "3.6.0",
+    "tailwind-variants": "3.2.2",
+    "tailwindcss": "4.3.1",
+    "tw-animate-css": "1.4.0",
     "typescript": "6.0.3",
     "typescript-eslint": "8.61.1",
     "vite": "8.0.16"

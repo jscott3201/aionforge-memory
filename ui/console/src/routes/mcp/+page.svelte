@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Server } from "svelte-lucide";
+  import { Server } from "@lucide/svelte";
   import RoutePanel from "$lib/components/app/RoutePanel.svelte";
   import { routeSummaries, toolSurface } from "$lib/api/status";
 </script>

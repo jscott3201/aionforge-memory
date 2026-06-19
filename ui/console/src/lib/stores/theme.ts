@@ -14,13 +14,18 @@ function initialTheme(): ThemeMode {
     : "dark";
 }
 
+function applyTheme(next: ThemeMode): void {
+  document.documentElement.dataset.theme = next;
+  document.documentElement.classList.toggle("dark", next === "dark");
+}
+
 export const theme = writable<ThemeMode>(initialTheme());
 
 export function setTheme(next: ThemeMode): void {
   theme.set(next);
   if (browser) {
     window.localStorage.setItem(STORAGE_KEY, next);
-    document.documentElement.dataset.theme = next;
+    applyTheme(next);
   }
 }
 

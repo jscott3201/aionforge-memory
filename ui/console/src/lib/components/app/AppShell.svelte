@@ -3,9 +3,12 @@
   import { page } from "$app/state";
   import type { Component, Snippet } from "svelte";
   import { onMount } from "svelte";
-  import { Moon, PanelLeft, Search, Sun } from "svelte-lucide";
+  import { Moon, PanelLeft, Search, Sun } from "@lucide/svelte";
   import { consoleRoutes, consoleSnapshot } from "$lib/api/status";
   import mark from "$lib/assets/mark.svg";
+  import { Badge } from "$lib/components/ui/badge/index.js";
+  import { Button } from "$lib/components/ui/button/index.js";
+  import { Input } from "$lib/components/ui/input/index.js";
   import {
     setTheme,
     theme,
@@ -68,40 +71,54 @@
     {/each}
 
     <div class="sidebar-status">
-      <span><strong>{consoleSnapshot.readLikeTools}</strong> read-like</span>
-      <span><strong>{consoleSnapshot.mutatingTools}</strong> mutating</span>
+      <Badge class="sidebar-badge" variant="outline"
+        ><strong>{consoleSnapshot.readLikeTools}</strong> read-like</Badge
+      >
+      <Badge class="sidebar-badge" variant="outline"
+        ><strong>{consoleSnapshot.mutatingTools}</strong> mutating</Badge
+      >
     </div>
   </aside>
 
   <section class="workspace">
     <header class="topbar">
-      <button
+      <Button
         class="icon-button mobile-only"
+        variant="outline"
+        size="icon-sm"
         type="button"
         aria-label="Open navigation"
+        title="Open navigation"
       >
-        <PanelLeft size="18" />
-      </button>
+        <PanelLeft />
+      </Button>
       <div class="endpoint">
         <strong>{consoleSnapshot.transport}</strong>
         <span>{consoleSnapshot.endpoint}</span>
       </div>
       <label class="search-box">
         <Search size="16" />
-        <input aria-label="Search memory" placeholder="Search memory" />
+        <Input
+          class="search-input"
+          aria-label="Search memory"
+          placeholder="Search memory"
+        />
       </label>
-      <button
+      <Button
         class="icon-button"
+        variant="outline"
+        size="icon-sm"
         type="button"
         aria-label="Toggle theme"
+        title="Toggle theme"
         onclick={() => toggleTheme($theme)}
       >
         {#if $theme === "dark"}
-          <Moon size="17" />
+          <Moon />
         {:else}
-          <Sun size="17" />
+          <Sun />
         {/if}
-      </button>
+      </Button>
       <div class="principal" aria-label="Current principal">
         <span>OP</span>
         <strong>operator</strong>
