@@ -5,6 +5,7 @@ import type {
   AuditHistoryStructuredContent,
   ConsolidationStatusStructuredContent,
   ServerStatusStructuredContent,
+  ToolManifestStructuredContent,
 } from "../../src/lib/api/contracts";
 
 const LIVE_AGENT_ID = "00000000-0000-4000-8000-000000000311";
@@ -54,6 +55,53 @@ test.describe("live data flow", () => {
     );
     await expect(page.getByTestId("live-tool-count")).toContainText(
       status.surface.tools.toString(),
+    );
+    await expect(errors).toEqual([]);
+  });
+
+  test("renders real MCP tool manifest resources", async ({
+    page,
+    baseURL,
+  }) => {
+    if (!baseURL) {
+      throw new Error(
+        "Playwright baseURL is required for live data-flow tests.",
+      );
+    }
+
+    const manifest = await readToolManifest(baseURL);
+    const errors = collectRuntimeErrors(page);
+
+    await page.goto("/console/mcp");
+
+    await expect(page.getByTestId("mcp-state")).toContainText("live");
+    await expect(page.getByTestId("mcp-tool-count")).toContainText(
+      manifest.tools.length.toString(),
+    );
+    await expect(page.getByTestId("mcp-resource-count")).toContainText(
+      manifest.server.resource_count.toString(),
+    );
+    await expect(page.getByTestId("mcp-read-like-count")).toContainText(
+      manifest.tools
+        .filter((tool) => tool.class === "read_like")
+        .length.toString(),
+    );
+    await expect(page.getByTestId("mcp-mutating-count")).toContainText(
+      manifest.tools
+        .filter((tool) => tool.class === "mutating")
+        .length.toString(),
+    );
+    await expect(
+      page.getByTestId("mcp-tool-row").filter({ hasText: "server_status" }),
+    ).toContainText("aionforge.server_status.v1");
+    await expect(
+      page.getByTestId("mcp-tool-row").filter({ hasText: /^capture\b/ }),
+    ).toContainText("ask_user");
+    await expect(page.getByTestId("mcp-resource-list")).toContainText(
+      manifest.resources.tool_manifest,
+    );
+    await expect(page.getByTestId("mcp-telemetry-gap")).toContainText(
+      "not exposed",
     );
     await expect(errors).toEqual([]);
   });
@@ -229,6 +277,39 @@ async function captureLiveMemory(
   try {
     await client.connect(transport);
     await captureWithClient(client, content);
+  } finally {
+    await client.close().catch(() => undefined);
+  }
+}
+
+async function readToolManifest(
+  baseURL: string,
+): Promise<ToolManifestStructuredContent> {
+  const client = new Client({
+    name: "aionforge-console-e2e",
+    version: "0.0.0",
+  });
+  const transport = new StreamableHTTPClientTransport(new URL("/mcp", baseURL));
+
+  try {
+    await client.connect(transport);
+    const result = await client.readResource({
+      uri: "aionforge://manifest/tools.json",
+    });
+    const text = result.contents
+      .map(textResourceContent)
+      .find((content) => content !== undefined);
+    if (!text) {
+      throw new Error("tool manifest resource was not text.");
+    }
+
+    const manifest = JSON.parse(text) as unknown;
+    if (!isToolManifestStructuredContent(manifest)) {
+      throw new Error("tool manifest returned an unexpected payload.");
+    }
+
+    expect(manifest.tools.length).toBeGreaterThan(0);
+    return manifest;
   } finally {
     await client.close().catch(() => undefined);
   }
@@ -416,6 +497,37 @@ function isAuditHistoryStructuredContent(
           typeof record.payload_preview === "string"),
     )
   );
+}
+
+function isToolManifestStructuredContent(
+  value: unknown,
+): value is ToolManifestStructuredContent {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const candidate = value as Partial<ToolManifestStructuredContent>;
+  return (
+    candidate.schema === "aionforge.mcp_tools.v1" &&
+    typeof candidate.server?.resource_count === "number" &&
+    typeof candidate.resources?.tool_manifest === "string" &&
+    Array.isArray(candidate.tools) &&
+    candidate.tools.every(
+      (tool) =>
+        typeof tool.name === "string" &&
+        (tool.class === "read_like" || tool.class === "mutating") &&
+        typeof tool.approval === "string",
+    )
+  );
+}
+
+function textResourceContent(value: unknown): string | undefined {
+  if (!value || typeof value !== "object" || !("text" in value)) {
+    return undefined;
+  }
+
+  const text = (value as { text?: unknown }).text;
+  return typeof text === "string" ? text : undefined;
 }
 
 function uniqueSeed(prefix: string): string {

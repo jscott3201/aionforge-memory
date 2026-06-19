@@ -5,10 +5,14 @@ import type {
   AuditCursor,
   AuditHistoryStructuredContent,
   ConsolidationStatusStructuredContent,
+  McpResourceDescriptor,
   ReadMemoryStructuredContent,
   SearchResultsStructuredContent,
   ServerStatusStructuredContent,
+  ToolManifestStructuredContent,
 } from "./contracts";
+
+export const TOOL_MANIFEST_URI = "aionforge://manifest/tools.json";
 
 export interface McpClientConfig {
   endpoint: string;
@@ -36,6 +40,11 @@ export interface McpTextResult<TStructured = unknown> {
   content: Array<{ type: "text"; text: string }>;
   structuredContent?: TStructured;
   isError?: boolean;
+}
+
+export interface McpToolCatalog {
+  manifest: ToolManifestStructuredContent;
+  resources: McpResourceDescriptor[];
 }
 
 export interface SearchMemoriesRequest {
@@ -116,6 +125,61 @@ export async function callMcpTool<TStructured = unknown>(
       name: request.tool,
       arguments: request.params,
     })) as McpTextResult<TStructured>;
+  } finally {
+    await client.close().catch(() => undefined);
+  }
+}
+
+export async function loadMcpToolCatalog(
+  config = createMcpClientConfig(),
+): Promise<McpToolCatalog> {
+  if (!browser) {
+    throw new McpClientError("MCP resource reads require a browser runtime.");
+  }
+
+  const client = new Client({
+    name: "aionforge-console",
+    version: "0.0.0",
+  });
+  const transport = new StreamableHTTPClientTransport(
+    new URL(config.endpoint, window.location.origin),
+    {
+      requestInit: config.bearerToken
+        ? { headers: { Authorization: `Bearer ${config.bearerToken}` } }
+        : undefined,
+    },
+  );
+
+  try {
+    await client.connect(transport);
+    const listed = await client.listResources();
+    const resource = await client.readResource({ uri: TOOL_MANIFEST_URI });
+    const text = resource.contents
+      .map(textResourceContent)
+      .find((content) => content !== undefined);
+
+    if (!text) {
+      throw new McpClientError("tool manifest resource was not text.");
+    }
+
+    const parsed = JSON.parse(text) as unknown;
+    if (!isToolManifestStructuredContent(parsed)) {
+      throw new McpClientError("tool manifest returned an unexpected payload.");
+    }
+
+    return {
+      manifest: parsed,
+      resources: listed.resources
+        .map((resource) => ({
+          uri: resource.uri,
+          name: resource.name,
+          title: resource.title,
+          description: resource.description,
+          mimeType: resource.mimeType,
+          size: resource.size,
+        }))
+        .sort((left, right) => left.uri.localeCompare(right.uri)),
+    };
   } finally {
     await client.close().catch(() => undefined);
   }
@@ -353,6 +417,55 @@ function isAuditHistoryStructuredContent(
           typeof record.payload_preview === "string"),
     )
   );
+}
+
+function isToolManifestStructuredContent(
+  value: unknown,
+): value is ToolManifestStructuredContent {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const candidate = value as Partial<ToolManifestStructuredContent>;
+  return (
+    candidate.schema === "aionforge.mcp_tools.v1" &&
+    typeof candidate.server?.name === "string" &&
+    typeof candidate.server?.version === "string" &&
+    Array.isArray(candidate.server?.transports) &&
+    typeof candidate.server?.resource_count === "number" &&
+    typeof candidate.policy?.read_like_approval === "string" &&
+    typeof candidate.policy?.mutating_approval === "string" &&
+    !!candidate.resources &&
+    Object.values(candidate.resources).every(
+      (uri) => typeof uri === "string",
+    ) &&
+    Array.isArray(candidate.tools) &&
+    candidate.tools.every(
+      (tool) =>
+        typeof tool.name === "string" &&
+        (tool.class === "read_like" || tool.class === "mutating") &&
+        typeof tool.approval === "string" &&
+        typeof tool.mutates === "boolean" &&
+        typeof tool.read_only_hint === "boolean" &&
+        typeof tool.destructive_hint === "boolean" &&
+        typeof tool.idempotent_hint === "boolean" &&
+        typeof tool.open_world_hint === "boolean" &&
+        typeof tool.default_output === "string" &&
+        (tool.schema === undefined || typeof tool.schema === "string") &&
+        typeof tool.verbose === "boolean" &&
+        Array.isArray(tool.errors) &&
+        tool.errors.every((error) => typeof error === "string"),
+    )
+  );
+}
+
+function textResourceContent(value: unknown): string | undefined {
+  if (!value || typeof value !== "object" || !("text" in value)) {
+    return undefined;
+  }
+
+  const text = (value as { text?: unknown }).text;
+  return typeof text === "string" ? text : undefined;
 }
 
 function textResultMessage(result: McpTextResult): string | undefined {
