@@ -1,3 +1,51 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn-svelte/tailwind.css";
+@import "@fontsource-variable/inter";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --font-sans:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", sans-serif;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+}
+
 :root {
   color-scheme: dark;
   --bg: #101218;
@@ -9,13 +57,17 @@
   --text: #eef2f6;
   --text-soft: #bdc6d2;
   --text-muted: #7f8a99;
-  --accent: #9b6dff;
+  --brand-accent: #9b6dff;
+  --accent: #272d38;
   --accent-2: #34d5e8;
   --success: #49d18d;
   --warn: #f6b652;
   --danger: #ff6b7f;
   --radius: 8px;
   --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
   font-family:
     Inter,
     ui-sans-serif,
@@ -24,6 +76,35 @@
     BlinkMacSystemFont,
     "Segoe UI",
     sans-serif;
+  --background: var(--bg);
+  --foreground: var(--text);
+  --card: var(--bg-panel);
+  --card-foreground: var(--text);
+  --popover: var(--bg-panel);
+  --popover-foreground: var(--text);
+  --primary: var(--text);
+  --primary-foreground: var(--bg);
+  --secondary: var(--bg-inset);
+  --secondary-foreground: var(--text-soft);
+  --muted: var(--bg-inset);
+  --muted-foreground: var(--text-muted);
+  --accent-foreground: var(--text);
+  --destructive: var(--danger);
+  --input: var(--border);
+  --ring: var(--accent-2);
+  --chart-1: var(--success);
+  --chart-2: var(--accent-2);
+  --chart-3: var(--brand-accent);
+  --chart-4: var(--warn);
+  --chart-5: var(--danger);
+  --sidebar: var(--bg-inset);
+  --sidebar-foreground: var(--text);
+  --sidebar-primary: var(--text);
+  --sidebar-primary-foreground: var(--bg);
+  --sidebar-accent: var(--bg-panel);
+  --sidebar-accent-foreground: var(--text);
+  --sidebar-border: var(--border-soft);
+  --sidebar-ring: var(--accent-2);
 }
 
 :root[data-theme="light"] {
@@ -37,6 +118,31 @@
   --text: #111821;
   --text-soft: #3d4755;
   --text-muted: #667386;
+  --accent: #e9edf3;
+  --background: var(--bg);
+  --foreground: var(--text);
+  --card: var(--bg-panel);
+  --card-foreground: var(--text);
+  --popover: var(--bg-panel);
+  --popover-foreground: var(--text);
+  --primary: var(--text);
+  --primary-foreground: #ffffff;
+  --secondary: var(--bg-inset);
+  --secondary-foreground: var(--text-soft);
+  --muted: var(--bg-inset);
+  --muted-foreground: var(--text-muted);
+  --accent-foreground: var(--text);
+  --destructive: var(--danger);
+  --input: var(--border);
+  --ring: #406d84;
+  --sidebar: #ffffff;
+  --sidebar-foreground: var(--text);
+  --sidebar-primary: var(--text);
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: var(--bg-inset);
+  --sidebar-accent-foreground: var(--text);
+  --sidebar-border: var(--border-soft);
+  --sidebar-ring: #406d84;
 }
 
 html,
@@ -103,7 +209,7 @@ a {
 }
 
 .brand span span {
-  color: var(--accent);
+  color: var(--brand-accent);
 }
 
 .brand small {
@@ -145,7 +251,7 @@ a {
 }
 
 .nav-group a.active {
-  box-shadow: inset 3px 0 0 var(--accent);
+  box-shadow: inset 3px 0 0 var(--brand-accent);
 }
 
 .sidebar-status {
@@ -162,6 +268,14 @@ a {
 
 .sidebar-status strong {
   color: var(--text);
+}
+
+.sidebar-badge {
+  justify-content: flex-start;
+  gap: 5px;
+  border-color: var(--border-soft);
+  background: var(--bg-inset);
+  color: var(--text-muted);
 }
 
 .workspace {
@@ -209,13 +323,21 @@ a {
   padding: 0 10px;
 }
 
-.search-box input {
+.search-box input,
+.search-input {
   width: 100%;
   height: 36px;
   border: 0;
   outline: 0;
   background: transparent;
   color: var(--text);
+  box-shadow: none;
+  padding: 0;
+}
+
+.search-input:focus-visible {
+  border-color: transparent;
+  box-shadow: none;
 }
 
 .icon-button {
@@ -228,6 +350,12 @@ a {
   background: var(--bg-panel);
   color: var(--text-soft);
   cursor: pointer;
+  padding: 0;
+}
+
+.icon-button:hover {
+  background: var(--bg-inset);
+  color: var(--text);
 }
 
 .mobile-only {
@@ -251,7 +379,7 @@ a {
   height: 28px;
   place-items: center;
   border-radius: 50%;
-  background: linear-gradient(135deg, var(--accent), var(--danger));
+  background: linear-gradient(135deg, var(--brand-accent), var(--danger));
   color: #fff;
   font-size: 11px;
   font-weight: 800;
@@ -301,6 +429,8 @@ main {
   border: 1px solid var(--border-soft);
   border-radius: var(--radius);
   background: var(--bg-panel);
+  box-shadow: none;
+  overflow: visible;
 }
 
 .status-tile {
@@ -356,6 +486,12 @@ main {
   padding: 18px;
 }
 
+.panel[data-slot="card"],
+.route-panel[data-slot="card"],
+.status-tile[data-slot="card"] {
+  color: var(--text);
+}
+
 .panel-large {
   min-height: 220px;
 }
@@ -365,17 +501,30 @@ main {
   align-items: center;
   gap: 10px;
   margin-bottom: 16px;
+  padding: 0;
 }
 
-.panel-title h2 {
+.panel-title h2,
+.panel-title [data-slot="card-title"] {
   flex: 1;
   margin: 0;
   font-size: 16px;
+  line-height: 1.25;
 }
 
-.panel-title span {
+.panel-title span,
+.panel-title [data-slot="badge"] {
   color: var(--text-muted);
   font-size: 12px;
+}
+
+.panel-separator {
+  margin-bottom: 16px;
+  background: var(--border-soft);
+}
+
+.panel-content {
+  padding: 0;
 }
 
 .foundation-list,
@@ -399,6 +548,14 @@ main {
   padding: 10px 0 0;
 }
 
+.foundation-list p:first-child,
+.activity-list p:first-child,
+.tool-table p:first-child,
+.route-table p:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
 .foundation-list strong,
 .tool-table strong,
 .route-table strong {
@@ -413,6 +570,7 @@ main {
   font-size: 13px;
 }
 
+.approval-badge,
 .tool-table em,
 .route-table em {
   margin-left: auto;
@@ -465,11 +623,13 @@ main {
   font-size: 13px;
 }
 
-.security-list span {
+.security-list span,
+.security-list [data-slot="badge"] {
   border: 1px solid var(--border-soft);
   border-radius: 999px;
   background: var(--bg-inset);
   padding: 7px 10px;
+  color: var(--text-muted);
 }
 
 .route-panel {
@@ -556,5 +716,17 @@ main {
   .route-panel,
   .route-panel-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  html {
+    @apply font-sans;
   }
 }

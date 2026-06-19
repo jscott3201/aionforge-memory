@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Component } from "svelte";
   import PageHeader from "./PageHeader.svelte";
+  import * as Card from "$lib/components/ui/card/index.js";
 
   let {
     eyebrow,
@@ -19,7 +20,7 @@
 
 <PageHeader {eyebrow} {title} {detail} />
 
-<section class="route-panel">
+<Card.Root class="route-panel" size="sm">
   <div class="route-panel-icon">
     <Icon size="22" />
   </div>
@@ -28,4 +29,4 @@
       <span>{item}</span>
     {/each}
   </div>
-</section>
+</Card.Root>

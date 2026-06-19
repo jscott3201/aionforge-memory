@@ -5,7 +5,7 @@
     Flame,
     Server,
     ShieldCheck,
-  } from "svelte-lucide";
+  } from "@lucide/svelte";
   import PageHeader from "$lib/components/app/PageHeader.svelte";
   import StatusTile from "$lib/components/status/StatusTile.svelte";
   import {
@@ -14,6 +14,9 @@
     statusTiles,
     toolSurface,
   } from "$lib/api/status";
+  import { Badge } from "$lib/components/ui/badge/index.js";
+  import * as Card from "$lib/components/ui/card/index.js";
+  import { Separator } from "$lib/components/ui/separator/index.js";
 </script>
 
 <PageHeader
@@ -29,13 +32,14 @@
 </section>
 
 <section class="dashboard-grid">
-  <article class="panel panel-large">
-    <div class="panel-title">
+  <Card.Root class="panel panel-large">
+    <Card.Header class="panel-title">
       <Flame size="18" />
-      <h2>Console foundation</h2>
-      <span>static SPA</span>
-    </div>
-    <div class="foundation-list">
+      <Card.Title>Console foundation</Card.Title>
+      <Badge variant="secondary">static SPA</Badge>
+    </Card.Header>
+    <Separator class="panel-separator" />
+    <Card.Content class="panel-content foundation-list">
       <p>
         <strong>Base path</strong><span>{consoleSnapshot.releaseBase}</span>
       </p>
@@ -46,36 +50,40 @@
           >{consoleSnapshot.structuredContent}</span
         >
       </p>
-    </div>
-  </article>
+    </Card.Content>
+  </Card.Root>
 
-  <article class="panel">
-    <div class="panel-title">
+  <Card.Root class="panel">
+    <Card.Header class="panel-title">
       <Server size="18" />
-      <h2>MCP tool split</h2>
-    </div>
-    <div class="split-meter" aria-label="Tool split">
-      <span style={`width: ${(consoleSnapshot.readLikeTools / 18) * 100}%`}
-      ></span>
-    </div>
-    <div class="split-legend">
-      <span
-        ><i class="dot good"></i>{consoleSnapshot.readLikeTools} read-like</span
-      >
-      <span
-        ><i class="dot warn"></i>{consoleSnapshot.mutatingTools} mutating</span
-      >
-    </div>
-  </article>
+      <Card.Title>MCP tool split</Card.Title>
+    </Card.Header>
+    <Separator class="panel-separator" />
+    <Card.Content class="panel-content">
+      <div class="split-meter" aria-label="Tool split">
+        <span style={`width: ${(consoleSnapshot.readLikeTools / 18) * 100}%`}
+        ></span>
+      </div>
+      <div class="split-legend">
+        <Badge variant="secondary"
+          ><i class="dot good"></i>{consoleSnapshot.readLikeTools} read-like</Badge
+        >
+        <Badge variant="outline"
+          ><i class="dot warn"></i>{consoleSnapshot.mutatingTools} mutating</Badge
+        >
+      </div>
+    </Card.Content>
+  </Card.Root>
 </section>
 
 <section class="dashboard-grid secondary">
-  <article class="panel">
-    <div class="panel-title">
+  <Card.Root class="panel">
+    <Card.Header class="panel-title">
       <Activity size="18" />
-      <h2>Read surfaces</h2>
-    </div>
-    <div class="activity-list">
+      <Card.Title>Read surfaces</Card.Title>
+    </Card.Header>
+    <Separator class="panel-separator" />
+    <Card.Content class="panel-content activity-list">
       {#each dashboardActivity as item (item.label)}
         <p>
           <svelte:component this={item.icon} size="16" />
@@ -83,35 +91,41 @@
           <span>{item.value}</span>
         </p>
       {/each}
-    </div>
-  </article>
+    </Card.Content>
+  </Card.Root>
 
-  <article class="panel panel-large">
-    <div class="panel-title">
+  <Card.Root class="panel panel-large">
+    <Card.Header class="panel-title">
       <Database size="18" />
-      <h2>Manifest preview</h2>
-      <span>{toolSurface.length} tools</span>
-    </div>
-    <div class="tool-table">
+      <Card.Title>Manifest preview</Card.Title>
+      <Badge variant="outline">{toolSurface.length} tools</Badge>
+    </Card.Header>
+    <Separator class="panel-separator" />
+    <Card.Content class="panel-content tool-table">
       {#each toolSurface.slice(0, 8) as tool (tool.name)}
         <p>
           <strong>{tool.name}</strong>
           <span>{tool.toolClass}</span>
-          <em>{tool.approval}</em>
+          <Badge
+            class="approval-badge"
+            variant={tool.approval === "allow" ? "secondary" : "outline"}
+            >{tool.approval}</Badge
+          >
         </p>
       {/each}
-    </div>
-  </article>
+    </Card.Content>
+  </Card.Root>
 
-  <article class="panel">
-    <div class="panel-title">
+  <Card.Root class="panel">
+    <Card.Header class="panel-title">
       <ShieldCheck size="18" />
-      <h2>Security posture</h2>
-    </div>
-    <div class="security-list">
-      <span>OAuth metadata</span>
-      <span>Audit signer</span>
-      <span>Principal gates</span>
-    </div>
-  </article>
+      <Card.Title>Security posture</Card.Title>
+    </Card.Header>
+    <Separator class="panel-separator" />
+    <Card.Content class="panel-content security-list">
+      <Badge variant="outline">OAuth metadata</Badge>
+      <Badge variant="outline">Audit signer</Badge>
+      <Badge variant="outline">Principal gates</Badge>
+    </Card.Content>
+  </Card.Root>
 </section>
