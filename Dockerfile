@@ -15,9 +15,26 @@ COPY . .
 
 RUN cargo build --locked --release -p aionforge-cli
 
+FROM node:24-bookworm-slim AS console-builder
+
+ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+
+WORKDIR /workspace/ui/console
+
+COPY ui/console/package.json ui/console/pnpm-lock.yaml ./
+
+RUN corepack enable \
+    && corepack prepare pnpm@11.1.2 --activate \
+    && pnpm install --frozen-lockfile
+
+COPY ui/console ./
+
+RUN pnpm build
+
 FROM scratch AS binary-artifact
 
 COPY --from=builder /workspace/target/release/aionforge /aionforge
+COPY --from=console-builder /workspace/ui/console/build /console
 
 FROM debian:bookworm-slim AS runtime
 
@@ -25,6 +42,7 @@ LABEL org.opencontainers.image.source="https://github.com/jscott3201/aionforge-m
 LABEL org.opencontainers.image.description="Aionforge Memory single-binary MCP server"
 
 ENV AIONFORGE_PERSISTENCE__DATA_DIR=/data
+ENV AIONFORGE_CONSOLE_DIST_DIR=/usr/local/share/aionforge/console
 
 # hadolint ignore=DL3008
 RUN apt-get update \
@@ -37,6 +55,7 @@ RUN apt-get update \
     && chown -R 10001:10001 /data
 
 COPY --from=builder /workspace/target/release/aionforge /usr/local/bin/aionforge
+COPY --from=console-builder /workspace/ui/console/build /usr/local/share/aionforge/console
 
 USER 10001:10001
 WORKDIR /data

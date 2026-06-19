@@ -6,8 +6,8 @@
 # A release therefore can never ship code that has not passed the gate.
 #
 # The artifact payload includes linux glibc binaries built through the Debian
-# Docker builder, macOS binaries, and the Debian runtime image pushed to GHCR
-# for linux/amd64 and linux/arm64.
+# Docker builder, macOS binaries, bundled console assets, and the Debian runtime
+# image pushed to GHCR for linux/amd64 and linux/arm64.
 #
 # crates.io publishing is intentionally deferred until the selene-db 1.x crates
 # that Aionforge depends on are available from crates.io.
@@ -81,7 +81,8 @@ jobs:
       - name: package binary
         run: |
           chmod +x "dist/${{ matrix.target }}/aionforge"
-          tar -C "dist/${{ matrix.target }}" -czf "dist/aionforge-${{ matrix.target }}.tar.gz" aionforge
+          test -f "dist/${{ matrix.target }}/console/200.html"
+          tar -C "dist/${{ matrix.target }}" -czf "dist/aionforge-${{ matrix.target }}.tar.gz" aionforge console
           (cd dist && shasum -a 256 "aionforge-${{ matrix.target }}.tar.gz" > "aionforge-${{ matrix.target }}.tar.gz.sha256")
       - uses: actions/upload-artifact@v4
         with:
@@ -106,16 +107,32 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.95.0
       - uses: Swatinem/rust-cache@v2
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.1.2
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: ui/console/pnpm-lock.yaml
       - name: add release target
         run: rustup target add "${{ matrix.target }}"
       - name: build release binary
         run: cargo build --locked --release -p aionforge-cli --target "${{ matrix.target }}"
+      - name: build console assets
+        working-directory: ui/console
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
       - name: package binary
         run: |
           mkdir -p "dist/${{ matrix.target }}"
           cp "target/${{ matrix.target }}/release/aionforge" "dist/${{ matrix.target }}/aionforge"
+          cp -R ui/console/build "dist/${{ matrix.target }}/console"
           chmod +x "dist/${{ matrix.target }}/aionforge"
-          tar -C "dist/${{ matrix.target }}" -czf "dist/aionforge-${{ matrix.target }}.tar.gz" aionforge
+          test -f "dist/${{ matrix.target }}/console/200.html"
+          tar -C "dist/${{ matrix.target }}" -czf "dist/aionforge-${{ matrix.target }}.tar.gz" aionforge console
           (cd dist && shasum -a 256 "aionforge-${{ matrix.target }}.tar.gz" > "aionforge-${{ matrix.target }}.tar.gz.sha256")
       - uses: actions/upload-artifact@v4
         with:
@@ -164,6 +181,8 @@ jobs:
           tar -xzf dist/linux-artifacts/aionforge-aarch64-unknown-linux-gnu/aionforge-aarch64-unknown-linux-gnu.tar.gz \
             -C dist/docker/linux/arm64
           chmod +x dist/docker/linux/amd64/aionforge dist/docker/linux/arm64/aionforge
+          test -f dist/docker/linux/amd64/console/200.html
+          test -f dist/docker/linux/arm64/console/200.html
       - name: compute runtime image metadata
         id: image
         env:

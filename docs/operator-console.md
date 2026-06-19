@@ -39,6 +39,11 @@ pnpm validate
 CI runs the same gate whenever `ui/console/**` changes, including Chromium
 Playwright coverage for `/console` and a deep-linked console route.
 
+As API-backed views land, add Playwright coverage against a live `aionforge`
+server with seeded memory state where practical. Mock-only UI tests are not
+enough for dashboard, records, retrieval, consolidation, or audit flows whose
+value depends on real MCP data.
+
 ## Serving
 
 Build the console before starting the Rust HTTP server from the repository root:
@@ -50,7 +55,18 @@ cd ../..
 aionforge serve http --listen 127.0.0.1:3918
 ```
 
-By default the server looks for `ui/console/build/200.html`. Set
-`AIONFORGE_CONSOLE_DIST_DIR` to serve a packaged build directory from another
-location. If no shell is present, `/console` is not mounted and the server keeps
-returning the normal plain `404` for non-MCP paths.
+By default the server checks these filesystem layouts, in order:
+
+- `ui/console/build` for local source checkouts
+- `console` next to the running `aionforge` executable for release archives
+- `./console` for manually staged assets
+- `/usr/local/share/aionforge/console` for container images
+
+Set `AIONFORGE_CONSOLE_DIST_DIR` to serve a packaged build directory from
+another location. If no shell is present, `/console` is not mounted and the
+server keeps returning the normal plain `404` for non-MCP paths.
+
+Release tarballs include both the `aionforge` binary and a sibling `console/`
+directory. Docker and GHCR runtime images copy the console to
+`/usr/local/share/aionforge/console` and set `AIONFORGE_CONSOLE_DIST_DIR`
+inside the image.

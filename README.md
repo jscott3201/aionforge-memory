@@ -131,6 +131,7 @@ docker run --rm \
 
 For bind mounts, use an owner-only data directory. The container runs as
 UID/GID `10001:10001`, and the store refuses unsafe data directory permissions.
+The image includes the operator console at `http://127.0.0.1:3918/console`.
 Operations details are in [Operations and recovery](docs/operations-recovery.md).
 
 ## Use The Rust Library
