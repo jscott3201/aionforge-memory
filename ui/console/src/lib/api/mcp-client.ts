@@ -2,6 +2,7 @@ import { browser } from "$app/environment";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type {
+  ConsolidationStatusStructuredContent,
   ReadMemoryStructuredContent,
   SearchResultsStructuredContent,
   ServerStatusStructuredContent,
@@ -129,6 +130,32 @@ export async function loadServerStatus(
   return result.structuredContent;
 }
 
+export async function loadConsolidationStatus(
+  config = createMcpClientConfig(),
+): Promise<ConsolidationStatusStructuredContent> {
+  const result = await callMcpTool<ConsolidationStatusStructuredContent>(
+    config,
+    {
+      tool: "consolidation_status",
+      params: { verbose: true },
+    },
+  );
+
+  if (result.isError) {
+    throw new McpClientError(
+      textResultMessage(result) ?? "consolidation_status failed",
+    );
+  }
+
+  if (!isConsolidationStatusStructuredContent(result.structuredContent)) {
+    throw new McpClientError(
+      "consolidation_status returned an unexpected payload.",
+    );
+  }
+
+  return result.structuredContent;
+}
+
 export async function searchMemories(
   config: McpClientConfig,
   request: SearchMemoriesRequest,
@@ -198,6 +225,26 @@ function isServerStatusStructuredContent(
     typeof candidate.surface?.tools === "number" &&
     Array.isArray(candidate.transports) &&
     typeof candidate.auth?.enabled === "boolean"
+  );
+}
+
+function isConsolidationStatusStructuredContent(
+  value: unknown,
+): value is ConsolidationStatusStructuredContent {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const candidate = value as Partial<ConsolidationStatusStructuredContent>;
+  return (
+    candidate.schema === "aionforge.consolidation_status.v1" &&
+    typeof candidate.pending === "number" &&
+    typeof candidate.failed === "number" &&
+    typeof candidate.oldest_pending_age_s === "number" &&
+    typeof candidate.generation === "number" &&
+    (candidate.state === "idle" ||
+      candidate.state === "backlog_pending" ||
+      candidate.state === "attention_required")
   );
 }
 

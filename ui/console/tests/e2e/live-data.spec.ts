@@ -1,7 +1,10 @@
 import { expect, test, type Page } from "@playwright/test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import type { ServerStatusStructuredContent } from "../../src/lib/api/contracts";
+import type {
+  ConsolidationStatusStructuredContent,
+  ServerStatusStructuredContent,
+} from "../../src/lib/api/contracts";
 
 const LIVE_AGENT_ID = "00000000-0000-4000-8000-000000000311";
 
@@ -113,6 +116,39 @@ test.describe("live data flow", () => {
     );
     await expect(errors).toEqual([]);
   });
+
+  test("renders real consolidation backlog status", async ({
+    page,
+    baseURL,
+  }) => {
+    if (!baseURL) {
+      throw new Error(
+        "Playwright baseURL is required for live data-flow tests.",
+      );
+    }
+
+    const status = await seedConsolidationStatus(baseURL);
+    const errors = collectRuntimeErrors(page);
+
+    await page.goto("/console/consolidation");
+
+    await expect(page.getByTestId("consolidation-state")).toContainText(
+      status.state.replaceAll("_", " "),
+    );
+    await expect(page.getByTestId("consolidation-pending")).toContainText(
+      status.pending.toString(),
+    );
+    await expect(page.getByTestId("consolidation-failed")).toContainText(
+      status.failed.toString(),
+    );
+    await expect(page.getByTestId("consolidation-generation")).toContainText(
+      status.generation.toString(),
+    );
+    await expect(page.getByTestId("consolidation-ledger")).toContainText(
+      status.state,
+    );
+    await expect(errors).toEqual([]);
+  });
 });
 
 async function seedLiveMemory(
@@ -162,6 +198,38 @@ async function captureLiveMemory(
   }
 }
 
+async function seedConsolidationStatus(
+  baseURL: string,
+): Promise<ConsolidationStatusStructuredContent> {
+  const client = new Client({
+    name: "aionforge-console-e2e",
+    version: "0.0.0",
+  });
+  const transport = new StreamableHTTPClientTransport(new URL("/mcp", baseURL));
+
+  try {
+    await client.connect(transport);
+    await captureWithClient(
+      client,
+      uniqueSeed("console consolidation live e2e"),
+    );
+
+    const result = await client.callTool({
+      name: "consolidation_status",
+      arguments: { verbose: true },
+    });
+    const structured = result.structuredContent;
+    if (!isConsolidationStatusStructuredContent(structured)) {
+      throw new Error("consolidation_status returned an unexpected payload.");
+    }
+
+    expect(structured.pending).toBeGreaterThan(0);
+    return structured;
+  } finally {
+    await client.close().catch(() => undefined);
+  }
+}
+
 async function captureWithClient(
   client: Client,
   content: string,
@@ -190,6 +258,26 @@ function isServerStatusStructuredContent(
     candidate.schema === "aionforge.server_status.v1" &&
     typeof candidate.counts?.memories === "number" &&
     typeof candidate.surface?.tools === "number"
+  );
+}
+
+function isConsolidationStatusStructuredContent(
+  value: unknown,
+): value is ConsolidationStatusStructuredContent {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const candidate = value as Partial<ConsolidationStatusStructuredContent>;
+  return (
+    candidate.schema === "aionforge.consolidation_status.v1" &&
+    typeof candidate.pending === "number" &&
+    typeof candidate.failed === "number" &&
+    typeof candidate.generation === "number" &&
+    typeof candidate.oldest_pending_age_s === "number" &&
+    (candidate.state === "idle" ||
+      candidate.state === "backlog_pending" ||
+      candidate.state === "attention_required")
   );
 }
 
