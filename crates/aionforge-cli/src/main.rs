@@ -10,6 +10,7 @@ mod console;
 mod consolidation_config;
 mod doctor;
 mod error;
+mod health;
 mod host;
 mod observability;
 mod recover;

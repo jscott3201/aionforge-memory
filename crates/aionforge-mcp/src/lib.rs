@@ -62,7 +62,10 @@ pub use resources::{
     PLUGIN_PACKAGE_GUIDE_RESOURCE_URI, TOOL_APPROVAL_POLICY_RESOURCE_URI,
     TOOL_MANIFEST_RESOURCE_URI,
 };
-pub use status::{AuthPosture, ServerStatusToolParams, server_status_tool};
+pub use status::{
+    AuthPosture, ServerStatusToolParams, build_sha, build_status, build_timestamp,
+    server_status_tool,
+};
 pub use tools::{
     BatchCaptureItem, BatchCaptureToolParams, CaptureToolParams, MAX_BATCH_ITEMS, SearchToolParams,
     batch_capture_tool, capture_tool, search_tool,

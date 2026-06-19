@@ -424,14 +424,16 @@ pub(crate) fn session_manifest_tool_output<E: Embedder>(
         .as_ref()
         .map(|cursor| (cursor.ingested_at.to_string(), cursor.id.to_string()));
     Ok(crate::structured::inspect::session_manifest(
-        rendered,
-        &session_id,
-        &visible_episodes,
-        limit,
-        total_visible,
-        superseded_hidden,
-        next_for_structured,
-        manifest_chars,
+        crate::structured::inspect::SessionManifestOutput {
+            text: rendered,
+            session_id: &session_id,
+            episodes: &visible_episodes,
+            limit,
+            total_visible,
+            superseded_hidden,
+            next: next_for_structured,
+            max_chars: manifest_chars,
+        },
     ))
 }
 
