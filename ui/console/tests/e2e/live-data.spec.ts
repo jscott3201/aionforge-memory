@@ -4,6 +4,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import type {
   AuditHistoryStructuredContent,
   ConsolidationStatusStructuredContent,
+  SearchResultsStructuredContent,
   ServerStatusStructuredContent,
   ToolManifestStructuredContent,
 } from "../../src/lib/api/contracts";
@@ -153,6 +154,53 @@ test.describe("live data flow", () => {
     await expect(page.getByTestId("namespaces-gap-list")).toContainText(
       "not exposed",
     );
+    await expect(errors).toEqual([]);
+  });
+
+  test("renders real embedding search posture", async ({ page, baseURL }) => {
+    if (!baseURL) {
+      throw new Error(
+        "Playwright baseURL is required for live data-flow tests.",
+      );
+    }
+
+    const seed = uniqueSeed("console embedding live e2e");
+    await captureLiveMemory(baseURL, seed);
+    const probe = await searchLiveMemory(baseURL, seed);
+    const errors = collectRuntimeErrors(page);
+
+    await page.goto("/console/embedding");
+    await page.getByTestId("embedding-query-input").fill(seed);
+    await page
+      .getByTestId("embedding-viewer-input")
+      .fill(`agent:${LIVE_AGENT_ID}`);
+    await expect(page.getByTestId("embedding-refresh")).toBeEnabled();
+    await page.getByTestId("embedding-refresh").click();
+
+    await expect(page.getByTestId("embedding-state")).toContainText("live");
+    await expect(page.getByTestId("embedding-available")).toContainText(
+      probe.summary.embedder_available ? "available" : "disabled",
+    );
+    await expect(page.getByTestId("embedding-considered")).toContainText(
+      probe.summary.candidates_considered.toString(),
+    );
+    await expect(page.getByTestId("embedding-returned")).toContainText(
+      probe.summary.returned.toString(),
+    );
+    await expect(page.getByTestId("embedding-route")).toContainText(
+      probe.explain.route,
+    );
+    await expect(page.getByTestId("embedding-config-list")).toContainText(
+      "not exposed",
+    );
+    await expect(
+      page.getByTestId("embedding-result-item").first(),
+    ).toContainText(seed);
+    if (probe.explain.signals_run[0]) {
+      await expect(page.getByTestId("embedding-signals")).toContainText(
+        probe.explain.signals_run[0],
+      );
+    }
     await expect(errors).toEqual([]);
   });
 
@@ -327,6 +375,40 @@ async function captureLiveMemory(
   try {
     await client.connect(transport);
     await captureWithClient(client, content);
+  } finally {
+    await client.close().catch(() => undefined);
+  }
+}
+
+async function searchLiveMemory(
+  baseURL: string,
+  query: string,
+): Promise<SearchResultsStructuredContent> {
+  const client = new Client({
+    name: "aionforge-console-e2e",
+    version: "0.0.0",
+  });
+  const transport = new StreamableHTTPClientTransport(new URL("/mcp", baseURL));
+
+  try {
+    await client.connect(transport);
+    const result = await client.callTool({
+      name: "search",
+      arguments: {
+        query,
+        viewer: `agent:${LIVE_AGENT_ID}`,
+        limit: 4,
+        verbose: true,
+        include_superseded: false,
+      },
+    });
+    const structured = result.structuredContent;
+    if (!isSearchResultsStructuredContent(structured)) {
+      throw new Error("search returned an unexpected payload.");
+    }
+
+    expect(structured.summary.returned).toBeGreaterThan(0);
+    return structured;
   } finally {
     await client.close().catch(() => undefined);
   }
@@ -517,6 +599,25 @@ function isConsolidationStatusStructuredContent(
     (candidate.state === "idle" ||
       candidate.state === "backlog_pending" ||
       candidate.state === "attention_required")
+  );
+}
+
+function isSearchResultsStructuredContent(
+  value: unknown,
+): value is SearchResultsStructuredContent {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const candidate = value as Partial<SearchResultsStructuredContent>;
+  return (
+    candidate.schema === "aionforge.search_results.v1" &&
+    typeof candidate.summary?.returned === "number" &&
+    typeof candidate.summary?.candidates_considered === "number" &&
+    typeof candidate.summary?.embedder_available === "boolean" &&
+    typeof candidate.explain?.route === "string" &&
+    Array.isArray(candidate.explain?.signals_run) &&
+    Array.isArray(candidate.memories)
   );
 }
 

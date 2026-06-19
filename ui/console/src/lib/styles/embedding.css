@@ -1,0 +1,240 @@
+.embedding-workspace,
+.embedding-bottom-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.embedding-bottom-grid {
+  margin-top: 16px;
+}
+
+.embedding-probe-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(250px, 0.82fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.embedding-probe-form label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.embedding-probe-form label span,
+.embedding-summary-grid span,
+.embedding-runtime-list span,
+.embedding-signal-row span,
+.embedding-signal-row small,
+.embedding-results dt,
+.embedding-config-list span {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.embedding-probe-form label span {
+  font-weight: 700;
+}
+
+.embedding-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.embedding-summary-grid p,
+.embedding-runtime-list p,
+.embedding-config-list p {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+  margin: 0;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  padding: 12px;
+}
+
+.embedding-summary-grid p {
+  min-height: 76px;
+  align-content: center;
+}
+
+.embedding-summary-grid strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 20px;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.embedding-empty-state {
+  display: grid;
+  min-height: 160px;
+  align-content: center;
+  gap: 7px;
+  margin-top: 16px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  padding: 18px;
+}
+
+.embedding-empty-state.tone-danger {
+  border-color: color-mix(in oklab, var(--danger) 62%, var(--border-soft));
+}
+
+.embedding-empty-state strong,
+.embedding-runtime-list strong,
+.embedding-results strong,
+.embedding-config-list strong,
+.embedding-signal-row strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.embedding-empty-state span,
+.embedding-results p,
+.embedding-config-list span {
+  overflow-wrap: anywhere;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.embedding-runtime-list,
+.embedding-results,
+.embedding-signal-list,
+.embedding-config-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.embedding-runtime-list,
+.embedding-config-list {
+  margin-top: 0;
+}
+
+.embedding-results article {
+  display: grid;
+  gap: 11px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  padding: 13px;
+}
+
+.embedding-results article header {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.embedding-results article header span {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.embedding-results article p {
+  margin: 0;
+  color: var(--text-soft);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.embedding-results dl {
+  display: grid;
+  grid-template-columns: 0.55fr 0.55fr minmax(0, 1.4fr);
+  gap: 8px;
+  margin: 0;
+}
+
+.embedding-results dl div {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+  border-top: 1px solid var(--border-soft);
+  padding-top: 8px;
+}
+
+.embedding-results dd {
+  overflow: hidden;
+  margin: 0;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.embedding-signal-row {
+  display: grid;
+  grid-template-columns: minmax(112px, 0.72fr) minmax(110px, 1fr) 48px;
+  gap: 10px;
+  align-items: center;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  padding: 11px;
+}
+
+.embedding-signal-row div:first-child {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.embedding-signal-meter {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--border-soft);
+}
+
+.embedding-signal-meter span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent-2);
+}
+
+.embedding-signal-row small {
+  text-align: right;
+}
+
+@media (max-width: 980px) {
+  .embedding-workspace,
+  .embedding-bottom-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .embedding-probe-form,
+  .embedding-summary-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .embedding-probe-form button {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 640px) {
+  .embedding-probe-form,
+  .embedding-summary-grid,
+  .embedding-results dl,
+  .embedding-signal-row {
+    grid-template-columns: 1fr;
+  }
+
+  .embedding-signal-row small {
+    text-align: left;
+  }
+}
