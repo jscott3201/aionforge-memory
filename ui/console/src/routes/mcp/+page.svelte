@@ -11,11 +11,15 @@
   import {
     createRuntimeMcpClientConfig,
     loadMcpToolCatalog,
+    loadServerStatus,
     TOOL_MANIFEST_URI,
     type McpClientConfig,
     type McpToolCatalog,
   } from "$lib/api/mcp-client";
-  import type { ToolManifestTool } from "$lib/api/contracts";
+  import type {
+    ServerStatusStructuredContent,
+    ToolManifestTool,
+  } from "$lib/api/contracts";
   import { Badge } from "$lib/components/ui/badge/index.js";
   import { Button } from "$lib/components/ui/button/index.js";
   import * as Card from "$lib/components/ui/card/index.js";
@@ -24,7 +28,11 @@
   type CatalogState =
     | { state: "offline" }
     | { state: "loading" }
-    | { state: "ready"; value: McpToolCatalog }
+    | {
+        state: "ready";
+        value: McpToolCatalog;
+        status: ServerStatusStructuredContent;
+      }
     | { state: "error"; message: string };
 
   const countFormat = new Intl.NumberFormat("en-US");
@@ -49,9 +57,14 @@
 
     catalogState = { state: "loading" };
     try {
+      const [catalog, status] = await Promise.all([
+        loadMcpToolCatalog(activeConfig),
+        loadServerStatus(activeConfig),
+      ]);
       catalogState = {
         state: "ready",
-        value: await loadMcpToolCatalog(activeConfig),
+        value: catalog,
+        status,
       };
     } catch (error) {
       catalogState = { state: "error", message: errorMessage(error) };
@@ -60,6 +73,12 @@
 
   function currentCatalog(state: CatalogState): McpToolCatalog | null {
     return state.state === "ready" ? state.value : null;
+  }
+
+  function currentStatus(
+    state: CatalogState,
+  ): ServerStatusStructuredContent | null {
+    return state.state === "ready" ? state.status : null;
   }
 
   function stateLabel(state: CatalogState): string {
@@ -95,6 +114,52 @@
 
   function resourceCount(catalog: McpToolCatalog | null): string {
     return countFormat.format(catalog?.manifest.server.resource_count ?? 0);
+  }
+
+  function formatBytes(value: number): string {
+    if (value < 1024) {
+      return `${countFormat.format(value)} B`;
+    }
+    const units = ["KB", "MB", "GB", "TB"];
+    let scaled = value / 1024;
+    let unitIndex = 0;
+
+    while (scaled >= 1024 && unitIndex < units.length - 1) {
+      scaled /= 1024;
+      unitIndex += 1;
+    }
+
+    return `${scaled.toFixed(scaled >= 10 ? 0 : 1)} ${units[unitIndex]}`;
+  }
+
+  function trafficLabel(status: ServerStatusStructuredContent | null): string {
+    if (!status) {
+      return "not exposed";
+    }
+    const traffic = status.telemetry.memory_traffic;
+    return `${formatBytes(traffic.bytes_in_total)} in / ${formatBytes(
+      traffic.bytes_out_total,
+    )} out`;
+  }
+
+  function tokenEstimateLabel(
+    status: ServerStatusStructuredContent | null,
+  ): string {
+    if (!status) {
+      return "not exposed";
+    }
+    const traffic = status.telemetry.memory_traffic;
+    return `${countFormat.format(
+      traffic.estimated_tokens_in_total,
+    )} in / ${countFormat.format(traffic.estimated_tokens_out_total)} out`;
+  }
+
+  function tokenEstimateDetail(
+    status: ServerStatusStructuredContent | null,
+  ): string {
+    const divisor =
+      status?.telemetry.memory_traffic.token_estimate_divisor ?? 4;
+    return `coarse bytes/${divisor} estimate, not exact tokens`;
   }
 
   function transportLabel(catalog: McpToolCatalog | null): string {
@@ -322,18 +387,28 @@
     <Card.Header class="panel-title">
       <Server size="18" />
       <Card.Title>Telemetry</Card.Title>
-      <Badge variant="outline">deferred</Badge>
+      <Badge variant="outline"
+        >{currentStatus(catalogState) ? "live rollup" : "deferred"}</Badge
+      >
     </Card.Header>
     <Separator class="panel-separator" />
     <Card.Content class="panel-content">
-      <div class="mcp-telemetry-gap" data-testid="mcp-telemetry-gap">
+      {@const status = currentStatus(catalogState)}
+      <div class="mcp-telemetry-gap" data-testid="mcp-telemetry-rollup">
         <p>
-          <strong>Call counts</strong>
-          <span>not exposed by a console-readable MCP surface</span>
+          <strong data-testid="mcp-traffic-bytes">{trafficLabel(status)}</strong
+          >
+          <span>memory traffic bytes</span>
         </p>
         <p>
-          <strong>Request log</strong>
-          <span>not exposed until request telemetry lands</span>
+          <strong data-testid="mcp-traffic-tokens"
+            >{tokenEstimateLabel(status)}</strong
+          >
+          <span>{tokenEstimateDetail(status)}</span>
+        </p>
+        <p data-testid="mcp-telemetry-followup">
+          <strong>Per-tool counters</strong>
+          <span>metrics emitted today; queryable counters are next</span>
         </p>
       </div>
     </Card.Content>

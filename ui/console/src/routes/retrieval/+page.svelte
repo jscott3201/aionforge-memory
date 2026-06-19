@@ -170,8 +170,10 @@
     <Card.Header class="panel-title">
       <Radar size="18" />
       <Card.Title>Recall query</Card.Title>
-      <Badge data-testid="retrieval-result-count" variant="outline"
-        >{resultCount(retrievalState)}</Badge
+      <Badge
+        class="count-badge"
+        data-testid="retrieval-result-count"
+        variant="outline">{resultCount(retrievalState)}</Badge
       >
     </Card.Header>
     <Separator class="panel-separator" />

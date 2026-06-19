@@ -205,6 +205,44 @@
     return countFormat.format(value);
   }
 
+  function formatBytes(value: number): string {
+    if (value < 1024) {
+      return `${formatCount(value)} B`;
+    }
+    const units = ["KB", "MB", "GB", "TB"];
+    let scaled = value / 1024;
+    let unitIndex = 0;
+
+    while (scaled >= 1024 && unitIndex < units.length - 1) {
+      scaled /= 1024;
+      unitIndex += 1;
+    }
+
+    return `${scaled.toFixed(scaled >= 10 ? 0 : 1)} ${units[unitIndex]}`;
+  }
+
+  function trafficLabel(status: ServerStatusStructuredContent | null): string {
+    if (!status) {
+      return "not exposed";
+    }
+    const traffic = status.telemetry.memory_traffic;
+    return `${formatBytes(traffic.bytes_in_total)} in / ${formatBytes(
+      traffic.bytes_out_total,
+    )} out`;
+  }
+
+  function tokenEstimateLabel(
+    status: ServerStatusStructuredContent | null,
+  ): string {
+    if (!status) {
+      return "not exposed";
+    }
+    const traffic = status.telemetry.memory_traffic;
+    return `${formatCount(
+      traffic.estimated_tokens_in_total,
+    )} in / ${formatCount(traffic.estimated_tokens_out_total)} out`;
+  }
+
   function transportLabel(
     status: ServerStatusStructuredContent | null,
   ): string {
@@ -376,6 +414,18 @@
         <p>
           <strong>DTO state</strong>
           <span>{consoleSnapshot.structuredContent}</span>
+        </p>
+        <p>
+          <strong>Memory traffic</strong>
+          <span data-testid="dashboard-traffic-bytes"
+            >{trafficLabel(status)}</span
+          >
+        </p>
+        <p>
+          <strong>Token estimate</strong>
+          <span data-testid="dashboard-traffic-tokens"
+            >{tokenEstimateLabel(status)}</span
+          >
         </p>
       </div>
       {#if dashboardState.state === "loading"}

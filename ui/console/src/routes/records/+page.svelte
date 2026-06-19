@@ -175,8 +175,10 @@
     <Card.Header class="panel-title">
       <Database size="18" />
       <Card.Title>Record search</Card.Title>
-      <Badge data-testid="records-result-count" variant="outline"
-        >{resultCount(searchState)}</Badge
+      <Badge
+        class="count-badge"
+        data-testid="records-result-count"
+        variant="outline">{resultCount(searchState)}</Badge
       >
     </Card.Header>
     <Separator class="panel-separator" />

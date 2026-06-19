@@ -332,7 +332,15 @@ function isServerStatusStructuredContent(
     typeof candidate.counts?.work_items === "number" &&
     typeof candidate.surface?.tools === "number" &&
     Array.isArray(candidate.transports) &&
-    typeof candidate.auth?.enabled === "boolean"
+    typeof candidate.auth?.enabled === "boolean" &&
+    typeof candidate.telemetry?.memory_traffic?.bytes_in_total === "number" &&
+    typeof candidate.telemetry.memory_traffic.bytes_out_total === "number" &&
+    typeof candidate.telemetry.memory_traffic.estimated_tokens_in_total ===
+      "number" &&
+    typeof candidate.telemetry.memory_traffic.estimated_tokens_out_total ===
+      "number" &&
+    candidate.telemetry.memory_traffic.token_estimate_kind ===
+      "coarse_bytes_divisor"
   );
 }
 

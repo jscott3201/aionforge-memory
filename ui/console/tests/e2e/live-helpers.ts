@@ -300,7 +300,13 @@ function isServerStatusStructuredContent(
   return (
     candidate.schema === "aionforge.server_status.v1" &&
     typeof candidate.counts?.memories === "number" &&
-    typeof candidate.surface?.tools === "number"
+    typeof candidate.surface?.tools === "number" &&
+    typeof candidate.telemetry?.memory_traffic?.bytes_in_total === "number" &&
+    typeof candidate.telemetry.memory_traffic.bytes_out_total === "number" &&
+    typeof candidate.telemetry.memory_traffic.estimated_tokens_in_total ===
+      "number" &&
+    typeof candidate.telemetry.memory_traffic.estimated_tokens_out_total ===
+      "number"
   );
 }
 

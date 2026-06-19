@@ -465,6 +465,19 @@ main {
   color: var(--text-muted);
 }
 
+.count-badge,
+.panel-title [data-slot="badge"] {
+  border-color: var(--border-soft);
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-muted);
+}
+
+:root[data-theme="light"] .count-badge,
+:root[data-theme="light"] .panel-title [data-slot="badge"] {
+  border-color: color-mix(in oklab, var(--border) 72%, var(--bg-panel));
+}
+
 .dashboard-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.45fr) minmax(320px, 0.75fr);

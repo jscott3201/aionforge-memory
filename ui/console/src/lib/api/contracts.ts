@@ -114,6 +114,16 @@ export interface ServerStatusStructuredContent {
     work_statuses: Record<string, number>;
   };
   auth: { enabled: boolean; issuers: string[] };
+  telemetry: {
+    memory_traffic: {
+      bytes_in_total: number;
+      bytes_out_total: number;
+      estimated_tokens_in_total: number;
+      estimated_tokens_out_total: number;
+      token_estimate_divisor: number;
+      token_estimate_kind: "coarse_bytes_divisor";
+    };
+  };
   resources: string[];
 }
 

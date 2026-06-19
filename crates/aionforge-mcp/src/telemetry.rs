@@ -18,11 +18,6 @@
 //! Cost is ~nothing until an operator installs a recorder: the `metrics` facade is a no-op
 //! against the default `NoopRecorder`, so these instruments add no always-on overhead.
 
-/// Coarse, documented chars-per-token divisor used **only** for the labeled `est_tokens`
-/// estimate on the tracing line. A faithful token count needs the client's own tokenizer;
-/// this 4-bytes-per-token rule is the cheapest possible proxy and is never reported as exact.
-const CHARS_PER_TOKEN: u64 = 4;
-
 /// Record the realized served size of a recall-like response: fold the response's byte length
 /// into the per-tool bytes-served counter (the authoritative measure) and emit a per-request
 /// `tracing` size line carrying the byte count and a labeled token estimate.
@@ -39,7 +34,7 @@ pub(crate) fn record_recall_served(tool: &'static str, response: &str) {
         target: "aionforge_mcp::telemetry",
         tool,
         response_bytes = bytes,
-        est_tokens = bytes / CHARS_PER_TOKEN,
+        est_tokens = bytes / crate::traffic::TOKEN_ESTIMATE_BYTES_PER_TOKEN,
         "recall served"
     );
 }
