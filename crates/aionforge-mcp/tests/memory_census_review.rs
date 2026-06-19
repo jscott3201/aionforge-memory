@@ -256,6 +256,7 @@ fn system_role_episodes_are_excluded_from_counts_and_list_unless_revealed() {
     let alice = Id::generate();
     let memory = admin_memory(alice);
     let alice_ns = Namespace::Agent(alice.to_string());
+    let team_ns = Namespace::Team("squad".to_string());
     let user_id = seed(
         &memory,
         "ordinary same namespace body",
@@ -264,15 +265,31 @@ fn system_role_episodes_are_excluded_from_counts_and_list_unless_revealed() {
     );
     let system_id = seed(
         &memory,
-        "same namespace system role body",
+        "same namespace system role body one",
+        alice_ns.clone(),
+        Role::System,
+    );
+    let second_system_id = seed(
+        &memory,
+        "same namespace system role body two",
         alice_ns,
         Role::System,
     );
+    let team_system_id = seed(&memory, "team system role body", team_ns, Role::System);
 
-    let counts = memory_census_tool(&memory, census_params(alice), None, AuthEnabled(false))
-        .expect("default counts");
+    let counts = memory_census_tool(
+        &memory,
+        census_params_with_teams(alice, &["squad"]),
+        None,
+        AuthEnabled(false),
+    )
+    .expect("default counts");
     assert!(
         counts.contains(&format!("namespace=agent:{alice} memories=1 work_items=0")),
+        "{counts}"
+    );
+    assert!(
+        counts.contains("namespace=team:squad memories=0 work_items=0"),
         "{counts}"
     );
     assert!(
@@ -280,22 +297,39 @@ fn system_role_episodes_are_excluded_from_counts_and_list_unless_revealed() {
         "{counts}"
     );
 
-    let out = memory_census_tool(&memory, list_params(alice), None, AuthEnabled(false))
-        .expect("default list");
+    let mut list_params = census_params_with_teams(alice, &["squad"]);
+    list_params.mode = Some("list".to_string());
+    let out =
+        memory_census_tool(&memory, list_params, None, AuthEnabled(false)).expect("default list");
     assert!(out.contains(&user_id.to_string()), "{out}");
     assert!(!out.contains(&system_id.to_string()), "{out}");
-    assert!(!out.contains("same namespace system role body"), "{out}");
+    assert!(!out.contains(&second_system_id.to_string()), "{out}");
+    assert!(!out.contains(&team_system_id.to_string()), "{out}");
+    assert!(
+        !out.contains("same namespace system role body one"),
+        "{out}"
+    );
+    assert!(
+        !out.contains("same namespace system role body two"),
+        "{out}"
+    );
+    assert!(!out.contains("team system role body"), "{out}");
 
-    let mut include = census_params(alice);
+    let mut include = census_params_with_teams(alice, &["squad"]);
     include.include_system = Some(true);
     let revealed =
         memory_census_tool(&memory, include, None, AuthEnabled(false)).expect("revealed counts");
     assert!(
-        revealed.contains(&format!("namespace=agent:{alice} memories=2 work_items=0")),
+        revealed.contains(&format!("namespace=agent:{alice} memories=3 work_items=0")),
+        "{revealed}"
+    );
+    assert!(
+        revealed.contains("namespace=team:squad memories=1 work_items=0"),
         "{revealed}"
     );
 
-    let mut list = list_params(alice);
+    let mut list = census_params_with_teams(alice, &["squad"]);
+    list.mode = Some("list".to_string());
     list.include_system = Some(true);
     let revealed_list =
         memory_census_tool(&memory, list, None, AuthEnabled(false)).expect("revealed list");
@@ -308,9 +342,62 @@ fn system_role_episodes_are_excluded_from_counts_and_list_unless_revealed() {
         "{revealed_list}"
     );
     assert!(
-        revealed_list.contains("same namespace system role body"),
+        revealed_list.contains(&second_system_id.to_string()),
         "{revealed_list}"
     );
+    assert!(
+        revealed_list.contains(&team_system_id.to_string()),
+        "{revealed_list}"
+    );
+    assert!(
+        revealed_list.contains("same namespace system role body one"),
+        "{revealed_list}"
+    );
+    assert!(
+        revealed_list.contains("same namespace system role body two"),
+        "{revealed_list}"
+    );
+    assert!(
+        revealed_list.contains("team system role body"),
+        "{revealed_list}"
+    );
+}
+
+#[test]
+fn list_mode_kind_filter_accepts_fact_aliases_and_rejects_unknown_kinds() {
+    let memory = memory();
+    let alice = Id::generate();
+    let ns = Namespace::Agent(alice.to_string());
+    let episode_id = seed(&memory, "kind filter episode body", ns.clone(), Role::User);
+    let fact_id = seed_fact(
+        &memory,
+        "kind filter fact statement",
+        "asserts",
+        ns,
+        FactStatus::Active,
+        false,
+    );
+
+    for kind in ["fact", "facts"] {
+        let mut params = list_params(alice);
+        params.kind = Some(kind.to_string());
+        let out =
+            memory_census_tool(&memory, params, None, AuthEnabled(false)).expect("fact kind list");
+        assert!(
+            out.starts_with("[memory_census] mode=list count=1 total_visible=1"),
+            "{out}"
+        );
+        assert_eq!(out.matches("<memory ").count(), 1, "{out}");
+        assert!(out.contains(&fact_id.to_string()), "{out}");
+        assert!(!out.contains(&episode_id.to_string()), "{out}");
+        assert!(!out.contains("kind filter episode body"), "{out}");
+    }
+
+    let mut bogus = list_params(alice);
+    bogus.kind = Some("bogus".to_string());
+    let err = memory_census_tool(&memory, bogus, None, AuthEnabled(false))
+        .expect_err("unknown kind rejected");
+    assert!(err.starts_with("ERR_INVALID_MEMORY_KIND"), "{err}");
 }
 
 #[test]
@@ -413,6 +500,8 @@ fn seed_migration_snapshot(memory: &Memory<FakeEmbedder>, alice: Id, include_dro
     for (id, body, namespace) in migration_records(alice) {
         if include_dropped || id != dropped {
             seed_with_id_at(memory, id, body, namespace, Role::User, now());
+        } else {
+            seed_with_id_at_expired(memory, id, body, namespace, Role::User, now(), Some(now()));
         }
     }
     dropped

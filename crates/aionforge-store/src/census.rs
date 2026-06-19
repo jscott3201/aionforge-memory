@@ -7,7 +7,7 @@ use std::collections::HashSet;
 
 use aionforge_domain::namespace::Namespace;
 use aionforge_domain::nodes::associative::Note;
-use aionforge_domain::nodes::episodic::Episode;
+use aionforge_domain::nodes::episodic::{Episode, Role};
 use aionforge_domain::nodes::procedural::{BadPattern, Skill};
 use aionforge_domain::nodes::semantic::{Entity, Fact};
 use aionforge_domain::nodes::work::{WorkItem, WorkStatus};
@@ -59,6 +59,21 @@ impl MemoryCounts {
     pub fn total(&self) -> u64 {
         self.episodes + self.facts + self.entities + self.notes + self.skills + self.bad_patterns
     }
+}
+
+/// Per-namespace memory counts plus the live system-role episode subset.
+///
+/// [`NamespaceMemoryCounts::memories`] counts all live memory rows in the namespace.
+/// [`NamespaceMemoryCounts::system_role_episodes`] is counted from the same pinned snapshot,
+/// allowing callers to exclude system-role episodes without a second scan or body decode.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NamespaceMemoryCounts {
+    /// Namespace whose memory buckets were counted.
+    pub namespace: Namespace,
+    /// Live memory counts by kind, including all episode roles.
+    pub memories: MemoryCounts,
+    /// Live [`Role::System`] episodes in this namespace.
+    pub system_role_episodes: u64,
 }
 
 /// A live per-status work-item census (global operator telemetry): the work-tracking
@@ -206,13 +221,41 @@ impl Store {
         &self,
         namespaces: &[Namespace],
     ) -> Result<Vec<(Namespace, MemoryCounts)>, StoreError> {
+        Ok(self
+            .memory_counts_with_system_role_episodes_by_namespace(namespaces)?
+            .into_iter()
+            .map(|counts| (counts.namespace, counts.memories))
+            .collect())
+    }
+
+    /// Live per-kind memory counts plus live system-role episode counts per namespace.
+    ///
+    /// This is the role-aware counterpart to [`Store::memory_counts_by_namespace`]. It reads one
+    /// pinned snapshot for both the all-role memory counts and the system-role episode subset, so
+    /// callers can subtract the subset without a torn read. Episode roles are counted through the
+    /// indexed `Episode.role` scalar property and only live rows (`expired_at` absent) are counted.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if a label, property key, namespace, or role value cannot be
+    /// encoded.
+    pub fn memory_counts_with_system_role_episodes_by_namespace(
+        &self,
+        namespaces: &[Namespace],
+    ) -> Result<Vec<NamespaceMemoryCounts>, StoreError> {
         let snapshot = self.graph().read();
         let namespace_key = db_string("namespace")?;
         let expired_key = db_string("expired_at")?;
-        let mut out: Vec<(Namespace, MemoryCounts)> = namespaces
+        let episode_label = db_string(Episode::LABEL)?;
+        let role_key = db_string("role")?;
+        let system_role = enum_value(&Role::System)?;
+        let mut out: Vec<NamespaceMemoryCounts> = namespaces
             .iter()
             .cloned()
-            .map(|namespace| (namespace, MemoryCounts::default()))
+            .map(|namespace| NamespaceMemoryCounts {
+                namespace,
+                memories: MemoryCounts::default(),
+                system_role_episodes: 0,
+            })
             .collect();
 
         for (slot, namespace) in namespaces.iter().enumerate() {
@@ -226,7 +269,25 @@ impl Store {
                     &namespace_value,
                     &expired_key,
                 );
-                add_memory_count(&mut out[slot].1, label_str, live);
+                add_memory_count(&mut out[slot].memories, label_str, live);
+            }
+            let Some(rows) =
+                snapshot.nodes_with_property_eq(&episode_label, &role_key, &system_role)
+            else {
+                continue;
+            };
+            for row in rows.iter() {
+                let Some(node) = snapshot.node_id_for_row(RowIndex::new(row)) else {
+                    continue;
+                };
+                let Some(props) = snapshot.node_properties(node) else {
+                    continue;
+                };
+                if props.get(&namespace_key) == Some(&namespace_value)
+                    && props.get(&expired_key).is_none()
+                {
+                    out[slot].system_role_episodes += 1;
+                }
             }
         }
         Ok(out)
@@ -436,6 +497,15 @@ mod tests {
         namespace: Namespace,
         expired_at: Option<aionforge_domain::time::Timestamp>,
     ) -> Episode {
+        episode_in_role(content, namespace, Role::User, expired_at)
+    }
+
+    fn episode_in_role(
+        content: &str,
+        namespace: Namespace,
+        role: Role,
+        expired_at: Option<aionforge_domain::time::Timestamp>,
+    ) -> Episode {
         Episode {
             identity: Identity {
                 id: Id::generate(),
@@ -445,7 +515,7 @@ mod tests {
             },
             stats: stats(),
             content: content.to_string(),
-            role: Role::User,
+            role,
             captured_at: ts("2026-06-06T09:00:00-05:00[America/Chicago]"),
             agent_id: Id::generate(),
             session_id: None,
@@ -652,5 +722,73 @@ mod tests {
             2,
             "one live episode + one live fact, no expired row or duplicate"
         );
+    }
+
+    #[test]
+    fn namespace_memory_counts_include_live_system_role_subset_from_same_reader() {
+        let store = store();
+        let expired = ts("2026-06-07T12:00:00-05:00[America/Chicago]");
+        let alice = Namespace::Agent("alice".to_string());
+        let team = Namespace::Team("squad".to_string());
+        let empty = Namespace::Agent("empty".to_string());
+
+        store
+            .insert_episode(&episode_in_role(
+                "alice user",
+                alice.clone(),
+                Role::User,
+                None,
+            ))
+            .expect("alice user");
+        store
+            .insert_episode(&episode_in_role(
+                "alice system one",
+                alice.clone(),
+                Role::System,
+                None,
+            ))
+            .expect("alice system one");
+        store
+            .insert_episode(&episode_in_role(
+                "alice system two",
+                alice.clone(),
+                Role::System,
+                None,
+            ))
+            .expect("alice system two");
+        store
+            .insert_episode(&episode_in_role(
+                "alice expired system",
+                alice.clone(),
+                Role::System,
+                Some(expired),
+            ))
+            .expect("expired system");
+        store
+            .insert_episode(&episode_in_role(
+                "team system",
+                team.clone(),
+                Role::System,
+                None,
+            ))
+            .expect("team system");
+
+        let counts = store
+            .memory_counts_with_system_role_episodes_by_namespace(&[
+                alice.clone(),
+                team.clone(),
+                empty.clone(),
+            ])
+            .expect("role-aware namespace counts");
+
+        assert_eq!(counts[0].namespace, alice);
+        assert_eq!(counts[0].memories.episodes, 3);
+        assert_eq!(counts[0].system_role_episodes, 2);
+        assert_eq!(counts[1].namespace, team);
+        assert_eq!(counts[1].memories.episodes, 1);
+        assert_eq!(counts[1].system_role_episodes, 1);
+        assert_eq!(counts[2].namespace, empty);
+        assert_eq!(counts[2].memories.total(), 0);
+        assert_eq!(counts[2].system_role_episodes, 0);
     }
 }

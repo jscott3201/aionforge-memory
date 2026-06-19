@@ -212,12 +212,25 @@ pub fn seed_with_id_at(
     role: Role,
     ingested_at: Timestamp,
 ) -> Id {
+    seed_with_id_at_expired(memory, id, content, namespace, role, ingested_at, None)
+}
+
+/// Seed one episode with a caller-provided id, `ingested_at`, and optional expiry stamp.
+pub fn seed_with_id_at_expired(
+    memory: &Memory<FakeEmbedder>,
+    id: Id,
+    content: &str,
+    namespace: Namespace,
+    role: Role,
+    ingested_at: Timestamp,
+    expired_at: Option<Timestamp>,
+) -> Id {
     let episode = Episode {
         identity: Identity {
             id,
             ingested_at: ingested_at.clone(),
             namespace,
-            expired_at: None,
+            expired_at,
         },
         stats: stats(),
         content: content.to_string(),

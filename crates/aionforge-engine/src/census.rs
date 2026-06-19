@@ -2,7 +2,7 @@
 
 use aionforge_domain::contracts::Embedder;
 use aionforge_domain::namespace::Namespace;
-use aionforge_domain::nodes::episodic::{Episode, Role};
+use aionforge_domain::nodes::episodic::Role;
 use aionforge_store::{MemoryCounts, WorkCounts};
 
 use crate::{EngineError, Memory, Principal, ResolvedMemory};
@@ -42,22 +42,27 @@ impl<E: Embedder> Memory<E> {
         namespace: Option<Namespace>,
     ) -> Result<MemoryCensusReport, EngineError> {
         let (surface_system, namespaces) = self.census_scope(principal, include_system, namespace);
-        let memory_counts = self.store.memory_counts_by_namespace(&namespaces)?;
+        let memory_counts = self
+            .store
+            .memory_counts_with_system_role_episodes_by_namespace(&namespaces)?;
         let work_counts = self.store.work_counts_by_namespace(&namespaces)?;
-        let mut namespaces: Vec<_> = memory_counts
+        let namespaces = memory_counts
             .into_iter()
             .zip(work_counts)
-            .map(
-                |((namespace, memories), (work_namespace, work_items))| NamespaceCensus {
-                    namespace: debug_assert_same_namespace(namespace, work_namespace),
+            .map(|(memory_counts, (work_namespace, work_items))| {
+                let mut memories = memory_counts.memories;
+                if !surface_system {
+                    memories.episodes = memories
+                        .episodes
+                        .saturating_sub(memory_counts.system_role_episodes);
+                }
+                NamespaceCensus {
+                    namespace: debug_assert_same_namespace(memory_counts.namespace, work_namespace),
                     memories,
                     work_items,
-                },
-            )
+                }
+            })
             .collect();
-        if !surface_system {
-            self.subtract_system_role_episode_counts(&mut namespaces)?;
-        }
         Ok(MemoryCensusReport { namespaces })
     }
 
@@ -113,33 +118,6 @@ impl<E: Embedder> Memory<E> {
             None => visible.namespaces(),
         };
         (surface_system, namespaces)
-    }
-
-    fn subtract_system_role_episode_counts(
-        &self,
-        report: &mut [NamespaceCensus],
-    ) -> Result<(), EngineError> {
-        let namespaces: Vec<Namespace> = report
-            .iter()
-            .map(|namespace| namespace.namespace.clone())
-            .collect();
-        let nodes = self
-            .store
-            .live_memory_nodes_in_namespaces(&[Episode::LABEL], &namespaces)?;
-        for node in nodes {
-            if let Some(ResolvedMemory::Episode(episode)) = self
-                .store
-                .resolved_memory_by_node_id(node, &[Episode::LABEL])?
-                && episode.role == Role::System
-                && episode.identity.expired_at.is_none()
-                && let Some(namespace) = report
-                    .iter_mut()
-                    .find(|namespace| namespace.namespace == episode.identity.namespace)
-            {
-                namespace.memories.episodes = namespace.memories.episodes.saturating_sub(1);
-            }
-        }
-        Ok(())
     }
 }
 
