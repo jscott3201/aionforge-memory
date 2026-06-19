@@ -56,7 +56,7 @@ test.describe("live data flow", () => {
       );
     }
 
-    const seed = `console records live e2e ${Date.now()}`;
+    const seed = uniqueSeed("console records live e2e");
     await captureLiveMemory(baseURL, seed);
     const errors = collectRuntimeErrors(page);
 
@@ -77,6 +77,42 @@ test.describe("live data flow", () => {
     await expect(page.getByTestId("records-detail-body")).toContainText(seed);
     await expect(errors).toEqual([]);
   });
+
+  test("runs retrieval search against real memory", async ({
+    page,
+    baseURL,
+  }) => {
+    if (!baseURL) {
+      throw new Error(
+        "Playwright baseURL is required for live data-flow tests.",
+      );
+    }
+
+    const seed = uniqueSeed("console retrieval live e2e");
+    await captureLiveMemory(baseURL, seed);
+    const errors = collectRuntimeErrors(page);
+
+    await page.goto("/console/retrieval");
+    await page.getByTestId("retrieval-search-input").fill(seed);
+    await page
+      .getByTestId("retrieval-viewer-input")
+      .fill(`agent:${LIVE_AGENT_ID}`);
+    await page.getByTestId("retrieval-search-submit").click();
+
+    await expect(page.getByTestId("retrieval-result-count")).toContainText(
+      "returned",
+    );
+    await expect(
+      page.getByTestId("retrieval-result-item").first(),
+    ).toContainText(seed);
+    await expect(page.getByTestId("retrieval-route")).not.toContainText(
+      "offline",
+    );
+    await expect(page.getByTestId("retrieval-signals")).toContainText(
+      /lexical|trust|recency/i,
+    );
+    await expect(errors).toEqual([]);
+  });
 });
 
 async function seedLiveMemory(
@@ -90,7 +126,7 @@ async function seedLiveMemory(
 
   try {
     await client.connect(transport);
-    await captureWithClient(client, `console live e2e seed ${Date.now()}`);
+    await captureWithClient(client, uniqueSeed("console live e2e seed"));
 
     const result = await client.callTool({
       name: "server_status",
@@ -155,4 +191,10 @@ function isServerStatusStructuredContent(
     typeof candidate.counts?.memories === "number" &&
     typeof candidate.surface?.tools === "number"
   );
+}
+
+function uniqueSeed(prefix: string): string {
+  const time = Date.now().toString(36);
+  const nonce = Math.random().toString(36).slice(2, 8);
+  return `${prefix} ${time} ${nonce}`;
 }
