@@ -96,7 +96,7 @@ export type StructuredContentSchema =
 export interface ServerStatusStructuredContent {
   schema: "aionforge.server_status.v1";
   version: string;
-  build: { sha: string; profile: string };
+  build: { sha: string; build_status: string; built_at: string };
   surface: {
     tools: number;
     resources: number;
