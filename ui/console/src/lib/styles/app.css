@@ -4,6 +4,7 @@
 @import "@fontsource-variable/inter";
 @import "./dashboard.css";
 @import "./records.css";
+@import "./retrieval.css";
 @import "./route-panel.css";
 
 @custom-variant dark (&:is(.dark *));
