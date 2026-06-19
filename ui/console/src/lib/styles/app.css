@@ -2,6 +2,7 @@
 @import "tw-animate-css";
 @import "shadcn-svelte/tailwind.css";
 @import "@fontsource-variable/inter";
+@import "./audit.css";
 @import "./consolidation.css";
 @import "./dashboard.css";
 @import "./records.css";
@@ -457,19 +458,19 @@ main {
   line-height: 1;
 }
 
-.tone-good {
+.tone-good:not(.state-badge) {
   box-shadow: inset 0 3px 0 var(--success);
 }
 
-.tone-warn {
+.tone-warn:not(.state-badge) {
   box-shadow: inset 0 3px 0 var(--warn);
 }
 
-.tone-danger {
+.tone-danger:not(.state-badge) {
   box-shadow: inset 0 3px 0 var(--danger);
 }
 
-.tone-muted {
+.tone-muted:not(.state-badge) {
   box-shadow: inset 0 3px 0 var(--text-muted);
 }
 

@@ -2,6 +2,8 @@ import { browser } from "$app/environment";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type {
+  AuditCursor,
+  AuditHistoryStructuredContent,
   ConsolidationStatusStructuredContent,
   ReadMemoryStructuredContent,
   SearchResultsStructuredContent,
@@ -51,6 +53,16 @@ export interface ReadMemoryRequest {
   teams?: string[];
   verbose?: boolean;
   full?: boolean;
+}
+
+export interface AuditHistoryRequest {
+  subjectId?: string;
+  kind?: string;
+  viewer?: string;
+  teams?: string[];
+  after?: AuditCursor;
+  limit?: number;
+  verbose?: boolean;
 }
 
 export class McpClientError extends Error {
@@ -151,6 +163,38 @@ export async function loadConsolidationStatus(
     throw new McpClientError(
       "consolidation_status returned an unexpected payload.",
     );
+  }
+
+  return result.structuredContent;
+}
+
+export async function loadAuditHistory(
+  config: McpClientConfig,
+  request: AuditHistoryRequest,
+): Promise<AuditHistoryStructuredContent> {
+  const subjectId = request.subjectId?.trim() || undefined;
+  const kind = request.kind?.trim() || undefined;
+  const result = await callMcpTool<AuditHistoryStructuredContent>(config, {
+    tool: "audit_history",
+    params: {
+      subject_id: subjectId,
+      kind,
+      viewer: request.viewer?.trim() || undefined,
+      teams: request.teams ?? [],
+      after: request.after,
+      limit: request.limit ?? 12,
+      verbose: request.verbose ?? true,
+    },
+  });
+
+  if (result.isError) {
+    throw new McpClientError(
+      textResultMessage(result) ?? "audit_history failed",
+    );
+  }
+
+  if (!isAuditHistoryStructuredContent(result.structuredContent)) {
+    throw new McpClientError("audit_history returned an unexpected payload.");
   }
 
   return result.structuredContent;
@@ -276,6 +320,38 @@ function isReadMemoryStructuredContent(
     typeof candidate.requested === "number" &&
     typeof candidate.found === "number" &&
     Array.isArray(candidate.memories)
+  );
+}
+
+function isAuditHistoryStructuredContent(
+  value: unknown,
+): value is AuditHistoryStructuredContent {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const candidate = value as Partial<AuditHistoryStructuredContent>;
+  return (
+    candidate.schema === "aionforge.audit_history.v1" &&
+    typeof candidate.subject === "string" &&
+    typeof candidate.kind === "string" &&
+    typeof candidate.count === "number" &&
+    (candidate.next === null ||
+      (typeof candidate.next?.occurred_at === "string" &&
+        typeof candidate.next?.id === "string")) &&
+    Array.isArray(candidate.records) &&
+    candidate.records.every(
+      (record) =>
+        typeof record.id === "string" &&
+        typeof record.subject_id === "string" &&
+        typeof record.kind === "string" &&
+        typeof record.occurred_at === "string" &&
+        typeof record.actor === "string" &&
+        typeof record.namespace === "string" &&
+        typeof record.verification === "string" &&
+        (record.payload_preview === null ||
+          typeof record.payload_preview === "string"),
+    )
   );
 }
 

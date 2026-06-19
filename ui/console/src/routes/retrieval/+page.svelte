@@ -207,6 +207,7 @@
           disabled={!config ||
             !query.trim() ||
             retrievalState.state === "loading"}
+          variant="outline"
         >
           {#if retrievalState.state === "loading"}
             <LoaderCircle size="16" />
