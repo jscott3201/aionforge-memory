@@ -13,6 +13,8 @@ import {
   uniqueSeed,
 } from "./live-helpers";
 
+const countFormat = new Intl.NumberFormat("en-US");
+
 test.describe("live data flow", () => {
   test.skip(
     process.env.AIONFORGE_CONSOLE_E2E_LIVE !== "1",
@@ -41,6 +43,17 @@ test.describe("live data flow", () => {
     await expect(page.getByTestId("live-tool-count")).toContainText(
       status.surface.tools.toString(),
     );
+    await expect(page.getByTestId("dashboard-traffic-bytes")).toContainText(
+      formatBytes(status.telemetry.memory_traffic.bytes_in_total),
+    );
+    await expect(page.getByTestId("dashboard-traffic-bytes")).toContainText(
+      formatBytes(status.telemetry.memory_traffic.bytes_out_total),
+    );
+    await expect(page.getByTestId("dashboard-traffic-tokens")).toContainText(
+      countFormat.format(
+        status.telemetry.memory_traffic.estimated_tokens_in_total,
+      ),
+    );
     await expect(errors).toEqual([]);
   });
 
@@ -54,7 +67,13 @@ test.describe("live data flow", () => {
       );
     }
 
-    const manifest = await readToolManifest(baseURL);
+    const seed = uniqueSeed("console mcp telemetry live e2e");
+    await captureLiveMemory(baseURL, seed);
+    await searchLiveMemory(baseURL, seed);
+    const [manifest, status] = await Promise.all([
+      readToolManifest(baseURL),
+      loadLiveServerStatus(baseURL),
+    ]);
     const errors = collectRuntimeErrors(page);
 
     await page.goto("/console/mcp");
@@ -85,8 +104,27 @@ test.describe("live data flow", () => {
     await expect(page.getByTestId("mcp-resource-list")).toContainText(
       manifest.resources.tool_manifest,
     );
-    await expect(page.getByTestId("mcp-telemetry-gap")).toContainText(
-      "not exposed",
+    await expect(page.getByTestId("mcp-traffic-bytes")).toContainText(
+      formatBytes(status.telemetry.memory_traffic.bytes_in_total),
+    );
+    await expect(page.getByTestId("mcp-traffic-bytes")).toContainText(
+      formatBytes(status.telemetry.memory_traffic.bytes_out_total),
+    );
+    await expect(page.getByTestId("mcp-traffic-tokens")).toContainText(
+      countFormat.format(
+        status.telemetry.memory_traffic.estimated_tokens_in_total,
+      ),
+    );
+    await expect(page.getByTestId("mcp-traffic-tokens")).toContainText(
+      countFormat.format(
+        status.telemetry.memory_traffic.estimated_tokens_out_total,
+      ),
+    );
+    await expect(page.getByTestId("mcp-telemetry-rollup")).toContainText(
+      "coarse bytes/4 estimate",
+    );
+    await expect(page.getByTestId("mcp-telemetry-followup")).toContainText(
+      "queryable counters are next",
     );
     await expect(errors).toEqual([]);
   });
@@ -395,3 +433,19 @@ test.describe("live data flow", () => {
     await expect(errors).toEqual([]);
   });
 });
+
+function formatBytes(value: number): string {
+  if (value < 1024) {
+    return `${countFormat.format(value)} B`;
+  }
+  const units = ["KB", "MB", "GB", "TB"];
+  let scaled = value / 1024;
+  let unitIndex = 0;
+
+  while (scaled >= 1024 && unitIndex < units.length - 1) {
+    scaled /= 1024;
+    unitIndex += 1;
+  }
+
+  return `${scaled.toFixed(scaled >= 10 ? 0 : 1)} ${units[unitIndex]}`;
+}

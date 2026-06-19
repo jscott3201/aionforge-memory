@@ -128,8 +128,10 @@
     <Card.Header class="panel-title">
       <ScrollText size="18" />
       <Card.Title>History query</Card.Title>
-      <Badge class="state-badge" data-testid="audit-state" variant="outline"
-        >{stateLabel(auditState)}</Badge
+      <Badge
+        class="state-badge count-badge"
+        data-testid="audit-state"
+        variant="outline">{stateLabel(auditState)}</Badge
       >
     </Card.Header>
     <Separator class="panel-separator" />

@@ -18,15 +18,38 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-/// Coarse chars-per-token divisor for the labeled token estimates. Matches
-/// [`crate::telemetry`]; never exact — a faithful count needs the client's own tokenizer.
-const CHARS_PER_TOKEN: u64 = 4;
+/// Coarse chars-per-token divisor for the labeled token estimates. Never exact — a faithful
+/// count needs the client's own tokenizer.
+pub(crate) const TOKEN_ESTIMATE_BYTES_PER_TOKEN: u64 = 4;
 
 /// Default heartbeat cadence when the operator sets no override: every 5 minutes.
 pub const DEFAULT_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(300);
 
 static BYTES_IN: AtomicU64 = AtomicU64::new(0);
 static BYTES_OUT: AtomicU64 = AtomicU64::new(0);
+
+/// Process-global memory traffic totals.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct TrafficSnapshot {
+    /// Cumulative bytes accepted as memory content.
+    pub(crate) bytes_in_total: u64,
+    /// Cumulative bytes served back in memory-bearing responses.
+    pub(crate) bytes_out_total: u64,
+}
+
+impl TrafficSnapshot {
+    /// Cumulative inbound token estimate from the documented byte divisor.
+    #[must_use]
+    pub(crate) fn estimated_tokens_in_total(self) -> u64 {
+        self.bytes_in_total / TOKEN_ESTIMATE_BYTES_PER_TOKEN
+    }
+
+    /// Cumulative outbound token estimate from the documented byte divisor.
+    #[must_use]
+    pub(crate) fn estimated_tokens_out_total(self) -> u64 {
+        self.bytes_out_total / TOKEN_ESTIMATE_BYTES_PER_TOKEN
+    }
+}
 
 /// Record `bytes` of capture content received from a client (IN). `Relaxed` ordering is
 /// sufficient — these are independent running totals, never used to guard other state.
@@ -39,12 +62,12 @@ pub(crate) fn record_out(bytes: u64) {
     BYTES_OUT.fetch_add(bytes, Ordering::Relaxed);
 }
 
-/// The current cumulative `(in, out)` byte totals.
-fn snapshot() -> (u64, u64) {
-    (
-        BYTES_IN.load(Ordering::Relaxed),
-        BYTES_OUT.load(Ordering::Relaxed),
-    )
+/// The current cumulative byte totals.
+pub(crate) fn snapshot() -> TrafficSnapshot {
+    TrafficSnapshot {
+        bytes_in_total: BYTES_IN.load(Ordering::Relaxed),
+        bytes_out_total: BYTES_OUT.load(Ordering::Relaxed),
+    }
 }
 
 /// Emit one structured traffic line at `info`. `phase` says why it fired (`heartbeat` for the
@@ -57,10 +80,10 @@ fn emit(phase: &'static str, in_total: u64, out_total: u64, in_delta: u64, out_d
         bytes_out_total = out_total,
         bytes_in_delta = in_delta,
         bytes_out_delta = out_delta,
-        est_tokens_in_total = in_total / CHARS_PER_TOKEN,
-        est_tokens_out_total = out_total / CHARS_PER_TOKEN,
-        est_tokens_in_delta = in_delta / CHARS_PER_TOKEN,
-        est_tokens_out_delta = out_delta / CHARS_PER_TOKEN,
+        est_tokens_in_total = in_total / TOKEN_ESTIMATE_BYTES_PER_TOKEN,
+        est_tokens_out_total = out_total / TOKEN_ESTIMATE_BYTES_PER_TOKEN,
+        est_tokens_in_delta = in_delta / TOKEN_ESTIMATE_BYTES_PER_TOKEN,
+        est_tokens_out_delta = out_delta / TOKEN_ESTIMATE_BYTES_PER_TOKEN,
         "memory traffic",
     );
 }
@@ -68,8 +91,14 @@ fn emit(phase: &'static str, in_total: u64, out_total: u64, in_delta: u64, out_d
 /// Log the cumulative totals once (e.g. on graceful shutdown), with deltas equal to totals so
 /// the line reads as a session summary.
 pub fn log_totals(phase: &'static str) {
-    let (in_total, out_total) = snapshot();
-    emit(phase, in_total, out_total, in_total, out_total);
+    let totals = snapshot();
+    emit(
+        phase,
+        totals.bytes_in_total,
+        totals.bytes_out_total,
+        totals.bytes_in_total,
+        totals.bytes_out_total,
+    );
 }
 
 /// Run the periodic traffic heartbeat until the task is dropped (i.e. for the server's life).
@@ -88,19 +117,18 @@ pub async fn run_heartbeat(interval: Duration) {
     // burst of catch-up lines — one summary per real interval is the intent.
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     ticker.tick().await; // consume the immediate first tick
-    let (mut last_in, mut last_out) = snapshot();
+    let mut last = snapshot();
     loop {
         ticker.tick().await;
-        let (in_total, out_total) = snapshot();
+        let totals = snapshot();
         emit(
             "heartbeat",
-            in_total,
-            out_total,
-            in_total.saturating_sub(last_in),
-            out_total.saturating_sub(last_out),
+            totals.bytes_in_total,
+            totals.bytes_out_total,
+            totals.bytes_in_total.saturating_sub(last.bytes_in_total),
+            totals.bytes_out_total.saturating_sub(last.bytes_out_total),
         );
-        last_in = in_total;
-        last_out = out_total;
+        last = totals;
     }
 }
 
@@ -110,15 +138,21 @@ mod tests {
 
     #[test]
     fn record_in_and_out_accumulate_into_the_snapshot() {
-        // These atomics are process-global; this is the only test that mutates them, so the
-        // before/after delta is stable even under parallel test execution.
-        let (in_before, out_before) = snapshot();
+        // These atomics are process-global and other tests can legitimately record traffic at
+        // the same time, so assert the minimum local contribution rather than an exact delta.
+        let before = snapshot();
         record_in(100);
         record_in(40);
         record_out(2048);
-        let (in_after, out_after) = snapshot();
-        assert_eq!(in_after - in_before, 140, "IN accumulates every record");
-        assert_eq!(out_after - out_before, 2048, "OUT accumulates every record");
+        let after = snapshot();
+        assert!(
+            after.bytes_in_total >= before.bytes_in_total + 140,
+            "IN accumulates every record"
+        );
+        assert!(
+            after.bytes_out_total >= before.bytes_out_total + 2048,
+            "OUT accumulates every record"
+        );
     }
 
     #[tokio::test]
