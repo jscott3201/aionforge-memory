@@ -92,6 +92,9 @@ fn start_background_consolidation<E: Embedder + 'static>(
             background_managed = false,
             "background consolidation disabled; foreground consolidate tool remains available",
         );
+        if let Some(advisory) = config.consolidation.master_switch_advisory() {
+            tracing::warn!(target: "aionforge::serve", "{advisory}");
+        }
         return None;
     }
 

@@ -283,6 +283,27 @@ fn validate_unit_interval(key: &str, value: f64) -> Result<(), ConfigError> {
 }
 
 impl ConsolidationConfig {
+    /// Return a startup advisory when pass-level knobs show intent to run the background loop,
+    /// but the serve-owned master switch is still off.
+    ///
+    /// This intentionally keys only on `consolidation.induction.enabled`: induction is the
+    /// shipped stage flag that defaults off, so enabling it is a deliberate operator signal.
+    /// Detection and summarization default on and must not participate here, or every default-off
+    /// serving process would warn even though the foreground consolidate tool remains the expected
+    /// path.
+    pub fn master_switch_advisory(&self) -> Option<String> {
+        if self.enabled || !self.induction.enabled {
+            return None;
+        }
+        Some(
+            "consolidation.induction.enabled is true but the background loop is OFF because \
+             consolidation.enabled is false; set AIONFORGE_CONSOLIDATION__ENABLED=true \
+             (or [consolidation] enabled = true) to run consolidation in the serving process - \
+             the foreground consolidate tool remains the only path until then."
+                .to_string(),
+        )
+    }
+
     /// Check the section's binding invariants, fail-closed with the offending key named.
     ///
     /// `enabled` only controls whether `aionforge serve` owns the background loop. The deterministic
@@ -406,6 +427,11 @@ mod tests {
     fn the_defaults_validate_and_match_the_engine_documented_values() {
         let config = ConsolidationConfig::default();
         config.validate().expect("defaults validate");
+        assert_eq!(
+            config.master_switch_advisory(),
+            None,
+            "default-off serving stays quiet unless a default-off stage was deliberately enabled"
+        );
         // The exact engine defaults (aionforge-consolidate/src/config.rs); the host mapping
         // test pins the typed equality, this pins the literal primitives.
         assert!(
@@ -435,6 +461,55 @@ mod tests {
         assert_eq!(config.induction.min_body_chars, 16);
         assert_eq!(config.induction.max_body_chars, 4096);
         assert_eq!(config.induction.name_prefix, "induced/");
+    }
+
+    #[test]
+    fn master_switch_advisory_fires_only_for_induction_without_master_switch() {
+        let config = ConsolidationConfig {
+            induction: InductionSettings {
+                enabled: true,
+                ..InductionSettings::default()
+            },
+            ..ConsolidationConfig::default()
+        };
+        let advisory = config
+            .master_switch_advisory()
+            .expect("induction-on with the background loop off gets an advisory");
+        assert!(
+            advisory.contains("AIONFORGE_CONSOLIDATION__ENABLED"),
+            "advisory must name the env master switch: {advisory}"
+        );
+        assert!(
+            advisory.contains("[consolidation] enabled = true"),
+            "advisory must name the TOML master switch: {advisory}"
+        );
+    }
+
+    #[test]
+    fn master_switch_advisory_stays_silent_when_the_master_switch_is_on() {
+        let config = ConsolidationConfig {
+            enabled: true,
+            induction: InductionSettings {
+                enabled: true,
+                ..InductionSettings::default()
+            },
+            ..ConsolidationConfig::default()
+        };
+        assert_eq!(
+            config.master_switch_advisory(),
+            None,
+            "an enabled background loop needs no advisory"
+        );
+    }
+
+    #[test]
+    fn master_switch_advisory_ignores_default_on_stages() {
+        let config = ConsolidationConfig::default();
+        assert_eq!(
+            config.master_switch_advisory(),
+            None,
+            "detection and summarization default on and must not warn by themselves"
+        );
     }
 
     #[test]
@@ -485,11 +560,33 @@ mod tests {
         assert_eq!(parsed.resolution.candidate_k, 8);
         assert!(parsed.summarization.enabled);
         parsed.validate().expect("the override block validates");
+        assert_eq!(
+            parsed.master_switch_advisory(),
+            None,
+            "top-level enabled=true means the background loop will run"
+        );
 
         // Round-trip through serde so the field names are stable.
         let json = serde_json::to_string(&parsed).expect("serialize");
         let back: ConsolidationConfig = serde_json::from_str(&json).expect("round-trip");
         assert_eq!(back, parsed);
+
+        let induction_without_master = r#"
+            [consolidation.induction]
+            enabled = true
+        "#;
+        let parsed: Wrapper = Figment::from(Serialized::defaults(Wrapper::default()))
+            .merge(Toml::string(induction_without_master))
+            .extract()
+            .expect("parse induction-only block");
+        let advisory = parsed
+            .consolidation
+            .master_switch_advisory()
+            .expect("induction-only block should warn about the missing master switch");
+        assert!(
+            advisory.contains("AIONFORGE_CONSOLIDATION__ENABLED"),
+            "advisory must name the env master switch: {advisory}"
+        );
     }
 
     #[test]
