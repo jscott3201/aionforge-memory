@@ -13,11 +13,12 @@ use rmcp::transport::streamable_http_server::{
 };
 use serde::Serialize;
 
-use crate::AionforgeMcp;
 use crate::http_body_limit::{
     DEFAULT_MAX_REQUEST_BODY_BYTES, RequestBodyLimitService, validate_max_request_body_bytes,
 };
+use crate::notify::MessageNotifier;
 use crate::status::AuthPosture;
+use crate::{AionforgeMcp, MessageWaitBounds};
 
 /// The path hosts should mount the Streamable HTTP service under.
 pub const STREAMABLE_HTTP_ENDPOINT: &str = "/mcp";
@@ -331,14 +332,40 @@ pub fn streamable_http_service_with_consolidation<E: Embedder + 'static>(
     auth: AuthPosture,
     background_managed: bool,
 ) -> Result<AionforgeStreamableHttpService<E>, StreamableHttpConfigError> {
+    streamable_http_service_with_consolidation_and_message_wait(
+        memory,
+        options,
+        auth,
+        background_managed,
+        MessageWaitBounds::default(),
+    )
+}
+
+/// Build the Streamable HTTP service with configured message-wait runtime bounds.
+///
+/// One notifier is constructed before rmcp's per-session factory and cloned into each fresh
+/// handler, so a send on one HTTP session wakes waits on another.
+///
+/// # Errors
+/// Returns [`StreamableHttpConfigError`] when the options are invalid.
+pub fn streamable_http_service_with_consolidation_and_message_wait<E: Embedder + 'static>(
+    memory: Arc<Memory<E>>,
+    options: StreamableHttpOptions,
+    auth: AuthPosture,
+    background_managed: bool,
+    wait_bounds: MessageWaitBounds,
+) -> Result<AionforgeStreamableHttpService<E>, StreamableHttpConfigError> {
     let max_request_body_bytes = options.max_request_body_bytes;
     let config = streamable_http_config(options)?;
+    let notifier = Arc::new(MessageNotifier::default());
     let service = StreamableHttpService::new(
         move || {
-            Ok(AionforgeMcp::new_with_auth_posture_and_consolidation(
+            Ok(AionforgeMcp::new_with_runtime(
                 Arc::clone(&memory),
                 auth.clone(),
                 background_managed,
+                Arc::clone(&notifier),
+                wait_bounds,
             ))
         },
         Arc::new(LocalSessionManager::default()),

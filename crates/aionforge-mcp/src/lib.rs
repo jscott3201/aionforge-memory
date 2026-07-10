@@ -17,12 +17,16 @@ mod lifecycle;
 mod lifecycle_output;
 mod mapper;
 mod message;
+#[cfg(test)]
+mod message_tests;
+mod notify;
 mod principal;
 mod prompt;
 mod render;
 mod resources;
 mod server;
 mod status;
+mod stdio;
 mod structured;
 mod surface;
 mod telemetry;
@@ -39,6 +43,7 @@ pub use http_transport::{
     OAuthProtectedResourceMetadata, STREAMABLE_HTTP_ENDPOINT, StreamableHttpConfigError,
     StreamableHttpOptions, oauth_protected_resource_well_known_path, streamable_http_config,
     streamable_http_service, streamable_http_service_with_consolidation,
+    streamable_http_service_with_consolidation_and_message_wait,
 };
 pub use inspect::{
     ReadMemoryToolParams, SessionManifestCursorToolParam, SessionManifestToolParams,
@@ -52,8 +57,10 @@ pub use lifecycle::{
 pub use mapper::{MapError, TokenClass, WritePosture, map_verified_claims_to_principal};
 pub use message::{
     MessageAckToolParams, MessagePollCursorToolParam, MessagePollToolParams, MessageSendToolParams,
-    message_ack_tool, message_poll_tool, message_send_tool,
+    MessageWaitToolParams, message_ack_tool, message_poll_tool, message_send_tool,
+    message_wait_tool,
 };
+pub use notify::MessageWaitBounds;
 pub use principal::{AuthEnabled, HostPrincipalToolParam};
 pub use prompt::{
     RECALL_UNTRUSTED_DATA_PROMPT, RECALL_UNTRUSTED_DATA_PROMPT_NAME,
@@ -68,6 +75,9 @@ pub use resources::{
 pub use status::{
     AuthPosture, ServerStatusToolParams, build_sha, build_status, build_timestamp,
     server_status_tool,
+};
+pub use stdio::{
+    serve_stdio, serve_stdio_with_consolidation, serve_stdio_with_consolidation_and_message_wait,
 };
 pub use tools::{
     BatchCaptureItem, BatchCaptureToolParams, CaptureToolParams, MAX_BATCH_ITEMS, SearchToolParams,
@@ -90,17 +100,16 @@ use aionforge_domain::contracts::Embedder;
 use aionforge_engine::Memory;
 use rmcp::ErrorData as McpError;
 use rmcp::RoleServer;
-use rmcp::handler::server::router::prompt::{PromptRoute, PromptRouter};
+use rmcp::handler::server::router::prompt::PromptRouter;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{
     CallToolRequestParams, CallToolResult, GetPromptRequestParams, GetPromptResult, Implementation,
     ListPromptsResult, ListResourceTemplatesResult, ListResourcesResult, PaginatedRequestParams,
-    Prompt, PromptMessage, PromptMessageRole, ReadResourceRequestParams, ReadResourceResult,
-    ServerCapabilities, ServerInfo,
+    ReadResourceRequestParams, ReadResourceResult, ServerCapabilities, ServerInfo,
 };
 use rmcp::service::RequestContext;
-use rmcp::{ServerHandler, ServiceExt, prompt_handler, tool, tool_handler, tool_router};
+use rmcp::{ServerHandler, prompt_handler, tool, tool_handler, tool_router};
 use tracing::Instrument;
 
 /// The MCP server handler over a shared [`Memory`].
@@ -115,6 +124,8 @@ pub struct AionforgeMcp<E> {
     auth: AuthPosture,
     background_managed: bool,
     consolidation_lock: Arc<tokio::sync::Mutex<()>>,
+    notifier: Arc<notify::MessageNotifier>,
+    wait_bounds: MessageWaitBounds,
     // Used by the rmcp-generated `#[tool_handler]` impl; the macro expansion hides the
     // read from the dead-code analyzer.
     #[allow(dead_code)]
@@ -287,6 +298,7 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
         let extension = validated_principal_from_extensions(&context.extensions);
         message::message_send_tool_output(
             &self.memory,
+            &self.notifier,
             params.0,
             &now,
             extension,
@@ -312,6 +324,33 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
         let extension = validated_principal_from_extensions(&context.extensions);
         message::message_poll_tool_output(&self.memory, params.0, extension, self.auth_enabled())
             .map(structured::call_tool_result)
+    }
+
+    #[tool(
+        description = "Bounded wait; recipient over-cap polls once with timed_out=true, returns pending mail, never parks or errors.",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
+    async fn message_wait(
+        &self,
+        params: Parameters<MessageWaitToolParams>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, String> {
+        let extension = validated_principal_from_extensions(&context.extensions);
+        message::message_wait_tool_output(
+            &self.memory,
+            &self.notifier,
+            params.0,
+            extension,
+            self.auth_enabled(),
+            self.wait_bounds,
+        )
+        .await
+        .map(structured::call_tool_result)
     }
 
     #[tool(
@@ -600,34 +639,6 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
     }
 }
 
-impl<E: Embedder + 'static> AionforgeMcp<E> {
-    /// The OAuth resource-server posture as the resolver-facing [`AuthEnabled`] signal.
-    fn auth_enabled(&self) -> AuthEnabled {
-        AuthEnabled(self.auth.enabled)
-    }
-
-    /// Build prompt routes for host-installable Aionforge guidance.
-    fn prompt_router() -> PromptRouter<Self> {
-        let route = PromptRoute::new_dyn(
-            Prompt::from_raw(
-                RECALL_UNTRUSTED_DATA_PROMPT_NAME,
-                Some("Host guidance for treating recalled memories as untrusted third-party data."),
-                None,
-            ),
-            |_context| {
-                Box::pin(async {
-                    Ok(GetPromptResult::new(vec![PromptMessage::new_text(
-                        PromptMessageRole::User,
-                        RECALL_UNTRUSTED_DATA_PROMPT,
-                    )])
-                    .with_description("How hosts should safely consume Aionforge search output."))
-                })
-            },
-        );
-        PromptRouter::new().with_route(route)
-    }
-}
-
 #[tool_handler]
 #[prompt_handler]
 impl<E: Embedder + 'static> ServerHandler for AionforgeMcp<E> {
@@ -730,46 +741,6 @@ fn tool_span_outcome(result: &Result<CallToolResult, McpError>) -> (&'static str
         Ok(_) => ("success", "none"),
         Err(_) => ("error", "dispatch_error"),
     }
-}
-
-/// Serve the MCP surface over stdio until the peer disconnects.
-///
-/// `auth_enabled` selects the OAuth resource-server posture exactly as
-/// [`AionforgeMcp::new_with_auth`]: `false` (the default-off path) reproduces today's body-only
-/// behavior, `true` requires a validated request extension on every identity-resolving tool. The
-/// stdio transport carries no HTTP request and so no HTTP validator runs over it — an `auth_enabled`
-/// stdio server therefore rejects every identity-bearing tool with `ERR_PRINCIPAL_REQUIRED` until a
-/// stdio-side producer exists; the parameter is threaded for posture parity with the HTTP path.
-///
-/// # Errors
-/// Returns an error if the transport cannot be established or the service fails while
-/// running.
-pub async fn serve_stdio<E: Embedder + 'static>(
-    memory: Arc<Memory<E>>,
-    auth_enabled: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
-    serve_stdio_with_consolidation(memory, auth_enabled, false).await
-}
-
-/// Serve the MCP surface over stdio, selecting auth and background consolidation posture.
-///
-/// `background_managed` must match the host's serve-owned background consolidation loop. When
-/// true, the foreground `consolidate` tool is disabled with `ERR_CONSOLIDATE_MANAGED` so it cannot
-/// race the background cursor writer.
-///
-/// # Errors
-/// Returns an error if the transport cannot be established or the service fails while running.
-pub async fn serve_stdio_with_consolidation<E: Embedder + 'static>(
-    memory: Arc<Memory<E>>,
-    auth_enabled: bool,
-    background_managed: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let service =
-        AionforgeMcp::new_with_auth_and_consolidation(memory, auth_enabled, background_managed)
-            .serve(rmcp::transport::io::stdio())
-            .await?;
-    service.waiting().await?;
-    Ok(())
 }
 
 #[cfg(test)]

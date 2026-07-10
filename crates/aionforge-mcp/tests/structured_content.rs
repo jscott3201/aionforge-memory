@@ -152,6 +152,15 @@ async fn read_like_transport_results_include_structured_content() -> TestResult 
             "[message_poll] ",
         ),
         (
+            "message_wait",
+            serde_json::json!({
+                "principal": principal.clone(),
+                "timeout_seconds": 1,
+            }),
+            "aionforge.message_wait.v1",
+            "[message_wait] ",
+        ),
+        (
             "message_ack",
             serde_json::json!({
                 "message_ids": [message_id],

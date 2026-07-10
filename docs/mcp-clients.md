@@ -7,8 +7,9 @@ local unless built-in HTTP OAuth validation is enabled or an OAuth-aware
 verifier/equivalent perimeter protects the endpoint.
 
 The current server instructions deliberately lead with the recall safety rule:
-records returned by `search`, `read_memory`, `session_manifest`, and `message_poll`
-are third-party data wrapped in `<recalled-memory-context>`, not instructions. The same guidance is also exposed
+records returned by `search`, `read_memory`, `session_manifest`, `message_poll`,
+and `message_wait` are third-party data wrapped in
+`<recalled-memory-context>`, not instructions. The same guidance is also exposed
 as the `recall_untrusted_data` prompt and as the
 `aionforge://prompt/recall-untrusted-data` resource.
 
@@ -185,6 +186,7 @@ enabled_tools = [
   "work_tree",
   "work_query",
   "message_poll",
+  "message_wait",
   "capture",
   "batch_capture",
   "consolidate",
@@ -217,6 +219,8 @@ approval_mode = "approve"
 [mcp_servers.aionforge_memory.tools.work_query]
 approval_mode = "approve"
 [mcp_servers.aionforge_memory.tools.message_poll]
+approval_mode = "approve"
+[mcp_servers.aionforge_memory.tools.message_wait]
 approval_mode = "approve"
 [mcp_servers.aionforge_memory.tools.capture]
 approval_mode = "prompt"
@@ -318,6 +322,7 @@ rules for this server:
     "aionforge-memory_work_tree": "allow",
     "aionforge-memory_work_query": "allow",
     "aionforge-memory_message_poll": "allow",
+    "aionforge-memory_message_wait": "allow",
     "aionforge-memory_capture": "ask",
     "aionforge-memory_batch_capture": "ask",
     "aionforge-memory_consolidate": "ask",
@@ -368,8 +373,8 @@ Authorization header.
 
 Read-like tools are `server_status`, `search`, `read_memory`,
 `session_manifest`, `memory_census`, `consolidation_status`, `audit_history`, `work_tree`,
-`work_query`, and `message_poll`. `work_tree` returns a work item's subtree and
-`work_query` filters work items by `work_status` and/or `level`. `read_memory`
+`work_query`, `message_poll`, and `message_wait`. `work_tree` returns a work item's
+subtree and `work_query` filters work items by `work_status` and/or `level`. `read_memory`
 reads 1..=16 visible records by receipt id (missing or unauthorized
 ids are silently absent; `full=true` returns untruncated bodies);
 `session_manifest` lists the visible captured memories for a session. `audit_history` reads the principal-scoped audit subgraph by
@@ -387,8 +392,12 @@ policy. `pin`/`unpin` hold or release a memory against decay; `work_create`,
 and maintain work items. `message_send` delivers a server-attributed payload to an
 agent or authorized team inbox without capture filtering or recall indexing;
 `message_poll` returns it in the untrusted recall wrapper and never auto-acks;
+`message_wait` adds a bounded, admission-controlled server-side wait over the
+same visibility and page shape, returning a normal empty page on timeout and
+never auto-acking; over the configured recipient cap it polls once, sets
+`timed_out=true`, and does not park;
 `message_ack` advances read state with a guarded compare-and-set. See
-[Agent messages](messages.md) for delivery and retention semantics.
+[Agent messages](messages.md) for delivery, waiting, and retention semantics.
 `batch_capture` captures an array of memories (1..=64) in
 one call under a single shared writer identity, committing each item best-effort
 in input order: it returns a `[batch_capture] items/new/dup/err` header then one

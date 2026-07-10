@@ -9,9 +9,10 @@ use aionforge_domain::embedding::{EmbedderModel, Embedding};
 use aionforge_domain::time::Timestamp;
 use aionforge_engine::{Memory, MemoryConfig};
 use aionforge_mcp::{
-    AuthPosture, DEFAULT_MAX_REQUEST_BODY_BYTES, OAuthProtectedResourceMetadata,
+    AuthPosture, DEFAULT_MAX_REQUEST_BODY_BYTES, MessageWaitBounds, OAuthProtectedResourceMetadata,
     STREAMABLE_HTTP_ENDPOINT, StreamableHttpConfigError, StreamableHttpOptions,
     oauth_protected_resource_well_known_path, streamable_http_service,
+    streamable_http_service_with_consolidation_and_message_wait,
 };
 use bytes::Bytes;
 use http::header::{ACCEPT, CONTENT_LENGTH, CONTENT_TYPE, HOST, ORIGIN};
@@ -333,6 +334,60 @@ async fn http_tool_calls_do_not_require_authorization_header() -> TestResult {
         .as_str()
         .expect("tool text");
     assert!(text.starts_with("[capture] "), "tool response: {parsed}");
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn message_wait_wakes_across_stateless_http_handler_instances() -> TestResult {
+    let alice = "018f0cc0-40f3-7cc4-b8b4-9ca41f88d012";
+    let bob = "018f0cc0-40f3-7cc4-b8b4-9ca41f88d013";
+    let body = "cross-session notifier sentinel";
+    let service = streamable_http_service_with_consolidation_and_message_wait(
+        memory(),
+        json_options(),
+        AuthPosture::disabled(),
+        false,
+        MessageWaitBounds::default(),
+    )?;
+    let wait = service.handle(tool_call_request(
+        "localhost:3918",
+        "message_wait",
+        json!({
+            "viewer": format!("agent:{bob}"),
+            "timeout_seconds": 5,
+        }),
+    ));
+    let send = async {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        service
+            .handle(tool_call_request(
+                "localhost:3918",
+                "message_send",
+                json!({
+                    "viewer": format!("agent:{alice}"),
+                    "to": format!("agent:{bob}"),
+                    "body": body,
+                }),
+            ))
+            .await
+    };
+
+    let (wait_response, send_response) =
+        tokio::time::timeout(Duration::from_secs(1), async { tokio::join!(wait, send) })
+            .await
+            .expect("post-commit signal must wake a different HTTP handler in under one second");
+    assert_eq!(send_response.status(), StatusCode::OK);
+    assert_eq!(wait_response.status(), StatusCode::OK);
+    let wait_body = wait_response.into_body().collect().await?.to_bytes();
+    let parsed: serde_json::Value = serde_json::from_slice(&wait_body)?;
+    assert_eq!(parsed["result"]["structuredContent"]["timed_out"], false);
+    assert_eq!(parsed["result"]["structuredContent"]["count"], 1);
+    assert!(
+        parsed["result"]["content"][0]["text"]
+            .as_str()
+            .is_some_and(|text| text.contains(body)),
+        "{parsed}",
+    );
     Ok(())
 }
 

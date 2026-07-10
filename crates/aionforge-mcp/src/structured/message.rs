@@ -80,6 +80,38 @@ impl MessagePollStructured {
     }
 }
 
+/// `aionforge.message_wait.v1` page.
+#[derive(Serialize)]
+pub(crate) struct MessageWaitStructured {
+    schema: &'static str,
+    timed_out: bool,
+    count: usize,
+    limit: usize,
+    unread_only: bool,
+    next: Option<MessageCursorStructured>,
+    messages: Vec<MessageStructured>,
+}
+
+impl MessageWaitStructured {
+    pub(crate) fn new(
+        messages: &[Message],
+        limit: usize,
+        unread_only: bool,
+        next: Option<MessageCursorStructured>,
+        timed_out: bool,
+    ) -> Self {
+        Self {
+            schema: "aionforge.message_wait.v1",
+            timed_out,
+            count: messages.len(),
+            limit,
+            unread_only,
+            next,
+            messages: messages.iter().map(MessageStructured::from).collect(),
+        }
+    }
+}
+
 impl From<&Message> for MessageStructured {
     fn from(message: &Message) -> Self {
         let (body, body_truncated) = compact_body(&message.body);

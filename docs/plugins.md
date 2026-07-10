@@ -113,7 +113,7 @@ The plugin follows the MCP service posture:
   forget, audit, consolidate, or avoid memory for a task.
 - Read-like tools are `server_status`, `search`, `read_memory`,
   `session_manifest`, `memory_census`, `consolidation_status`, `audit_history`,
-  `work_tree`, `work_query`, and `message_poll`.
+  `work_tree`, `work_query`, `message_poll`, and `message_wait`.
 - Mutating tools are `capture`, `batch_capture`, `consolidate`, `forget`,
   `unforget`, `pin`, `unpin`, `work_create`, `work_advance`, `work_link`,
   `message_send`, and `message_ack`; keep
