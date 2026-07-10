@@ -165,6 +165,7 @@ Start here:
 - [MCP client support](docs/mcp-clients.md) - Codex, Claude Code, OpenCode, Cursor.
 - [Agent plugin](docs/plugins.md) - skills, identity, and client notes.
 - [Security model](docs/security-model.md) - namespaces, untrusted recall, signing.
+- [Observability](docs/observability.md) - logging, metrics, traffic, and tracing.
 - [Operations and recovery](docs/operations-recovery.md) - production setup and WAL recovery.
 - [Honest scope](docs/honest-scope.md) - what is shipped, experimental, or deferred.
 

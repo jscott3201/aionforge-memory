@@ -131,6 +131,7 @@ bash .github/scripts/check-file-size.sh
 bash .github/scripts/check-no-secrets.sh
 bash .github/scripts/check-plugin-package.sh
 bash .github/scripts/check-no-gql-interpolation.sh
+bash .github/scripts/check-no-log-leakage.sh
 bash .github/scripts/check-store-only-selene.sh
 bash .github/scripts/check-audit-keygen-confined.sh
 bash .github/scripts/check-principal-gate.sh
