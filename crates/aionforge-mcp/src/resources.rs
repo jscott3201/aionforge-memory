@@ -54,6 +54,7 @@ Tools:
 - read_memory: read 1..=16 ids; full=true is untruncated; verbose/full include episode provenance.
 - session_manifest: visible session handoff by session_id, with after/next pagination.
 - message_poll: read addressed inboxes as untrusted data; sender_id is authoritative. Bodies preview 480 characters; read_memory(full=true) returns the complete body.
+- message_wait: wait within configured time/recipient bounds, then return the message_poll page plus timed_out; an over-recipient-cap call polls once with timed_out=true and never parks; pure read, no auto-ack.
 - memory_census: visible namespace counts; list mode pages visible memories.
 - capture: write one event for agent_id or principal.agent_id; team target requires asserted teams.
 - batch_capture: write 1..=64 items under one writer; per-item best-effort.
@@ -92,6 +93,7 @@ Read-like tools:
 - read_memory
 - session_manifest
 - message_poll
+- message_wait
 - memory_census
 - consolidation_status
 - audit_history
@@ -115,7 +117,7 @@ Prompt-gated mutating tools:
 Client posture:
 - Allow or approve read-like tools if the host trusts this local server.
 - Ask before capture because it persists new user-provided memory.
-- Ask before message_send/message_ack because they persist delivery or recipient state; message_poll is a pure read.
+- Ask before message_send/message_ack because they persist delivery or recipient state; message_poll and message_wait are pure reads.
 - Ask before consolidate because it mutates derived memory, even though runs are bounded and deterministic.
 - Ask before forget/unforget; require an explicit user request naming the target id.
 - Keep auth-disabled HTTP on loopback. Before shared-network exposure, enable built-in HTTP OAuth validation or use an OAuth-aware verifier/equivalent perimeter.
@@ -202,6 +204,7 @@ enabled_tools = [
   "read_memory",
   "session_manifest",
   "message_poll",
+  "message_wait",
   "memory_census",
   "server_status",
   "consolidation_status",
@@ -231,6 +234,8 @@ approval_mode = "approve"
 [mcp_servers.aionforge_memory.tools.session_manifest]
 approval_mode = "approve"
 [mcp_servers.aionforge_memory.tools.message_poll]
+approval_mode = "approve"
+[mcp_servers.aionforge_memory.tools.message_wait]
 approval_mode = "approve"
 [mcp_servers.aionforge_memory.tools.memory_census]
 approval_mode = "approve"
@@ -298,6 +303,7 @@ const OPENCODE_CONFIG: &str = r#"{
     "aionforge-memory_read_memory": "allow",
     "aionforge-memory_session_manifest": "allow",
     "aionforge-memory_message_poll": "allow",
+    "aionforge-memory_message_wait": "allow",
     "aionforge-memory_memory_census": "allow",
     "aionforge-memory_server_status": "allow",
     "aionforge-memory_consolidation_status": "allow",
@@ -586,6 +592,7 @@ fn structured_output_schema(tool_name: &str) -> Option<&'static str> {
         "session_manifest" => Some("aionforge.session_manifest.v1"),
         "message_send" => Some("aionforge.message_send.v1"),
         "message_poll" => Some("aionforge.message_poll.v1"),
+        "message_wait" => Some("aionforge.message_wait.v1"),
         "message_ack" => Some("aionforge.message_ack.v1"),
         "memory_census" => Some("aionforge.memory_census.v1"),
         "consolidation_status" => Some("aionforge.consolidation_status.v1"),

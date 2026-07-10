@@ -343,7 +343,7 @@ These inspect memory without writing new memory and without requiring a write pr
 | `consolidation_status` | Inspect background consolidation position/state. |
 | `audit_history` | Inspect audit events. |
 | `work_tree`, `work_query` | Inspect work-tracking state. |
-| `message_poll` | Poll addressed messages without changing read state. |
+| `message_poll`, `message_wait` | Poll or wait for addressed messages without changing read state. |
 
 ### Mutating operations
 

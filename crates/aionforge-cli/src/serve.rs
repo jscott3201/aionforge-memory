@@ -9,9 +9,10 @@ use aionforge::{
 };
 use aionforge_config::{AuthConfig, Config, ServerHttpConfig};
 use aionforge_mcp::{
-    AionforgeStreamableHttpService, AuthPosture, AuthValidators, STREAMABLE_HTTP_ENDPOINT,
-    StreamableHttpOptions, serve_stdio_with_consolidation,
-    streamable_http_service_with_consolidation,
+    AionforgeStreamableHttpService, AuthPosture, AuthValidators, MessageWaitBounds,
+    STREAMABLE_HTTP_ENDPOINT, StreamableHttpOptions,
+    serve_stdio_with_consolidation_and_message_wait,
+    streamable_http_service_with_consolidation_and_message_wait,
 };
 use axum::Router;
 use axum::body::Body;
@@ -60,10 +61,11 @@ pub(crate) async fn run(options: &HostOptions, args: ServeArgs) -> Result<(), Cl
                 // ERR_PRINCIPAL_REQUIRED (fail-closed, never a bypass). Warn LOUDLY at startup so the
                 // operator sees the root cause as a single visible signal, not a stream of per-tool 403s.
                 report_stdio_auth_unsupported(config.auth.enabled);
-                serve_stdio_with_consolidation(
+                serve_stdio_with_consolidation_and_message_wait(
                     memory,
                     config.auth.enabled,
                     config.consolidation.enabled,
+                    MessageWaitBounds::from(&config.messages),
                 )
                 .await
                 .map_err(|error| CliError::Serve(error.to_string()))
@@ -227,11 +229,12 @@ async fn serve_http(
         None => AuthPosture::disabled(),
     };
 
-    let service = streamable_http_service_with_consolidation(
+    let service = streamable_http_service_with_consolidation_and_message_wait(
         memory,
         options,
         auth_posture,
         config.consolidation.enabled,
+        MessageWaitBounds::from(&config.messages),
     )?;
     let state = HttpMcpState {
         inner: service,
@@ -615,7 +618,7 @@ mod tests {
 
     fn runtime_http_state(config: &Config) -> HttpMcpState {
         let memory = open_memory(config).expect("open runtime memory");
-        let service = streamable_http_service_with_consolidation(
+        let service = aionforge_mcp::streamable_http_service_with_consolidation(
             memory,
             StreamableHttpOptions::default(),
             AuthPosture::disabled(),

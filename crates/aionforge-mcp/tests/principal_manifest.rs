@@ -2,6 +2,7 @@
 
 use std::future::Future;
 use std::sync::Arc;
+use std::time::Duration;
 
 use aionforge_domain::contracts::Embedder;
 use aionforge_domain::embedding::{EmbedderModel, Embedding};
@@ -10,9 +11,9 @@ use aionforge_domain::time::Timestamp;
 use aionforge_engine::{Memory, MemoryConfig};
 use aionforge_mcp::{
     AuthEnabled, CaptureToolParams, HostPrincipalToolParam, MessagePollToolParams,
-    MessageSendToolParams, SearchToolParams, SessionManifestCursorToolParam,
-    SessionManifestToolParams, capture_tool, message_poll_tool, message_send_tool, search_tool,
-    session_manifest_tool,
+    MessageSendToolParams, MessageWaitToolParams, SearchToolParams, SessionManifestCursorToolParam,
+    SessionManifestToolParams, capture_tool, message_poll_tool, message_send_tool,
+    message_wait_tool, search_tool, session_manifest_tool,
 };
 
 type TestResult = Result<(), Box<dyn std::error::Error + Send + Sync>>;
@@ -220,6 +221,26 @@ async fn tools_accept_explicit_host_principal_without_legacy_identity_fields() -
         AuthEnabled(false),
     )?;
     assert!(polled.contains("principal-addressed message"), "{polled}");
+    let waited = tokio::time::timeout(
+        Duration::from_secs(1),
+        message_wait_tool(
+            &memory,
+            MessageWaitToolParams {
+                room_id: None,
+                after: None,
+                limit: None,
+                unread_only: None,
+                timeout_seconds: Some(1),
+                viewer: None,
+                principal: Some(host_principal(reader, &[])),
+                teams: Vec::new(),
+            },
+            None,
+            AuthEnabled(false),
+        ),
+    )
+    .await??;
+    assert!(waited.contains("principal-addressed message"), "{waited}");
     Ok(())
 }
 

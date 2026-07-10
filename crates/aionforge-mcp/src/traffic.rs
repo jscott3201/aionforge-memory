@@ -11,9 +11,9 @@
 //!
 //! Coverage is the MCP tool boundary: IN counts the `content` of `capture` / `batch_capture`
 //! (the memory text clients push to be stored); OUT counts the rendered recall responses of
-//! `search` / `read_memory` / `session_manifest` / the `work_*` readers (the dominant outbound
-//! payload). Tiny control traffic (query params, receipts) is intentionally not counted — this
-//! is a memory-throughput signal, not a wire-level byte meter.
+//! `search` / `read_memory` / `session_manifest` / `message_poll` / `message_wait` / the `work_*`
+//! readers (the dominant outbound payload). Tiny control traffic (query params, receipts) is
+//! intentionally not counted — this is a memory-throughput signal, not a wire-level byte meter.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;

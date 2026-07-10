@@ -2,11 +2,11 @@
 //! `metrics` 0.24 facade.
 //!
 //! This is pure observation at the recall-serve boundary: the realized byte size of every
-//! memory-bearing response (`search`, `read_memory`, `session_manifest`) is folded into one
-//! labeled counter and echoed on a `tracing` line, so an operator can measure how many bytes
-//! the store actually hands back per tool and per session. It changes no behavior and reads
-//! nothing back — the [`Authorizer`](aionforge_engine), the visible set, and ranking are
-//! untouched.
+//! memory-bearing response (`search`, `read_memory`, `session_manifest`, `message_poll`,
+//! `message_wait`, and the work readers) is folded into one labeled counter and echoed on a
+//! `tracing` line, so an operator can measure how many bytes the store actually hands back per
+//! tool and per session. It changes no behavior and reads nothing back — the
+//! [`Authorizer`](aionforge_engine), the visible set, and ranking are untouched.
 //!
 //! Bytes, not tokens, are the metric. The server cannot run the calling client's tokenizer,
 //! so an exact token count is not free; bytes are the authoritative, stable measure (the same
