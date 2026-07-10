@@ -153,6 +153,15 @@ pub(crate) const SCALAR_INDEXES: &[(&str, &str, TypedIndexKind)] = &[
     ("WorkItem", "level", TypedIndexKind::String),
     ("Tag", "id", TypedIndexKind::Uuid),
     ("Tag", "slug", TypedIndexKind::String),
+    // Dedicated Message inbox probes. No Message entry belongs in VECTOR_INDEXES or
+    // TEXT_INDEXES: recall exclusion is by omission, and the body is read only by the
+    // recipient inbox surface.
+    ("Message", "id", TypedIndexKind::Uuid),
+    ("Message", "recipient", TypedIndexKind::String),
+    ("Message", "room_id", TypedIndexKind::Uuid),
+    ("Message", "thread_id", TypedIndexKind::Uuid),
+    ("Message", "reply_to_id", TypedIndexKind::Uuid),
+    ("Message", "read_state", TypedIndexKind::String),
 ];
 
 /// Composite indexes (§8) as `(node_label, DDL)`. DDL-only — no Rust wrapper. The label
@@ -190,6 +199,12 @@ const COMPOSITE_INDEXES: &[(&str, &str)] = &[
     (
         "WorkItem",
         "CREATE INDEX IF NOT EXISTS cidx_workitem_parent_ordinal ON :WorkItem(parent_id, ordinal)",
+    ),
+    // The hot inbox path probes `recipient` and returns transaction-time order. `id` is the
+    // deterministic keyset tiebreak in Rust when multiple rows share an ingestion instant.
+    (
+        "Message",
+        "CREATE INDEX IF NOT EXISTS cidx_message_recipient_ingested ON :Message(recipient, ingested_at)",
     ),
 ];
 

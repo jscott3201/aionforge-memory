@@ -8,6 +8,7 @@ use std::collections::HashSet;
 use aionforge_domain::namespace::Namespace;
 use aionforge_domain::nodes::associative::Note;
 use aionforge_domain::nodes::episodic::{Episode, Role};
+use aionforge_domain::nodes::message::{Message, MessageReadState};
 use aionforge_domain::nodes::procedural::{BadPattern, Skill};
 use aionforge_domain::nodes::semantic::{Entity, Fact};
 use aionforge_domain::nodes::work::{WorkItem, WorkStatus};
@@ -102,6 +103,28 @@ impl WorkCounts {
     #[must_use]
     pub fn total(&self) -> u64 {
         self.todo + self.in_progress + self.blocked + self.done + self.dropped
+    }
+}
+
+/// A live per-state message census, disjoint from retrievable memories and work items.
+///
+/// Rows whose `expired_at` is set by the message-retention reaper are excluded. Keeping this
+/// inventory separate prevents durable inbox traffic from inflating [`MemoryCounts`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct MessageCounts {
+    /// Delivered messages not yet marked read.
+    pub unread: u64,
+    /// Messages marked read but not acknowledged.
+    pub read: u64,
+    /// Explicitly acknowledged messages.
+    pub acked: u64,
+}
+
+impl MessageCounts {
+    /// Total live messages across every read state.
+    #[must_use]
+    pub fn total(&self) -> u64 {
+        self.unread + self.read + self.acked
     }
 }
 
@@ -205,6 +228,45 @@ impl Store {
             blocked: count_status(WorkStatus::Blocked)?,
             done: count_status(WorkStatus::Done)?,
             dropped: count_status(WorkStatus::Dropped)?,
+        })
+    }
+
+    /// A live per-read-state census of durable inbox messages.
+    ///
+    /// All state buckets are counted against one pinned snapshot through the typed
+    /// `Message.read_state` index. This is deliberately separate from [`Store::memory_counts`]
+    /// and [`Store::work_counts`]: messages are recall-excluded communication records.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if a label, property key, or state value cannot be interned.
+    pub fn message_counts(&self) -> Result<MessageCounts, StoreError> {
+        let snapshot = self.graph().read();
+        let label = db_string(Message::LABEL)?;
+        let state_key = db_string("read_state")?;
+        let expired_key = db_string("expired_at")?;
+        let count_state = |state: MessageReadState| -> Result<u64, StoreError> {
+            let value = enum_value(&state)?;
+            let Some(rows) = snapshot.nodes_with_property_eq(&label, &state_key, &value) else {
+                return Ok(0);
+            };
+            let mut live = 0u64;
+            for row in rows.iter() {
+                let Some(node) = snapshot.node_id_for_row(RowIndex::new(row)) else {
+                    continue;
+                };
+                let Some(props) = snapshot.node_properties(node) else {
+                    continue;
+                };
+                if props.get(&expired_key).is_none() {
+                    live += 1;
+                }
+            }
+            Ok(live)
+        };
+        Ok(MessageCounts {
+            unread: count_state(MessageReadState::Unread)?,
+            read: count_state(MessageReadState::Read)?,
+            acked: count_state(MessageReadState::Acked)?,
         })
     }
 

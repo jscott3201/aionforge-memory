@@ -4,7 +4,8 @@ mod common;
 
 use aionforge_domain::ids::Id;
 use aionforge_mcp::{
-    AionforgeMcp, AuthEnabled, WorkCreateToolParams, capture_tool, work_create_tool,
+    AionforgeMcp, AuthEnabled, MessageSendToolParams, WorkCreateToolParams, capture_tool,
+    message_send_tool, work_create_tool,
 };
 use common::{capture_params, memory, now};
 use rmcp::ServiceExt;
@@ -59,6 +60,24 @@ async fn read_like_transport_results_include_structured_content() -> TestResult 
         AuthEnabled(false),
     )?;
     let work_id = receipt_id(&work_line);
+    let message_line = message_send_tool(
+        &memory,
+        MessageSendToolParams {
+            to: format!("agent:{agent}"),
+            body: "structured transport message".to_string(),
+            room_id: None,
+            thread_id: None,
+            reply_to_id: None,
+            msg_kind: Some("note".to_string()),
+            viewer: Some(format!("agent:{agent}")),
+            principal: None,
+            teams: Vec::new(),
+        },
+        &now(),
+        None,
+        AuthEnabled(false),
+    )?;
+    let message_id = receipt_id(&message_line);
 
     let (server_transport, client_transport) = tokio::io::duplex(32 * 1024);
     let server = AionforgeMcp::new(memory);
@@ -113,6 +132,34 @@ async fn read_like_transport_results_include_structured_content() -> TestResult 
             }),
             "aionforge.session_manifest.v1",
             "[session_manifest] ",
+        ),
+        (
+            "message_send",
+            serde_json::json!({
+                "to": format!("agent:{agent}"),
+                "body": "message_send transport structured content",
+                "principal": principal.clone(),
+            }),
+            "aionforge.message_send.v1",
+            "[message_send] ",
+        ),
+        (
+            "message_poll",
+            serde_json::json!({
+                "principal": principal.clone(),
+            }),
+            "aionforge.message_poll.v1",
+            "[message_poll] ",
+        ),
+        (
+            "message_ack",
+            serde_json::json!({
+                "message_ids": [message_id],
+                "to": "acked",
+                "principal": principal.clone(),
+            }),
+            "aionforge.message_ack.v1",
+            "[message_ack] ",
         ),
         (
             "memory_census",

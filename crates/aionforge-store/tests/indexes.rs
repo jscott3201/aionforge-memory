@@ -76,17 +76,19 @@ fn migration_registers_all_native_indexes() {
     // first datetime property index) for the M4.T06 audit-history readers, and
     // BadPattern.id + CoreBlock.id for the forgetting point-op resolver (M5.T02)) = 51,
     // plus the work-tracking facet: +6 scalar (WorkItem id/parent_id/work_status/level,
-    // Tag id/slug) and +2 namespace (one per new node kind) = 59.
+    // Tag id/slug) and +2 namespace (one per new node kind) = 59; Message adds six
+    // dedicated scalar indexes plus its namespace index = 66.
     assert_eq!(
         store.property_indexes().len(),
-        59,
+        66,
         "scalar property index count"
     );
 
     // §8: the three pure-scalar composites, the two AuditEvent temporal composites (now
-    // that selene indexes ZONED DATETIME), and the work-item sibling-ordering composite.
+    // that selene indexes ZONED DATETIME), the work-item sibling-ordering composite, and
+    // the Message recipient/ingestion inbox composite.
     let composites = store.composite_indexes();
-    assert_eq!(composites.len(), 6, "composite index count: {composites:?}");
+    assert_eq!(composites.len(), 7, "composite index count: {composites:?}");
     assert!(
         composites
             .iter()
@@ -105,6 +107,12 @@ fn migration_registers_all_native_indexes() {
             .any(|(label, cols)| label == "AuditEvent" && cols == &["kind", "occurred_at"]),
         "AuditEvent(kind, occurred_at) temporal composite present"
     );
+    assert!(
+        composites
+            .iter()
+            .any(|(label, cols)| label == "Message" && cols == &["recipient", "ingested_at"]),
+        "Message(recipient, ingested_at) inbox composite present"
+    );
 
     // §8: occurred_at is the first ZONED DATETIME property index in the schema.
     assert!(
@@ -113,6 +121,36 @@ fn migration_registers_all_native_indexes() {
             .iter()
             .any(|(label, prop)| label == "AuditEvent" && prop == "occurred_at"),
         "AuditEvent.occurred_at datetime property index present"
+    );
+    let properties = store.property_indexes();
+    for property in [
+        "id",
+        "recipient",
+        "room_id",
+        "thread_id",
+        "reply_to_id",
+        "read_state",
+    ] {
+        assert!(
+            properties
+                .iter()
+                .any(|(label, indexed)| label == "Message" && indexed == property),
+            "Message.{property} scalar index present"
+        );
+    }
+    assert!(
+        store
+            .vector_indexes()
+            .iter()
+            .all(|index| index.label != "Message"),
+        "Message has no vector index and stays out of dense recall"
+    );
+    assert!(
+        store
+            .text_indexes()
+            .iter()
+            .all(|(label, _)| label != "Message"),
+        "Message has no text index and stays out of lexical recall"
     );
 }
 

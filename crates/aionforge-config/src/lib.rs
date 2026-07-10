@@ -47,6 +47,11 @@
 //! [core_block]
 //! redline_requires_human = true
 //! human_attester_ids = ["0197b0aa-3c5e-8000-8000-000000000000"]
+//!
+//! [messages]
+//! retention_enabled = true
+//! retention_acked_days = 30
+//! retention_unacked_days = 90
 //! ```
 
 mod auth;
@@ -59,6 +64,7 @@ mod error;
 mod forgetting;
 mod guard;
 mod load;
+mod messages;
 mod server;
 
 pub use auth::{AuthConfig, IssuerConfig};
@@ -77,4 +83,5 @@ pub use error::ConfigError;
 pub use forgetting::ForgettingConfig;
 pub use guard::{ConsolidationGuardConfig, GuardMode};
 pub use load::default_config_path;
+pub use messages::MessagesConfig;
 pub use server::ServerHttpConfig;

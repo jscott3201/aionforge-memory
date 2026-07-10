@@ -9,8 +9,9 @@ use aionforge_domain::ids::Id;
 use aionforge_domain::time::Timestamp;
 use aionforge_engine::{Memory, MemoryConfig};
 use aionforge_mcp::{
-    AuthEnabled, CaptureToolParams, HostPrincipalToolParam, SearchToolParams,
-    SessionManifestCursorToolParam, SessionManifestToolParams, capture_tool, search_tool,
+    AuthEnabled, CaptureToolParams, HostPrincipalToolParam, MessagePollToolParams,
+    MessageSendToolParams, SearchToolParams, SessionManifestCursorToolParam,
+    SessionManifestToolParams, capture_tool, message_poll_tool, message_send_tool, search_tool,
     session_manifest_tool,
 };
 
@@ -182,6 +183,43 @@ async fn tools_accept_explicit_host_principal_without_legacy_identity_fields() -
         found.contains("team principal handoff memory"),
         "host principal team membership widens recall: {found}"
     );
+
+    let sent = message_send_tool(
+        &memory,
+        MessageSendToolParams {
+            to: format!("agent:{reader}"),
+            body: "principal-addressed message".to_string(),
+            room_id: None,
+            thread_id: None,
+            reply_to_id: None,
+            msg_kind: None,
+            viewer: None,
+            principal: Some(host_principal(writer, &["squad"])),
+            teams: Vec::new(),
+        },
+        &now(),
+        None,
+        AuthEnabled(false),
+    )?;
+    assert!(
+        sent.contains(&format!("recipient=agent:{reader}")),
+        "{sent}"
+    );
+    let polled = message_poll_tool(
+        &memory,
+        MessagePollToolParams {
+            room_id: None,
+            after: None,
+            limit: None,
+            unread_only: None,
+            viewer: None,
+            principal: Some(host_principal(reader, &[])),
+            teams: Vec::new(),
+        },
+        None,
+        AuthEnabled(false),
+    )?;
+    assert!(polled.contains("principal-addressed message"), "{polled}");
     Ok(())
 }
 

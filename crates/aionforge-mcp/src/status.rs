@@ -379,7 +379,7 @@ mod tests {
             &AuthPosture::disabled(),
         );
         assert!(out.starts_with("[server] "), "{out}");
-        assert!(out.contains("tools=19"), "{out}");
+        assert!(out.contains("tools=22"), "{out}");
         assert!(out.contains("resources=8"), "{out}");
         assert!(out.contains("sampling=false"), "{out}");
         assert!(out.contains("memories=6"), "{out}");
@@ -482,13 +482,13 @@ mod tests {
         // The full rosters, in TOOLS order — the work tools append after the existing ones.
         assert!(
             out.contains(
-                "read_like_tools=server_status,search,read_memory,session_manifest,memory_census,consolidation_status,audit_history,work_tree,work_query"
+                "read_like_tools=server_status,search,read_memory,session_manifest,message_poll,memory_census,consolidation_status,audit_history,work_tree,work_query"
             ),
             "{out}"
         );
         assert!(
             out.contains(
-                "mutating_tools=capture,batch_capture,consolidate,forget,unforget,pin,unpin,work_create,work_advance,work_link"
+                "mutating_tools=capture,batch_capture,message_send,message_ack,consolidate,forget,unforget,pin,unpin,work_create,work_advance,work_link"
             ),
             "{out}"
         );
@@ -506,7 +506,7 @@ mod tests {
         // Ordering: mutating roster < kinds < work_statuses < policy. Anchor to the verbose
         // roster specifically — the base [server] line also contains "mutating_tools=".
         let mutating_at = out
-            .find("mutating_tools=capture,batch_capture,consolidate,forget,unforget,pin,unpin,work_create,work_advance,work_link")
+            .find("mutating_tools=capture,batch_capture,message_send,message_ack,consolidate,forget,unforget,pin,unpin,work_create,work_advance,work_link")
             .expect("verbose output has a mutating_tools roster line");
         let kinds_at = out
             .find(kinds_line)

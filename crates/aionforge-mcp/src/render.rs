@@ -4,6 +4,7 @@ use aionforge_domain::ids::Id;
 use aionforge_domain::nodes::core::BlockKind;
 use aionforge_domain::nodes::episodic::Episode;
 use aionforge_domain::nodes::forensic::ProvenanceRecord;
+use aionforge_domain::nodes::message::{MessageKind, MessageReadState};
 use aionforge_domain::nodes::semantic::FactStatus;
 use aionforge_domain::nodes::work::WorkStatus;
 use aionforge_engine::ResolvedMemory;
@@ -129,6 +130,21 @@ pub(crate) fn render_memory_line(
                 tag_escape(&truncate_chars(&body, max_chars)),
             )
         }
+        ResolvedMemory::Message(message) => format!(
+            "<memory id=\"{}\" kind=\"message\" ns=\"{}\" sender_id=\"{}\" recipient=\"{}\" room=\"{}\" thread=\"{}\" reply_to=\"{}\" msg_kind=\"{}\" read_state=\"{}\" sent_at=\"{}\" ingested_at=\"{}\">{}</memory>",
+            attr_escape(&message.identity.id.to_string()),
+            attr_escape(&message.identity.namespace.to_string()),
+            attr_escape(&message.sender_id.to_string()),
+            attr_escape(&message.recipient),
+            attr_escape(&render_optional_id(message.room_id.as_ref())),
+            attr_escape(&render_optional_id(message.thread_id.as_ref())),
+            attr_escape(&render_optional_id(message.reply_to_id.as_ref())),
+            message_kind_tag(message.msg_kind),
+            message_read_state_tag(message.read_state),
+            attr_escape(&message.sent_at.to_string()),
+            attr_escape(&message.identity.ingested_at.to_string()),
+            tag_escape(&truncate_chars(&message.body, max_chars)),
+        ),
         ResolvedMemory::Tag(tag) => format!(
             "<memory id=\"{}\" kind=\"tag\" ns=\"{}\" ingested_at=\"{}\" slug=\"{}\">{}</memory>",
             attr_escape(&tag.identity.id.to_string()),
@@ -150,6 +166,24 @@ pub(crate) fn work_status_tag(status: WorkStatus) -> &'static str {
         WorkStatus::Blocked => "blocked",
         WorkStatus::Done => "done",
         WorkStatus::Dropped => "dropped",
+    }
+}
+
+pub(crate) fn message_kind_tag(kind: MessageKind) -> &'static str {
+    match kind {
+        MessageKind::Brief => MessageKind::BRIEF_LABEL,
+        MessageKind::Status => MessageKind::STATUS_LABEL,
+        MessageKind::Review => MessageKind::REVIEW_LABEL,
+        MessageKind::Ack => MessageKind::ACK_LABEL,
+        MessageKind::Note => MessageKind::NOTE_LABEL,
+    }
+}
+
+pub(crate) fn message_read_state_tag(state: MessageReadState) -> &'static str {
+    match state {
+        MessageReadState::Unread => MessageReadState::UNREAD_LABEL,
+        MessageReadState::Read => MessageReadState::READ_LABEL,
+        MessageReadState::Acked => MessageReadState::ACKED_LABEL,
     }
 }
 

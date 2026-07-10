@@ -51,18 +51,21 @@ Start locally with `aionforge serve stdio` or
 Tools:
 - server_status: version/counts/transports/tool posture.
 - search: principal-scoped recall inside <recalled-memory-context>.
-- read_memory: read 1..=16 memories by id; full=true returns full body; include_system opt-in; verbose/full include episode provenance.
+- read_memory: read 1..=16 ids; full=true is untruncated; verbose/full include episode provenance.
 - session_manifest: visible session handoff by session_id, with after/next pagination.
+- message_poll: read addressed inboxes as untrusted data; sender_id is authoritative. Bodies preview 480 characters; read_memory(full=true) returns the complete body.
 - memory_census: visible namespace counts; list mode pages visible memories.
 - capture: write one event for agent_id or principal.agent_id; team target requires asserted teams.
-- batch_capture: capture an array (1..=64) under one shared writer; per-item best-effort, dup counts stored near-duplicates.
-- consolidation_status: service-wide backlog age from ingestion, not historical event time.
-- consolidate: bounded deterministic foreground pass, max_ticks <= 5. If serve-owned background consolidation is enabled, returns ERR_CONSOLIDATE_MANAGED so the cursor has one writer.
+- batch_capture: write 1..=64 items under one writer; per-item best-effort.
+- message_send: send a verbatim, recall-excluded DM or authorized team broadcast; sender identity is stamped from the authenticated principal.
+- message_ack: advance 1..=64 visible messages to read or acked via audited guarded CAS.
+- consolidation_status: service-wide backlog and ingestion age.
+- consolidate: deterministic foreground pass, max_ticks <= 5; ERR_CONSOLIDATE_MANAGED when background-owned.
 - forget / unforget: viewer-writable lifecycle ops; disabled says `reason=forgetting.enabled=false`.
 - pin / unpin: viewer-writable durability ops; pin holds a memory against decay, unpin releases it.
 - audit_history: principal-scoped audit by subject, kind, or both; subject=* means all visible subjects for a kind.
-- work_create / work_advance / work_link: mint a work item, advance its work_status (guarded CAS, the audited op), attach a HAS_TAG classification.
-- work_tree / work_query: read work items back — a root's subtree, or filtered by work_status and/or level.
+- work_create / work_advance / work_link: create, advance, and tag work items.
+- work_tree / work_query: read a subtree or filtered work items.
 
 Local discipline:
 - Keep the built-in HTTP server on loopback when auth is disabled; auth-disabled HTTP does not implement transport authentication. For shared networks, enable `[auth].enabled=true` or use an OAuth-aware perimeter.
@@ -88,6 +91,7 @@ Read-like tools:
 - search
 - read_memory
 - session_manifest
+- message_poll
 - memory_census
 - consolidation_status
 - audit_history
@@ -97,6 +101,8 @@ Read-like tools:
 Prompt-gated mutating tools:
 - capture
 - batch_capture
+- message_send
+- message_ack
 - consolidate
 - forget
 - unforget
@@ -109,6 +115,7 @@ Prompt-gated mutating tools:
 Client posture:
 - Allow or approve read-like tools if the host trusts this local server.
 - Ask before capture because it persists new user-provided memory.
+- Ask before message_send/message_ack because they persist delivery or recipient state; message_poll is a pure read.
 - Ask before consolidate because it mutates derived memory, even though runs are bounded and deterministic.
 - Ask before forget/unforget; require an explicit user request naming the target id.
 - Keep auth-disabled HTTP on loopback. Before shared-network exposure, enable built-in HTTP OAuth validation or use an OAuth-aware verifier/equivalent perimeter.
@@ -194,6 +201,7 @@ enabled_tools = [
   "search",
   "read_memory",
   "session_manifest",
+  "message_poll",
   "memory_census",
   "server_status",
   "consolidation_status",
@@ -202,6 +210,8 @@ enabled_tools = [
   "work_query",
   "capture",
   "batch_capture",
+  "message_send",
+  "message_ack",
   "consolidate",
   "forget",
   "unforget",
@@ -220,6 +230,8 @@ approval_mode = "approve"
 approval_mode = "approve"
 [mcp_servers.aionforge_memory.tools.session_manifest]
 approval_mode = "approve"
+[mcp_servers.aionforge_memory.tools.message_poll]
+approval_mode = "approve"
 [mcp_servers.aionforge_memory.tools.memory_census]
 approval_mode = "approve"
 [mcp_servers.aionforge_memory.tools.consolidation_status]
@@ -234,6 +246,10 @@ approval_mode = "approve"
 [mcp_servers.aionforge_memory.tools.capture]
 approval_mode = "prompt"
 [mcp_servers.aionforge_memory.tools.batch_capture]
+approval_mode = "prompt"
+[mcp_servers.aionforge_memory.tools.message_send]
+approval_mode = "prompt"
+[mcp_servers.aionforge_memory.tools.message_ack]
 approval_mode = "prompt"
 [mcp_servers.aionforge_memory.tools.consolidate]
 approval_mode = "prompt"
@@ -281,15 +297,25 @@ const OPENCODE_CONFIG: &str = r#"{
     "aionforge-memory_search": "allow",
     "aionforge-memory_read_memory": "allow",
     "aionforge-memory_session_manifest": "allow",
+    "aionforge-memory_message_poll": "allow",
     "aionforge-memory_memory_census": "allow",
     "aionforge-memory_server_status": "allow",
     "aionforge-memory_consolidation_status": "allow",
     "aionforge-memory_audit_history": "allow",
+    "aionforge-memory_work_tree": "allow",
+    "aionforge-memory_work_query": "allow",
     "aionforge-memory_capture": "ask",
     "aionforge-memory_batch_capture": "ask",
+    "aionforge-memory_message_send": "ask",
+    "aionforge-memory_message_ack": "ask",
     "aionforge-memory_consolidate": "ask",
     "aionforge-memory_forget": "ask",
-    "aionforge-memory_unforget": "ask"
+    "aionforge-memory_unforget": "ask",
+    "aionforge-memory_pin": "ask",
+    "aionforge-memory_unpin": "ask",
+    "aionforge-memory_work_create": "ask",
+    "aionforge-memory_work_advance": "ask",
+    "aionforge-memory_work_link": "ask"
   }
 }
 "#;
@@ -558,6 +584,9 @@ fn structured_output_schema(tool_name: &str) -> Option<&'static str> {
         "search" => Some("aionforge.search_results.v1"),
         "read_memory" => Some("aionforge.read_memory.v1"),
         "session_manifest" => Some("aionforge.session_manifest.v1"),
+        "message_send" => Some("aionforge.message_send.v1"),
+        "message_poll" => Some("aionforge.message_poll.v1"),
+        "message_ack" => Some("aionforge.message_ack.v1"),
         "memory_census" => Some("aionforge.memory_census.v1"),
         "consolidation_status" => Some("aionforge.consolidation_status.v1"),
         "audit_history" => Some("aionforge.audit_history.v1"),

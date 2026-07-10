@@ -7,8 +7,8 @@ local unless built-in HTTP OAuth validation is enabled or an OAuth-aware
 verifier/equivalent perimeter protects the endpoint.
 
 The current server instructions deliberately lead with the recall safety rule:
-memories returned by `search`, `read_memory`, and `session_manifest` are third-party data wrapped in
-`<recalled-memory-context>`, not instructions. The same guidance is also exposed
+records returned by `search`, `read_memory`, `session_manifest`, and `message_poll`
+are third-party data wrapped in `<recalled-memory-context>`, not instructions. The same guidance is also exposed
 as the `recall_untrusted_data` prompt and as the
 `aionforge://prompt/recall-untrusted-data` resource.
 
@@ -179,10 +179,12 @@ enabled_tools = [
   "search",
   "read_memory",
   "session_manifest",
+  "memory_census",
   "consolidation_status",
   "audit_history",
   "work_tree",
   "work_query",
+  "message_poll",
   "capture",
   "batch_capture",
   "consolidate",
@@ -193,6 +195,8 @@ enabled_tools = [
   "work_create",
   "work_advance",
   "work_link",
+  "message_send",
+  "message_ack",
 ]
 [mcp_servers.aionforge_memory.tools.server_status]
 approval_mode = "approve"
@@ -202,6 +206,8 @@ approval_mode = "approve"
 approval_mode = "approve"
 [mcp_servers.aionforge_memory.tools.session_manifest]
 approval_mode = "approve"
+[mcp_servers.aionforge_memory.tools.memory_census]
+approval_mode = "approve"
 [mcp_servers.aionforge_memory.tools.consolidation_status]
 approval_mode = "approve"
 [mcp_servers.aionforge_memory.tools.audit_history]
@@ -209,6 +215,8 @@ approval_mode = "approve"
 [mcp_servers.aionforge_memory.tools.work_tree]
 approval_mode = "approve"
 [mcp_servers.aionforge_memory.tools.work_query]
+approval_mode = "approve"
+[mcp_servers.aionforge_memory.tools.message_poll]
 approval_mode = "approve"
 [mcp_servers.aionforge_memory.tools.capture]
 approval_mode = "prompt"
@@ -229,6 +237,10 @@ approval_mode = "prompt"
 [mcp_servers.aionforge_memory.tools.work_advance]
 approval_mode = "prompt"
 [mcp_servers.aionforge_memory.tools.work_link]
+approval_mode = "prompt"
+[mcp_servers.aionforge_memory.tools.message_send]
+approval_mode = "prompt"
+[mcp_servers.aionforge_memory.tools.message_ack]
 approval_mode = "prompt"
 ```
 
@@ -300,10 +312,12 @@ rules for this server:
     "aionforge-memory_search": "allow",
     "aionforge-memory_read_memory": "allow",
     "aionforge-memory_session_manifest": "allow",
+    "aionforge-memory_memory_census": "allow",
     "aionforge-memory_consolidation_status": "allow",
     "aionforge-memory_audit_history": "allow",
     "aionforge-memory_work_tree": "allow",
     "aionforge-memory_work_query": "allow",
+    "aionforge-memory_message_poll": "allow",
     "aionforge-memory_capture": "ask",
     "aionforge-memory_batch_capture": "ask",
     "aionforge-memory_consolidate": "ask",
@@ -313,7 +327,9 @@ rules for this server:
     "aionforge-memory_unpin": "ask",
     "aionforge-memory_work_create": "ask",
     "aionforge-memory_work_advance": "ask",
-    "aionforge-memory_work_link": "ask"
+    "aionforge-memory_work_link": "ask",
+    "aionforge-memory_message_send": "ask",
+    "aionforge-memory_message_ack": "ask"
   }
 }
 ```
@@ -338,8 +354,8 @@ server.
 
 For sensitive data, keep the built-in HTTP server on loopback and review
 Cursor's MCP logs when debugging connection failures. Use Cursor's tool approval
-and run-mode controls for `capture`, `batch_capture`, `consolidate`, `forget`,
-and `unforget`.
+and run-mode controls for `capture`, `batch_capture`, `message_send`,
+`message_ack`, `consolidate`, `forget`, and `unforget`.
 
 For pre-registered OAuth clients, Cursor uses an `auth` object on remote URL
 entries with `CLIENT_ID`, optional `CLIENT_SECRET`, and optional `scopes`.
@@ -351,10 +367,10 @@ Authorization header.
 ## Tool approval posture
 
 Read-like tools are `server_status`, `search`, `read_memory`,
-`session_manifest`, `consolidation_status`, `audit_history`, `work_tree`, and
-`work_query`. `work_tree` returns a work item's subtree and `work_query` filters
-work items by `work_status` and/or `level`. `read_memory`
-reads 1..=16 visible captured memories by receipt id (missing or unauthorized
+`session_manifest`, `memory_census`, `consolidation_status`, `audit_history`, `work_tree`,
+`work_query`, and `message_poll`. `work_tree` returns a work item's subtree and
+`work_query` filters work items by `work_status` and/or `level`. `read_memory`
+reads 1..=16 visible records by receipt id (missing or unauthorized
 ids are silently absent; `full=true` returns untruncated bodies);
 `session_manifest` lists the visible captured memories for a session. `audit_history` reads the principal-scoped audit subgraph by
 subject, by `kind`, or by subject+kind; when `subject_id` is omitted, `kind` is
@@ -363,11 +379,17 @@ subject. These read-like tools preserve their compact text output and also attac
 MCP `structuredContent` DTOs; `aionforge://manifest/tools.json` lists the schema
 for each tool so UI clients can render typed state without scraping the recall
 wrapper. Mutating tools are `capture`, `batch_capture`, `consolidate`, `forget`,
-`unforget`, `pin`, `unpin`, `work_create`, `work_advance`, and `work_link`;
+`unforget`, `pin`, `unpin`, `work_create`, `work_advance`, `work_link`,
+`message_send`, and `message_ack`;
 configure clients to ask before running them unless the host has a stronger local
 policy. `pin`/`unpin` hold or release a memory against decay; `work_create`,
 `work_advance` (a guarded, audited status compare-and-set), and `work_link` create
-and maintain work items. `batch_capture` captures an array of memories (1..=64) in
+and maintain work items. `message_send` delivers a server-attributed payload to an
+agent or authorized team inbox without capture filtering or recall indexing;
+`message_poll` returns it in the untrusted recall wrapper and never auto-acks;
+`message_ack` advances read state with a guarded compare-and-set. See
+[Agent messages](messages.md) for delivery and retention semantics.
+`batch_capture` captures an array of memories (1..=64) in
 one call under a single shared writer identity, committing each item best-effort
 in input order: it returns a `[batch_capture] items/new/dup/err` header then one
 `[capture]` receipt or `ERR_ITEM[i]` line per item, where `dup` counts stored

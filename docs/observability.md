@@ -71,7 +71,7 @@ INFO aionforge::traffic: memory traffic phase=heartbeat
 ```
 
 - **IN** = `content` bytes clients push via `capture`/`batch_capture` (memory text being stored).
-  **OUT** = rendered recall responses of `search`/`read_memory`/`session_manifest`/the `work_*`
+  **OUT** = rendered recall responses of `search`/`read_memory`/`session_manifest`/`message_poll`/the `work_*`
   readers (the dominant outbound payload). Small control traffic (query params, receipts) is not
   counted — this is a memory-throughput signal, not a wire-level byte meter. Counts are
   process-cumulative and reset on restart; only HTTP/stdio tool traffic is counted.

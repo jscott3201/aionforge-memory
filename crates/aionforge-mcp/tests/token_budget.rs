@@ -3,15 +3,15 @@
 const MCP_LIB_RS: &str = include_str!("../src/lib.rs");
 const MAX_TOOL_DESCRIPTION_CHARS: usize = 160;
 const MAX_TOOL_DESCRIPTION_WORDS: usize = 24;
-const MAX_TOTAL_DESCRIPTION_CHARS: usize = 2_400;
-const MAX_TOTAL_DESCRIPTION_WORDS: usize = 320;
+const MAX_TOTAL_DESCRIPTION_CHARS: usize = 2_700;
+const MAX_TOTAL_DESCRIPTION_WORDS: usize = 360;
 
 #[test]
 fn mcp_tool_descriptions_stay_compact() {
     let descriptions = tool_descriptions(MCP_LIB_RS);
     assert_eq!(
         descriptions.len(),
-        19,
+        22,
         "parsed unexpected tool descriptions: {descriptions:?}"
     );
 

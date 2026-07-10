@@ -40,10 +40,10 @@
 ///
 /// The migration runner bumps the `SchemaVersion` singleton to this value once every
 /// type is declared. A future embedder change or added kind is a new version with its own
-/// forward-only step. Version 3 adds the work-tracking facet (the `WorkItem` and `Tag`
-/// node kinds and the `HAS_TAG` edge) onto the v1.0.0 surface; node/edge types are
+/// forward-only step. Version 4 adds the durable, recipient-inbox `Message` kind onto the
+/// v3 work-tracking surface; node/edge types are
 /// `CREATE ... IF NOT EXISTS`, so the bump is a forward-only additive migration.
-pub const SCHEMA_VERSION: i64 = 3;
+pub const SCHEMA_VERSION: i64 = 4;
 
 /// One catalog entry: a type's identifying label and the statement that declares it.
 pub(crate) struct TypeDdl {
@@ -53,7 +53,7 @@ pub(crate) struct TypeDdl {
     pub ddl: &'static str,
 }
 
-/// The 19 node types (data-model §4; work-tracking facet appends `WorkItem` + `Tag`), in
+/// The 20 node types (data-model §4 plus work tracking and durable messaging), in
 /// declaration order.
 pub(crate) const NODE_TYPES: &[TypeDdl] = &[
     TypeDdl {
@@ -407,6 +407,32 @@ pub(crate) const NODE_TYPES: &[TypeDdl] = &[
             expired_at :: ZONED DATETIME,
             slug :: STRING NOT NULL,
             display :: STRING
+        ) STRICT"#,
+    },
+    // Durable recipient-inbox messages (Tier 1 pager PR1). `Message` and every bare
+    // property identifier below were checked against selene-db-gql 1.3.0's authoritative
+    // `ast/format_ident.rs` KEYWORDS set before adding this DDL; none is reserved. Unlike
+    // `Session`/`Instant`, the label therefore remains parse-stable without quoting. Message
+    // is Identity-only and deliberately has no embedding/text column: dedicated inbox readers,
+    // never recall, surface its untrusted body. The delivery envelope is immutable after its
+    // audited send; only `read_state` and retention's `expired_at` can move. `read_state` is
+    // intentionally not `status`, so fact/forget lifecycle decoding cannot mistake the axes.
+    TypeDdl {
+        name: "Message",
+        ddl: r#"CREATE NODE TYPE IF NOT EXISTS :Message (
+            id :: UUID NOT NULL UNIQUE IMMUTABLE,
+            ingested_at :: ZONED DATETIME NOT NULL IMMUTABLE,
+            namespace :: STRING NOT NULL IMMUTABLE,
+            expired_at :: ZONED DATETIME,
+            sender_id :: UUID NOT NULL IMMUTABLE,
+            recipient :: STRING NOT NULL IMMUTABLE,
+            room_id :: UUID IMMUTABLE,
+            thread_id :: UUID IMMUTABLE,
+            reply_to_id :: UUID IMMUTABLE,
+            body :: STRING NOT NULL IMMUTABLE,
+            msg_kind :: STRING(32) NOT NULL DEFAULT 'note' IMMUTABLE,
+            read_state :: STRING(32) NOT NULL DEFAULT 'unread',
+            sent_at :: ZONED DATETIME NOT NULL IMMUTABLE
         ) STRICT"#,
     },
 ];
