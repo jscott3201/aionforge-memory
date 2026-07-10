@@ -24,6 +24,7 @@ use aionforge_domain::nodes::control::{ConsolidationCursor, SchemaVersion};
 use aionforge_domain::nodes::core::CoreBlock;
 use aionforge_domain::nodes::episodic::Episode;
 use aionforge_domain::nodes::forensic::{AuditEvent, Promotion, ProvenanceRecord};
+use aionforge_domain::nodes::message::{Message, MessageKind, MessageReadState};
 use aionforge_domain::nodes::procedural::{BadPattern, Skill};
 use aionforge_domain::nodes::semantic::{Entity, Fact};
 use proptest::prelude::*;
@@ -501,6 +502,52 @@ fn arb_validity_anchor() -> impl Strategy<Value = ValidityAnchor> {
         })
 }
 
+fn arb_message() -> impl Strategy<Value = Message> {
+    (
+        (
+            arb_identity(),
+            arb_id(),
+            any::<String>(),
+            prop::option::of(arb_id()),
+            prop::option::of(arb_id()),
+            prop::option::of(arb_id()),
+        ),
+        (
+            any::<String>(),
+            prop::sample::select(vec![
+                MessageKind::Brief,
+                MessageKind::Status,
+                MessageKind::Review,
+                MessageKind::Ack,
+                MessageKind::Note,
+            ]),
+            prop::sample::select(vec![
+                MessageReadState::Unread,
+                MessageReadState::Read,
+                MessageReadState::Acked,
+            ]),
+            arb_timestamp(),
+        ),
+    )
+        .prop_map(
+            |(
+                (identity, sender_id, recipient, room_id, thread_id, reply_to_id),
+                (body, msg_kind, read_state, sent_at),
+            )| Message {
+                identity,
+                sender_id,
+                recipient,
+                room_id,
+                thread_id,
+                reply_to_id,
+                body,
+                msg_kind,
+                read_state,
+                sent_at,
+            },
+        )
+}
+
 proptest! {
     // value types
     #[test] fn rt_namespace(v in arb_namespace()) { round_trip(v); }
@@ -534,6 +581,7 @@ proptest! {
     #[test] fn rt_scope(v in arb_scope()) { round_trip(v); }
     #[test] fn rt_recency_window(v in arb_recency_window()) { round_trip(v); }
     #[test] fn rt_validity_anchor(v in arb_validity_anchor()) { round_trip(v); }
+    #[test] fn rt_message(v in arb_message()) { round_trip(v); }
 
     // edge kinds carrying data
     #[test] fn rt_mentions(v in arb_bitemporal().prop_map(|temporal| Mentions { temporal })) { round_trip(v); }

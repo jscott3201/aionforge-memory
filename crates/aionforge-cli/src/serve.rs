@@ -37,6 +37,8 @@ pub(crate) async fn run(options: &HostOptions, args: ServeArgs) -> Result<(), Cl
     let config = load_config(options)?;
     let memory = open_memory(&config)?;
     let consolidation_handle = start_background_consolidation(&memory, &config);
+    let message_retention_handle =
+        crate::message_retention::start(Arc::clone(&memory), &config.messages);
     // Periodic in/out traffic heartbeat for the server's lifetime (logging-foundation, task #9):
     // a `tracing` line every few minutes with cumulative + delta bytes/tokens in and out. Covers
     // both transports. A zero cadence disables it. Spawned BEFORE the (blocking) transport dispatch
@@ -73,6 +75,9 @@ pub(crate) async fn run(options: &HostOptions, args: ServeArgs) -> Result<(), Cl
     // Stop the heartbeat deterministically before exit, then log the final cumulative summary.
     if let Some(task) = heartbeat_task {
         task.abort();
+    }
+    if let Some(handle) = message_retention_handle {
+        handle.shutdown().await;
     }
     if let Some(handle) = consolidation_handle {
         handle.shutdown().await;

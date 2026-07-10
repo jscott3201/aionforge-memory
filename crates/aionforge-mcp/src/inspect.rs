@@ -8,6 +8,7 @@ use aionforge_domain::ids::Id;
 use aionforge_domain::nodes::core::CoreBlock;
 use aionforge_domain::nodes::episodic::{Episode, Role};
 use aionforge_domain::nodes::forensic::ProvenanceRecord;
+use aionforge_domain::nodes::message::Message;
 use aionforge_domain::nodes::work::{Tag, WorkItem};
 use aionforge_domain::time::Timestamp;
 // `ResolvedMemory` is a store-crate type; `aionforge-mcp` depends on the store only through
@@ -206,13 +207,18 @@ pub(crate) fn read_memory_tool_output<E: Embedder>(
 
     // The read set is the six forgettable/pointable kinds (shared with forget/pin via
     // MCP_MEMORY_LABELS so read and write breadth stay in lockstep) plus `CoreBlock` and the
-    // Identity-only work-tracking kinds (`WorkItem`, `Tag`) — all forgetting-exempt, so absent
-    // from the write set, but a by-id read must still resolve their ids. Appended here (NOT
-    // folded into MCP_MEMORY_LABELS), so the exempt kinds never enter the forget/pin breadth.
+    // Identity-only work/message kinds (`WorkItem`, `Tag`, `Message`) — all forgetting-exempt,
+    // so absent from the write set, but a by-id read must still resolve their ids. Appended here
+    // (NOT folded into MCP_MEMORY_LABELS), so the exempt kinds never enter forget/pin breadth.
     let read_labels: Vec<&str> = crate::lifecycle::MCP_MEMORY_LABELS
         .iter()
         .copied()
-        .chain([CoreBlock::LABEL, WorkItem::LABEL, Tag::LABEL])
+        .chain([
+            CoreBlock::LABEL,
+            WorkItem::LABEL,
+            Tag::LABEL,
+            Message::LABEL,
+        ])
         .collect();
 
     // Fetch each id (each under its own single snapshot); missing and unauthorized ids are
@@ -466,7 +472,7 @@ fn episode_visible(episode: &Episode, visible: &VisibleSet, surface_system: bool
 ///    hidden unless the reader holds the capability *and* opted in — for every kind, even
 ///    the roleless ones.
 /// 3. **Role gate (Episode-only)** — a `Role::System` turn stays hidden unless
-///    `surface_system`. Only `Episode` carries a `Role`; the other eight kinds have none, so
+///    `surface_system`. Only `Episode` carries a `Role`; the other nine kinds have none, so
 ///    this conjunct is vacuously satisfied for them (matching `search`/`resolve_fact`, which
 ///    gate the roleless kinds on namespace + expiry alone).
 ///
@@ -478,7 +484,7 @@ fn memory_visible(memory: &ResolvedMemory, visible: &VisibleSet, surface_system:
         && visible.contains(&identity.namespace)
         && match memory {
             // Only episodes carry a Role, and a system-role turn is the instruction-injection
-            // vector the system reveal gates. The eight roleless kinds have no such vector, so
+            // vector the system reveal gates. The nine roleless kinds have no such vector, so
             // they are gated by namespace + expiry alone — matching recall, which surfaces
             // e.g. core blocks on live + namespace-visible (selection.rs `core_block_entries`,
             // with no role/surface_system gate). Keeping read consistent with recall is what

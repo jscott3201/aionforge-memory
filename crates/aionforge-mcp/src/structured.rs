@@ -6,6 +6,7 @@ use serde_json::Value;
 
 pub(crate) mod census;
 pub(crate) mod inspect;
+pub(crate) mod message;
 pub(crate) mod search;
 
 /// A tool result split into the stable text payload and the typed `structuredContent` payload.

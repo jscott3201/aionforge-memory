@@ -1,7 +1,8 @@
 # Agent Guide for Aionforge Memory
 
 Aionforge Memory is a Rust long-term memory layer for AI agents. It stores
-episodes, facts, notes, skills, bad patterns, core memory, and audit events in
+episodes, facts, notes, skills, bad patterns, core memory, addressed agent/team
+messages, and audit events in
 `selene-db`, then retrieves relevant context with lexical anchors, vector search,
 graph traversal, recency, importance, and trust signals.
 

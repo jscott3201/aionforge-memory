@@ -143,6 +143,12 @@ pub enum AuditKind {
     /// the `from`/`to` states; the event's `subject_id` is the work item and its `occurred_at` is
     /// when the transition happened, so a work item's lifecycle is the by-subject audit history.
     WorkStatusChange,
+    /// A message was delivered into its recipient inbox. The payload records the authenticated
+    /// sender and canonical recipient; the message is the event's subject.
+    MessageSend,
+    /// A message's `read_state` changed. The payload records the prior and new states; the
+    /// message is the event's subject and the acting recipient is the event's actor.
+    MessageReadStateChange,
 }
 
 /// A single forensic audit record — the highest-cardinality kind (02 §4.11).

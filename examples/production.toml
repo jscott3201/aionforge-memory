@@ -43,6 +43,14 @@ enabled = false
 [forgetting]
 enabled = false
 
+# Dedicated durable-message lifecycle. This is independent of generic forgetting and
+# consolidation: acknowledged messages use the shorter window, while unread/read messages
+# remain available longer. The serving process sweeps immediately at startup and hourly.
+[messages]
+retention_enabled = true
+retention_acked_days = 30
+retention_unacked_days = 90
+
 [drift]
 enabled = false
 

@@ -13,7 +13,7 @@
 
 Aionforge Memory gives agents a durable memory store they can recall across
 sessions. It stores captured episodes, derived facts and notes, procedural
-memory, work items, provenance, and audit events in
+memory, work items, addressed agent messages, provenance, and audit events in
 [`selene-db`](https://github.com/jscott3201/selene-db), then recalls relevant
 context with lexical search, vector search, graph signals, recency, importance,
 and trust-aware ranking.
@@ -60,6 +60,7 @@ them disabled. Start with the [embedding guide](docs/embedding-guide.md).
 - Hybrid recall across lexical matches, vectors, graph expansion, recency,
   importance, and trust signals.
 - Explicit agent-private, team, global, and system namespaces.
+- Durable, addressed agent/team messages with polling, acknowledgements, and TTL retention.
 - Provenance and audit records for writes.
 - A single `aionforge` binary with `doctor`, `recover`, and `serve`.
 - MCP over stdio or Streamable HTTP.
@@ -163,6 +164,7 @@ Start here:
 - [Data model and mental model](docs/data-model.md) - what gets stored and recalled.
 - [Embedding guide](docs/embedding-guide.md) - providers, dimensions, and secrets.
 - [MCP client support](docs/mcp-clients.md) - Codex, Claude Code, OpenCode, Cursor.
+- [Agent messages](docs/messages.md) - addressed delivery, polling, acknowledgements, and retention.
 - [Agent plugin](docs/plugins.md) - skills, identity, and client notes.
 - [Security model](docs/security-model.md) - namespaces, untrusted recall, signing.
 - [Observability](docs/observability.md) - logging, metrics, traffic, and tracing.

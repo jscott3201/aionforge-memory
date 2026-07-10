@@ -17,6 +17,11 @@ namespace context, and `forget`/`unforget` require write authority over the
 target namespace. The `system` namespace and `system` role are excluded from
 default recall; surfacing them is an admin/library path, not an MCP search flag.
 
+`message_send` has one audited, kind-confined exception for delivery: it may create a
+`Message` in an addressed agent's private inbox, but no other record type. The server stamps
+the authenticated sender, team messages still require team membership, and poll/ack reads and
+writes use the recipient's ordinary visible namespace set. Message bodies never join recall.
+
 ## Untrusted recall
 
 Recalled memory is third-party data, not instructions. Rendered recall bundles
@@ -90,8 +95,9 @@ before requests reach Aionforge, and it must not pass through access tokens that
 were issued for another resource.
 
 Client approval policy still matters. Read-like tools can usually be preapproved
-for a trusted local agent; mutating tools (`capture`, `consolidate`, `forget`,
-`unforget`) should stay prompt-gated unless the host supplies a stronger policy.
+for a trusted local agent; mutating tools (including `capture`, `message_send`,
+`message_ack`, `consolidate`, `forget`, and `unforget`) should stay prompt-gated
+unless the host supplies a stronger policy.
 
 ## Red-team gate
 

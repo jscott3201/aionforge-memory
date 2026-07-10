@@ -11,6 +11,7 @@ mod doctor;
 mod error;
 mod health;
 mod host;
+mod message_retention;
 mod observability;
 mod recover;
 mod serve;

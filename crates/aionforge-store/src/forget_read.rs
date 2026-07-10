@@ -19,6 +19,7 @@ use aionforge_domain::ids::Id;
 use aionforge_domain::nodes::associative::Note;
 use aionforge_domain::nodes::core::CoreBlock;
 use aionforge_domain::nodes::episodic::Episode;
+use aionforge_domain::nodes::message::Message;
 use aionforge_domain::nodes::procedural::{BadPattern, Skill};
 use aionforge_domain::nodes::semantic::{Entity, Fact};
 use aionforge_domain::nodes::work::{Tag, WorkItem};
@@ -121,6 +122,8 @@ pub enum ResolvedMemory {
     WorkItem(WorkItem),
     /// A classification tag (Identity-only; not a forgettable memory).
     Tag(Tag),
+    /// A durable inbox message (Identity-only; readable by id, never forgettable).
+    Message(Message),
 }
 
 impl ResolvedMemory {
@@ -138,6 +141,7 @@ impl ResolvedMemory {
             Self::Core(memory) => &memory.identity,
             Self::WorkItem(memory) => &memory.identity,
             Self::Tag(memory) => &memory.identity,
+            Self::Message(memory) => &memory.identity,
         }
     }
 }
@@ -439,6 +443,7 @@ fn resolved_memory_from_properties(
         // `blocks_from_properties`, which requires a Stats block these lack).
         WorkItem::LABEL => ResolvedMemory::WorkItem(crate::work::from_properties(props)?),
         Tag::LABEL => ResolvedMemory::Tag(crate::tag::from_properties(props)?),
+        Message::LABEL => ResolvedMemory::Message(crate::message::from_properties(props)?),
         _ => return Ok(None),
     };
     Ok(Some(resolved))

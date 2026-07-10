@@ -13,6 +13,7 @@ pub mod control;
 pub mod core;
 pub mod episodic;
 pub mod forensic;
+pub mod message;
 pub mod procedural;
 pub mod semantic;
 pub mod work;

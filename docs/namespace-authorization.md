@@ -49,6 +49,14 @@ The policy, applied by the `Authorizer` seam before a capture commits anything:
 - **Global** and **System** are never written to directly. Global is reached only through
   promotion (a separate, deliberate path); System is the substrate's own.
 
+Addressed direct-message delivery is the single narrow exception: `message_send` may create a
+`Message` in another agent's private namespace because that namespace is the recipient's inbox.
+The exception is confined to the message write path, stamps the authenticated sender server-side,
+and co-commits a mandatory fixed sender-to-recipient audit. The caller can select only the Message;
+it cannot create memory, work items, or any other caller-selected node kind in the recipient
+namespace. Team messages are not an exception and still require asserted membership in the
+recipient team.
+
 A write that asks for somewhere it isn't allowed is **refused, not silently downgraded** —
 with one exception below. The check runs *before* content de-duplication and before any node
 is written, so a forbidden write never touches the graph.
@@ -90,7 +98,7 @@ private material supplied by an attacker.
 
 ## Reads
 
-Reads are bounded by the same authority as writes. A recall takes the reading `Principal`
+Reads are bounded by the same authority as ordinary writes. A recall takes the reading `Principal`
 and asks the `Authorizer` for its **visible set** — the global space, the agent's own private
 namespace, and the teams it belongs to, never System. A memory surfaces only if its namespace
 is in that set; anything outside it is left out of the results rather than returned and
@@ -115,3 +123,8 @@ gating on top of namespace rules — supplies its own through `Memory::with_auth
 `Authorizer` is the single seam every write is checked against, so a custom policy governs the
 whole capture path, not just part of it — and the [erasure cascade](erasure.md) too, which
 demands write authority over every namespace it would destroy in.
+
+The addressed-message delivery exception is intentionally implemented above that general seam:
+agent DMs are admitted only by the `Message` constructor path, while team delivery calls the
+authorizer normally. Polling and acknowledgement return to the ordinary visible/writable namespace
+rules, so a sender does not gain read or mutation authority over the recipient's inbox.

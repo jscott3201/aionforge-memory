@@ -13,6 +13,7 @@ use aionforge_domain::namespace::Namespace;
 use aionforge_domain::nodes::agent::{Agent, AgentStatus, TrustScores};
 use aionforge_domain::nodes::episodic::{ConsolidationState, Episode, Role};
 use aionforge_domain::nodes::forensic::{AuditEvent, AuditKind};
+use aionforge_domain::nodes::message::{Message, MessageKind, MessageReadState};
 use aionforge_domain::nodes::procedural::{BadPattern, Skill};
 use aionforge_domain::nodes::semantic::{Entity, Fact, FactStatus};
 use aionforge_domain::nodes::work::{WorkItem, WorkStatus};
@@ -602,7 +603,7 @@ fn a_same_instant_forget_cycle_is_three_distinct_audit_rows() {
 }
 
 #[test]
-fn a_work_item_is_invisible_to_point_forget() {
+fn identity_only_work_and_messages_are_invisible_to_point_forget() {
     let store = store();
     let forgetter = forgetter(&store);
     let item = WorkItem {
@@ -629,6 +630,38 @@ fn a_work_item_is_invisible_to_point_forget() {
         forgetter
             .unforget(&item.identity.id, &now(), &Id::generate())
             .expect("unforget"),
+        PointUnforget::NotFound,
+    );
+
+    let sender = Id::generate();
+    let recipient = Id::generate();
+    let recipient_namespace = Namespace::Agent(recipient.to_string());
+    let message = Message {
+        identity: identity_in(recipient_namespace.clone()),
+        sender_id: sender,
+        recipient: recipient_namespace.to_string(),
+        room_id: None,
+        thread_id: None,
+        reply_to_id: None,
+        body: "identity-only pager payload".to_string(),
+        msg_kind: MessageKind::Note,
+        read_state: MessageReadState::Unread,
+        sent_at: long_ago(),
+    };
+    store
+        .save_message(&message, &sender, &message.identity.ingested_at)
+        .expect("save message");
+    assert_eq!(
+        forgetter
+            .forget(&message.identity.id, &now(), &recipient)
+            .expect("forget message"),
+        PointForget::NotFound,
+        "Message is retained only by its dedicated TTL reaper",
+    );
+    assert_eq!(
+        forgetter
+            .unforget(&message.identity.id, &now(), &recipient)
+            .expect("unforget message"),
         PointUnforget::NotFound,
     );
 }

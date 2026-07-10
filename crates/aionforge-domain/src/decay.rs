@@ -280,6 +280,7 @@ mod tests {
         use crate::nodes::associative::Note;
         use crate::nodes::core::CoreBlock;
         use crate::nodes::episodic::Episode;
+        use crate::nodes::message::Message;
         use crate::nodes::procedural::{BadPattern, Skill};
         use crate::nodes::semantic::{Entity, Fact};
 
@@ -300,6 +301,7 @@ mod tests {
             "AuditEvent",
             "Agent",
             "ConsolidationCursor",
+            Message::LABEL,
             "WorkItem",
             "Tag",
             "NoSuchKind",

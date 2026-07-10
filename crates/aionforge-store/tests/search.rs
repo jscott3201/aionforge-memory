@@ -15,6 +15,7 @@ use aionforge_domain::embedding::Embedding;
 use aionforge_domain::ids::{ContentHash, Id};
 use aionforge_domain::namespace::Namespace;
 use aionforge_domain::nodes::episodic::{ConsolidationState, Episode, Role};
+use aionforge_domain::nodes::message::{Message, MessageKind, MessageReadState};
 use aionforge_domain::time::Timestamp;
 
 use aionforge_store::{CandidateSet, NodeId, SearchKind, SetOp, Store, StoreConfig, StoreError};
@@ -206,6 +207,46 @@ fn bm25_returns_only_matching_documents() {
     assert!(
         hits.iter().all(|h| h.score > 0.0),
         "BM25 score should be positive"
+    );
+}
+
+#[test]
+fn message_body_is_behaviorally_excluded_from_native_recall() {
+    let store = store();
+    let phrase = "pagerrecallguard";
+    let episode_node = seed_text(&store, phrase);
+    let sender = Id::generate();
+    let recipient_id = Id::generate();
+    let recipient = format!("agent:{recipient_id}");
+    let message = Message {
+        identity: Identity {
+            id: Id::generate(),
+            ingested_at: ts("2026-06-06T09:31:00-05:00[America/Chicago]"),
+            namespace: Namespace::Agent(recipient_id.to_string()),
+            expired_at: None,
+        },
+        sender_id: sender,
+        recipient,
+        room_id: None,
+        thread_id: None,
+        reply_to_id: None,
+        body: phrase.to_owned(),
+        msg_kind: MessageKind::Note,
+        read_state: MessageReadState::Unread,
+        sent_at: ts("2026-06-06T09:31:00-05:00[America/Chicago]"),
+    };
+    let message_node = store
+        .save_message(&message, &sender, &message.sent_at)
+        .expect("seed identical Message body");
+
+    let hits = store
+        .text_search(SearchKind::Episode, phrase, 10)
+        .expect("actual native search");
+    let nodes: Vec<NodeId> = hits.iter().map(|hit| hit.node).collect();
+    assert_eq!(nodes, vec![episode_node], "only the Episode is recalled");
+    assert!(
+        !nodes.contains(&message_node),
+        "Message stays recall-excluded even when its body exactly matches"
     );
 }
 

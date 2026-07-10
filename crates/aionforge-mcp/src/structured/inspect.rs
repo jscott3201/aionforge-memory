@@ -12,6 +12,7 @@ use aionforge_engine::ResolvedMemory;
 use serde::Serialize;
 
 use super::StructuredToolOutput;
+use crate::render::{message_kind_tag, message_read_state_tag};
 
 #[derive(Serialize)]
 struct ReadMemoryStructured {
@@ -129,6 +130,21 @@ pub(crate) enum MemoryRecord {
         body: Option<String>,
         display: String,
         display_truncated: bool,
+    },
+    Message {
+        id: String,
+        namespace: String,
+        ingested_at: String,
+        sender_id: String,
+        recipient: String,
+        room_id: Option<String>,
+        thread_id: Option<String>,
+        reply_to_id: Option<String>,
+        msg_kind: &'static str,
+        read_state: &'static str,
+        sent_at: String,
+        body: String,
+        body_truncated: bool,
     },
     Tag {
         id: String,
@@ -346,6 +362,24 @@ pub(crate) fn memory_record(
                 body: item.body.clone(),
                 display,
                 display_truncated,
+            }
+        }
+        ResolvedMemory::Message(message) => {
+            let (body, body_truncated) = truncate_with_flag(&message.body, max_chars);
+            MemoryRecord::Message {
+                id: message.identity.id.to_string(),
+                namespace: message.identity.namespace.to_string(),
+                ingested_at: message.identity.ingested_at.to_string(),
+                sender_id: message.sender_id.to_string(),
+                recipient: message.recipient.clone(),
+                room_id: message.room_id.map(|id| id.to_string()),
+                thread_id: message.thread_id.map(|id| id.to_string()),
+                reply_to_id: message.reply_to_id.map(|id| id.to_string()),
+                msg_kind: message_kind_tag(message.msg_kind),
+                read_state: message_read_state_tag(message.read_state),
+                sent_at: message.sent_at.to_string(),
+                body,
+                body_truncated,
             }
         }
         ResolvedMemory::Tag(tag) => {

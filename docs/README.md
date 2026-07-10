@@ -20,6 +20,9 @@ This is reference and guides, not planning or changelogs.
 
 ## Reading and writing
 
+- [Agent messages](messages.md) — durable addressed delivery between agents and teams:
+  authenticated sender metadata, recipient-inbox namespaces, untrusted poll rendering,
+  guarded acknowledgement, and ack-aware retention outside recall and forgetting.
 - [Capture](capture.md) — the fast write path: the privacy/injection filter and the origin
   block, exact-then-near dedup, the ADD-or-nothing decision, embedding and provenance, and the
   single durable-before-visible commit.

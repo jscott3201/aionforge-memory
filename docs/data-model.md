@@ -58,7 +58,7 @@ The most important distinction is this:
 
 ## 2. Node families
 
-The graph contains **19 node labels**. Only seven are memory-bearing node kinds that carry recall/decay state; the rest are scaffolding for identity, provenance, audit, work tracking, validity, and versioning.
+The graph contains **20 node labels**. Only seven are memory-bearing node kinds that carry recall/decay state; the rest are scaffolding for identity, provenance, audit, work tracking, addressed messaging, validity, and versioning.
 
 <p align="center">
   <img src="./assets/memory-graph-schema.svg" alt="Aionforge Memory node families and relationships" width="100%">
@@ -92,6 +92,7 @@ These nodes carry `Identity` but not `Stats`; they are exempt from decay and exi
 | `Agent` | Identifies an actor that can attest to or interact with memory. |
 | `MemSession` | Groups captures and interactions into a session. |
 | `WorkItem` | Tracks work state; hierarchy is stored with `parent_id`, not an edge. |
+| `Message` | Delivers an addressed, ack-tracked agent/team payload; room, thread, and reply links are indexed scalar ids. |
 | `Tag` | Labels facts for classification or retrieval support. |
 | `ProvenanceRecord` | Records source identity, transport, signature, and trust metadata. |
 | `AuditEvent` | Records what happened and why. |
@@ -137,7 +138,8 @@ Three edge details prevent common misunderstandings:
 
 1. **Fact currentness lives on edges.** `Fact.status` is a convenient mirror, but bi-temporal validity is carried on the `ABOUT` edge. Recall excludes superseded or contradicted facts by relationship semantics.
 2. **`DERIVED_FROM` and `AUDIT` are polymorphic.** They can attach lineage and audit evidence to different node kinds, not just the simplified paths shown in diagrams.
-3. **Work hierarchy is not a graph edge.** `WorkItem` parent-child structure is stored as a scalar `parent_id` pointer.
+3. **Work and message pointers are not graph edges.** `WorkItem.parent_id` and a
+   message's `room_id`, `thread_id`, and `reply_to_id` are indexed scalar pointers.
 
 Implementation source of truth: `crates/aionforge-domain/src/nodes/*` and `crates/aionforge-domain/src/edges.rs`.
 
@@ -336,10 +338,12 @@ These inspect memory without writing new memory and without requiring a write pr
 | `search` | Retrieve the rendered recall bundle described above. |
 | `read_memory` | Read full nodes by id. |
 | `session_manifest` | Inspect session-level memory context. |
+| `memory_census` | Inspect visible namespace counts or page visible memories. |
 | `server_status` | Inspect census and health. |
 | `consolidation_status` | Inspect background consolidation position/state. |
 | `audit_history` | Inspect audit events. |
 | `work_tree`, `work_query` | Inspect work-tracking state. |
+| `message_poll` | Poll addressed messages without changing read state. |
 
 ### Mutating operations
 
@@ -349,6 +353,7 @@ Writes are explicit tool calls and are gated by the host’s approval policy.
 |---|---|
 | `capture`, `batch_capture` | Adds new episodes. |
 | `work_create`, `work_advance`, `work_link` | Updates work-tracking records. |
+| `message_send`, `message_ack` | Delivers messages and advances their guarded read state. |
 | `pin`, `unpin` | Changes salience exemptions. |
 | `forget`, `unforget` | Soft-forgets or restores records. |
 | `consolidate` | Runs/advances consolidation. |
@@ -363,7 +368,7 @@ These are not edge cases; they are current design boundaries that users should u
 
 | Limitation | Consumer impact |
 |---|---|
-| **Schema footprint is real.** | There are 19 node labels because provenance, audit, work, validity, and scope are modeled explicitly. Most users author only a few of them. |
+| **Schema footprint is real.** | There are 20 node labels because provenance, audit, work, messaging, validity, and scope are modeled explicitly. Most users author only a few of them. |
 | **Entity over-segmentation is expected.** | Conservative resolution can split one real-world thing into multiple `Entity` nodes. Recall can miss facts attached to sibling fragments. There is no dedup/merge-repair tool today. |
 | **No external source links.** | The body is the source. Store URLs in content if agents must retrieve them by search. |
 | **Capture sizing is caller-owned.** | The substrate does not impose a domain-level min/max/quota beyond the HTTP envelope. |
@@ -382,6 +387,7 @@ These are not edge cases; they are current design boundaries that users should u
 | Provenance and trust | [security-model.md](security-model.md) |
 | Lifecycle, merge, promotion | [consolidation.md](consolidation.md), [bi-temporal-model.md](bi-temporal-model.md), [attestation-and-promotion.md](attestation-and-promotion.md), [trust-model.md](trust-model.md), [erasure.md](erasure.md) |
 | Recall and context exposure | [retrieval.md](retrieval.md), [mcp-clients.md](mcp-clients.md) |
+| Addressed agent delivery | [messages.md](messages.md) |
 | Limitations and scope | [honest-scope.md](honest-scope.md) |
 | Agent integration | [mcp-clients.md](mcp-clients.md), `plugins/aionforge-memory` skills and nudges |
 

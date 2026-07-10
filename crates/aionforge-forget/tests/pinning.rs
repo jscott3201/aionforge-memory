@@ -10,6 +10,7 @@ use aionforge_domain::ids::{ContentHash, Id};
 use aionforge_domain::namespace::Namespace;
 use aionforge_domain::nodes::episodic::{ConsolidationState, Episode, Role};
 use aionforge_domain::nodes::forensic::AuditKind;
+use aionforge_domain::nodes::message::{Message, MessageKind, MessageReadState};
 use aionforge_domain::nodes::procedural::{BadPattern, Skill};
 use aionforge_domain::nodes::semantic::{Entity, Fact, FactStatus};
 use aionforge_domain::nodes::work::{WorkItem, WorkStatus};
@@ -384,7 +385,7 @@ fn skills_and_bad_patterns_pin_like_every_other_kind() {
 }
 
 #[test]
-fn a_work_item_is_invisible_to_point_pin() {
+fn identity_only_work_and_messages_are_invisible_to_point_pin() {
     let store = store();
     let item = WorkItem {
         identity: identity_in(Namespace::Agent("alice".to_string())),
@@ -406,6 +407,34 @@ fn a_work_item_is_invisible_to_point_pin() {
     );
     assert_eq!(
         unpin(&store, &item.identity.id, &now(), &Id::generate()).expect("unpin"),
+        PointUnpin::NotFound,
+    );
+
+    let sender = Id::generate();
+    let recipient = Id::generate();
+    let recipient_namespace = Namespace::Agent(recipient.to_string());
+    let message = Message {
+        identity: identity_in(recipient_namespace.clone()),
+        sender_id: sender,
+        recipient: recipient_namespace.to_string(),
+        room_id: None,
+        thread_id: None,
+        reply_to_id: None,
+        body: "identity-only pager payload".to_string(),
+        msg_kind: MessageKind::Note,
+        read_state: MessageReadState::Unread,
+        sent_at: long_ago(),
+    };
+    store
+        .save_message(&message, &sender, &message.identity.ingested_at)
+        .expect("save message");
+    assert_eq!(
+        pin(&store, &message.identity.id, &now(), &recipient).expect("pin message"),
+        PointPin::NotFound,
+        "Message has dedicated TTL retention and no generic pin state",
+    );
+    assert_eq!(
+        unpin(&store, &message.identity.id, &now(), &recipient).expect("unpin message"),
         PointUnpin::NotFound,
     );
 }
