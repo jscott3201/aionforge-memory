@@ -3,7 +3,7 @@
 //! Its own module because the serve-HTTP transport posture is a coherent unit: the bind
 //! address, the Host/Origin allow-lists the browser-facing transport enforces, and
 //! whether sessions are stateful. Promoting these knobs from CLI-flag-only into the
-//! layered [`Config`](crate::Config) is what lets a console deployment carry its own
+//! layered [`Config`](crate::Config) is what lets a deployment carry its own
 //! `[server]` block; the CLI flags remain the highest-precedence override, merged on top
 //! of this block by the host.
 //!

@@ -190,7 +190,7 @@ pub(crate) enum LogFormat {
     /// Human-readable single-line events (the default; best for local/dev).
     #[default]
     Text,
-    /// One JSON object per event (for production ingestion and the operator console).
+    /// One JSON object per event (for production log ingestion).
     Json,
 }
 

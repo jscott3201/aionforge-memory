@@ -3,7 +3,7 @@
 Aionforge emits spans/events through the [`tracing`](https://docs.rs/tracing) facade and metrics
 through the `metrics` facade. The **`aionforge` binary installs a tracing subscriber** (see
 [Logging](#logging) below), so events reach stderr out of the box; the **metrics** facade stays a
-no-op until a host installs a recorder (a deliberate follow-up wired with the operator console).
+no-op until a host installs a recorder (a deliberate follow-up).
 Metric labels and span fields are deliberately low-cardinality: no query text, memory content,
 namespace ids, agent ids, file paths, request ids, or model names are used. Use audit reads and
 `aionforge doctor --json` for high-detail inspection.

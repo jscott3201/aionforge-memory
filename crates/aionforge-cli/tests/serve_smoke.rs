@@ -21,8 +21,6 @@ fn serve_http_binary_answers_initialize_with_server_info() {
     let data_dir = temp_dir.path().join("data");
     fs::create_dir_all(&data_dir).expect("create smoke-test data directory");
     restrict_dir_permissions(&data_dir);
-    let console_dir = temp_dir.path().join("console");
-    write_console_dist(&console_dir);
 
     let config_path = temp_dir.path().join("config.toml");
     fs::write(
@@ -38,7 +36,7 @@ enabled = false
     .expect("write smoke-test config");
 
     let listen_addr = unused_loopback_addr();
-    let mut server = ServerProcess::spawn(&config_path, &data_dir, &console_dir, listen_addr);
+    let mut server = ServerProcess::spawn(&config_path, &data_dir, listen_addr);
     let initialize = match wait_for_initialize(&mut server, listen_addr, INITIALIZE_TIMEOUT) {
         Ok(initialize) => initialize,
         Err(error) => {
@@ -83,21 +81,7 @@ enabled = false
     );
     assert_eq!(version_json["embedder_dimension"], 1536);
 
-    assert_http_get(listen_addr, "/console", "200", "Aionforge console shell");
-    assert_http_get(
-        listen_addr,
-        "/console/records",
-        "200",
-        "Aionforge console shell",
-    );
-    assert_http_get(
-        listen_addr,
-        "/console/_app/immutable/app.js",
-        "200",
-        "console asset",
-    );
-    assert_http_get(listen_addr, "/console/_app/missing.js", "404", "Not Found");
-    assert_http_get(listen_addr, "/not-console", "404", "Not Found");
+    assert_http_get(listen_addr, "/nonexistent", "404", "Not Found");
 
     let _ = server.terminate();
 }
@@ -134,12 +118,7 @@ struct ServerProcess {
 }
 
 impl ServerProcess {
-    fn spawn(
-        config_path: &Path,
-        data_dir: &Path,
-        console_dir: &Path,
-        listen_addr: SocketAddr,
-    ) -> Self {
+    fn spawn(config_path: &Path, data_dir: &Path, listen_addr: SocketAddr) -> Self {
         let child = Command::new(env!("CARGO_BIN_EXE_aionforge"))
             .arg("--config")
             .arg(config_path)
@@ -151,7 +130,6 @@ impl ServerProcess {
             .arg(listen_addr.to_string())
             .env("AIONFORGE_EMBEDDER__ENABLED", "false")
             .env("AIONFORGE_CONSOLIDATION__ENABLED", "false")
-            .env("AIONFORGE_CONSOLE_DIST_DIR", console_dir)
             .env("AIONFORGE_TRAFFIC_HEARTBEAT_SECS", "0")
             .env("RUST_LOG", "warn")
             .env_remove("AIONFORGE_ACTIVE_DEPLOYMENT")
@@ -191,20 +169,6 @@ impl Drop for ServerProcess {
             let _ = child.wait();
         }
     }
-}
-
-fn write_console_dist(console_dir: &Path) {
-    fs::create_dir_all(console_dir.join("_app/immutable")).expect("create console asset tree");
-    fs::write(
-        console_dir.join("200.html"),
-        "<!doctype html><title>Aionforge console shell</title>",
-    )
-    .expect("write console shell");
-    fs::write(
-        console_dir.join("_app/immutable/app.js"),
-        "console.log('console asset');",
-    )
-    .expect("write console asset");
 }
 
 fn wait_for_initialize(

@@ -38,7 +38,6 @@ Closes #
 - [ ] `cargo test --workspace --locked --all-features --doc`
 - [ ] `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace --lib --document-private-items --locked`
 - [ ] Repository fast gates: `bash .github/scripts/check-file-size.sh`, `check-no-secrets.sh`, `check-plugin-package.sh`, `check-no-gql-interpolation.sh`, `check-store-only-selene.sh`, `check-audit-keygen-confined.sh`, `check-principal-gate.sh`
-- [ ] Console changes ran: `cd ui/console && pnpm install --frozen-lockfile && pnpm validate` — or N/A
 
 <!--
   Dependency / manifest changes only (Cargo.lock, Cargo.toml, crates/*/Cargo.toml,

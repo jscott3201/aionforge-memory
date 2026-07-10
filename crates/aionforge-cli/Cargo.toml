@@ -19,7 +19,6 @@ aionforge-config = { path = "../aionforge-config", version = "0.3.0" }
 aionforge-embed = { path = "../aionforge-embed", version = "0.3.0" }
 aionforge-mcp = { path = "../aionforge-mcp", version = "0.3.0" }
 aionforge-store = { path = "../aionforge-store", version = "0.3.0" }
-aionforge-tui = { path = "../aionforge-tui", version = "0.3.0" }
 axum = { version = "0.8.9", default-features = false, features = ["tokio", "http1", "http2"] }
 bytes = "1"
 clap = { workspace = true }
@@ -28,13 +27,12 @@ secrecy = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["net", "signal"] }
-tower = { version = "0.5", features = ["util"] }
-tower-http = { version = "0.6.11", features = ["fs"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 url = "2"
 
 [dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
 wiremock = { workspace = true }
 
 [lints]
