@@ -65,7 +65,10 @@ event time—is immutable after send; only `read_state` and retention expiry mov
   waits until a newly committed message arrives or the bounded timeout expires.
   `after` and `unread_only` are the usual "new since" controls. Waiting never
   auto-acks. A timeout is a normal empty page with `timed_out=true`, `next=null`,
-  and the empty untrusted wrapper—not an error.
+  and the empty untrusted wrapper—not an error. A caller that supplies an MCP
+  `_meta.progressToken` receives best-effort `notifications/progress` heartbeats
+  while this wait is parked; they contain only elapsed seconds, the configured
+  total, and the fixed text `still waiting; 0 new`, never message content.
 - `message_ack` advances 1..=64 messages to `read` or `acked`. Transitions use a
   guarded compare-and-set and never downgrade an acknowledged message.
 
@@ -78,6 +81,14 @@ safety bound, the server polls once and returns immediately without parking. Tha
 one-shot response has `timed_out=true` even when it carries a currently pending
 page. These breadth bounds prevent one auth-disabled local call from pinning an
 unbounded notifier registry; they are defensive sheds, not errors.
+
+Progress heartbeats are opt-in: without `_meta.progressToken`, `message_wait`
+does no heartbeat work. `wait_heartbeat_seconds` defaults to 15 and controls the
+opted-in cadence; values at or above `wait_max_seconds` are valid and simply do
+not fire before the normal timeout. Heartbeats are a best-effort side channel
+over stdio or stateful Streamable HTTP; stateless Streamable HTTP suppresses them
+so it always returns the normal final page. A failed delivery never affects that
+page, and no heartbeat reads stored message bodies.
 
 The MCP `message_send` handler is currently the only production writer of
 `Message` nodes. It signals the recipient's waiters strictly after the store
@@ -99,6 +110,7 @@ wait_default_seconds = 25
 wait_max_seconds = 55
 wait_max_concurrent = 256
 wait_max_recipients = 256
+wait_heartbeat_seconds = 15
 ```
 
 The serve process runs a dedicated reaper. Acknowledged messages use the shorter

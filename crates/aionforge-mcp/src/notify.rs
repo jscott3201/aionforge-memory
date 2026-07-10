@@ -1,13 +1,19 @@
 //! In-process wakeups for bounded message long-polls.
 
 use std::collections::HashMap;
+use std::future::Future;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, Weak};
+use std::time::Duration;
 
 use aionforge_config::MessagesConfig;
+use rmcp::RoleServer;
+use rmcp::model::{ProgressNotificationParam, ProgressToken};
+use rmcp::service::Peer;
 use tokio::sync::Notify;
 
 const MAX_RECIPIENT_KEY_BYTES_PER_WAIT: usize = 64 * 1024;
+const HEARTBEAT_SEND_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Runtime bounds for `message_wait`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -20,6 +26,8 @@ pub struct MessageWaitBounds {
     pub max_concurrent: usize,
     /// Maximum canonical recipient keys registered by one parked wait.
     pub max_recipients: usize,
+    /// Cadence for opt-in progress heartbeats while a wait is parked.
+    pub heartbeat_seconds: u64,
 }
 
 impl Default for MessageWaitBounds {
@@ -35,6 +43,7 @@ impl From<&MessagesConfig> for MessageWaitBounds {
             max_seconds: config.wait_max_seconds,
             max_concurrent: config.wait_max_concurrent,
             max_recipients: config.wait_max_recipients,
+            heartbeat_seconds: config.wait_heartbeat_seconds,
         }
     }
 }
@@ -44,6 +53,75 @@ impl MessageWaitBounds {
     pub(crate) fn resolve_seconds(self, requested: Option<u64>) -> u64 {
         let max = self.max_seconds.max(1);
         requested.unwrap_or(self.default_seconds).clamp(1, max)
+    }
+
+    /// Resolve a safe interval for opted-in progress notifications.
+    pub(crate) fn heartbeat_period(self) -> Duration {
+        Duration::from_secs(self.heartbeat_seconds.clamp(1, 86_400))
+    }
+}
+
+/// Handler-side progress context that is retained only for an opted-in parked wait.
+pub(crate) struct HeartbeatSink {
+    peer: Peer<RoleServer>,
+    token: ProgressToken,
+    period: Duration,
+}
+
+impl HeartbeatSink {
+    pub(crate) fn new(peer: Peer<RoleServer>, token: ProgressToken, period: Duration) -> Self {
+        Self {
+            peer,
+            token,
+            period,
+        }
+    }
+
+    pub(crate) fn start(self, total_seconds: f64, started: tokio::time::Instant) -> Heartbeat {
+        Heartbeat {
+            peer: self.peer,
+            token: self.token,
+            period: self.period,
+            total_seconds,
+            started,
+        }
+    }
+}
+
+/// Best-effort progress side channel for one parked wait.
+pub(crate) struct Heartbeat {
+    peer: Peer<RoleServer>,
+    token: ProgressToken,
+    period: Duration,
+    total_seconds: f64,
+    started: tokio::time::Instant,
+}
+
+impl Heartbeat {
+    async fn emit(&self, deadline: tokio::time::Instant) {
+        let ceiling = (self.total_seconds - 0.5).max(0.0);
+        let elapsed = self.started.elapsed().as_secs_f64().min(ceiling);
+        let params = ProgressNotificationParam::new(self.token.clone(), elapsed)
+            .with_total(self.total_seconds)
+            .with_message("still waiting; 0 new");
+        let send_bound = HEARTBEAT_SEND_TIMEOUT
+            .min(self.period)
+            .min(deadline.saturating_duration_since(tokio::time::Instant::now()));
+        if send_bound.is_zero() {
+            return;
+        }
+        send_heartbeat(send_bound, self.peer.notify_progress(params)).await;
+    }
+}
+
+async fn send_heartbeat(
+    send_bound: Duration,
+    send: impl Future<Output = Result<(), rmcp::ServiceError>>,
+) {
+    match tokio::time::timeout(send_bound, send).await {
+        Ok(Ok(())) => {}
+        Ok(Err(_)) => tracing::debug!("message_wait heartbeat send failed; ignoring"),
+        Err(_) => tracing::debug!("message_wait heartbeat send timed out; ignoring"),
     }
 }
 
@@ -153,8 +231,19 @@ impl WaitTicket<'_> {
     pub(crate) async fn wait_until<T, E>(
         &self,
         deadline: tokio::time::Instant,
+        heartbeat: Option<Heartbeat>,
         mut poll: impl FnMut() -> Result<Option<T>, E>,
     ) -> Result<Option<T>, E> {
+        let mut ticker = heartbeat.as_ref().and_then(|heartbeat| {
+            tokio::time::Instant::now()
+                .checked_add(heartbeat.period)
+                .map(|first_tick| {
+                    let mut ticker = tokio::time::interval_at(first_tick, heartbeat.period);
+                    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                    ticker
+                })
+        });
+
         loop {
             let notified = self.notify.notified();
             tokio::pin!(notified);
@@ -164,8 +253,33 @@ impl WaitTicket<'_> {
                 return Ok(Some(value));
             }
             let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-            if remaining.is_zero() || tokio::time::timeout(remaining, notified).await.is_err() {
+            if remaining.is_zero() {
                 return Ok(None);
+            }
+
+            match ticker.as_mut() {
+                None => {
+                    if tokio::time::timeout(remaining, notified).await.is_err() {
+                        return Ok(None);
+                    }
+                }
+                Some(ticker) => {
+                    tokio::select! {
+                        biased;
+                        _ = &mut notified => {}
+                        _ = tokio::time::sleep_until(deadline) => return Ok(None),
+                        _ = ticker.tick() => {
+                            if let Some(heartbeat) = heartbeat.as_ref() {
+                                heartbeat.emit(deadline).await;
+                            }
+                            // A bounded send can consume the remaining deadline budget; do not
+                            // make an expired post-tick poll change a timed-out result.
+                            if deadline <= tokio::time::Instant::now() {
+                                return Ok(None);
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -212,6 +326,7 @@ mod tests {
             max_seconds: 5,
             max_concurrent: 1,
             max_recipients: 2,
+            heartbeat_seconds: 3,
         };
         assert_eq!(bounds.resolve_seconds(None), 3);
         assert_eq!(bounds.resolve_seconds(Some(0)), 1);
@@ -223,6 +338,23 @@ mod tests {
             }
             .resolve_seconds(Some(2)),
             1,
+        );
+        assert_eq!(bounds.heartbeat_period(), Duration::from_secs(3));
+        assert_eq!(
+            MessageWaitBounds {
+                heartbeat_seconds: 0,
+                ..bounds
+            }
+            .heartbeat_period(),
+            Duration::from_secs(1),
+        );
+        assert_eq!(
+            MessageWaitBounds {
+                heartbeat_seconds: 86_401,
+                ..bounds
+            }
+            .heartbeat_period(),
+            Duration::from_secs(86_400),
         );
     }
 
@@ -334,6 +466,7 @@ mod tests {
             std::time::Duration::from_millis(50),
             ticket.wait_until(
                 tokio::time::Instant::now() + std::time::Duration::from_secs(1),
+                None,
                 || -> Result<Option<&'static str>, ()> {
                     polls += 1;
                     if polls == 1 {
@@ -352,5 +485,23 @@ mod tests {
         .expect("poll succeeds");
         assert_eq!(found, Some("committed message"));
         assert_eq!(polls, 2);
+    }
+
+    #[tokio::test]
+    async fn heartbeat_send_failures_and_timeouts_are_ignored() {
+        send_heartbeat(
+            Duration::from_millis(1),
+            std::future::ready(Err(rmcp::ServiceError::TransportClosed)),
+        )
+        .await;
+        tokio::time::timeout(
+            Duration::from_millis(50),
+            send_heartbeat(
+                Duration::from_millis(1),
+                std::future::pending::<Result<(), rmcp::ServiceError>>(),
+            ),
+        )
+        .await
+        .expect("timed-out progress sends must not block the wait loop");
     }
 }

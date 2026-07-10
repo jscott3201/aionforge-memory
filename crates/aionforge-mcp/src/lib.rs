@@ -126,6 +126,7 @@ pub struct AionforgeMcp<E> {
     consolidation_lock: Arc<tokio::sync::Mutex<()>>,
     notifier: Arc<notify::MessageNotifier>,
     wait_bounds: MessageWaitBounds,
+    heartbeats_enabled: bool,
     // Used by the rmcp-generated `#[tool_handler]` impl; the macro expansion hides the
     // read from the dead-code analyzer.
     #[allow(dead_code)]
@@ -341,6 +342,11 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, String> {
         let extension = validated_principal_from_extensions(&context.extensions);
+        let heartbeat = message::message_wait_heartbeat_sink(
+            &context,
+            self.wait_bounds,
+            self.heartbeats_enabled,
+        );
         message::message_wait_tool_output(
             &self.memory,
             &self.notifier,
@@ -348,6 +354,7 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
             extension,
             self.auth_enabled(),
             self.wait_bounds,
+            heartbeat,
         )
         .await
         .map(structured::call_tool_result)

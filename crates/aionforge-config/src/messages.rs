@@ -19,6 +19,7 @@
 //! wait_max_seconds = 55
 //! wait_max_concurrent = 256
 //! wait_max_recipients = 256
+//! wait_heartbeat_seconds = 15
 //! ```
 
 use serde::{Deserialize, Serialize};
@@ -34,7 +35,7 @@ pub const DEFAULT_WAIT_MAX_RECIPIENTS: usize = 256;
 /// 90 days. A serving host may disable the reaper without changing either configured window by
 /// setting [`retention_enabled`](Self::retention_enabled) to `false`. Long-polls default to 25
 /// seconds, are clamped to 55 seconds, and admit at most 256 concurrently parked calls with 256
-/// canonical recipient keys apiece.
+/// canonical recipient keys apiece. Opted-in progress heartbeats default to 15 seconds.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct MessagesConfig {
@@ -52,6 +53,8 @@ pub struct MessagesConfig {
     pub wait_max_concurrent: usize,
     /// Maximum canonical recipient keys one wait may register before it becomes a one-shot read.
     pub wait_max_recipients: usize,
+    /// Cadence for opt-in progress heartbeats while a `message_wait` call is parked.
+    pub wait_heartbeat_seconds: u64,
 }
 
 impl Default for MessagesConfig {
@@ -64,6 +67,7 @@ impl Default for MessagesConfig {
             wait_max_seconds: 55,
             wait_max_concurrent: 256,
             wait_max_recipients: DEFAULT_WAIT_MAX_RECIPIENTS,
+            wait_heartbeat_seconds: 15,
         }
     }
 }
@@ -94,6 +98,18 @@ impl MessagesConfig {
                 "must be at least 1",
             ));
         }
+        if self.wait_heartbeat_seconds == 0 {
+            return Err(ConfigError::invalid(
+                "messages.wait_heartbeat_seconds",
+                "must be at least 1",
+            ));
+        }
+        if self.wait_heartbeat_seconds > 86_400 {
+            return Err(ConfigError::invalid(
+                "messages.wait_heartbeat_seconds",
+                "must be at most 86400",
+            ));
+        }
         Ok(())
     }
 }
@@ -112,6 +128,7 @@ mod tests {
         assert_eq!(config.wait_max_seconds, 55);
         assert_eq!(config.wait_max_concurrent, 256);
         assert_eq!(config.wait_max_recipients, DEFAULT_WAIT_MAX_RECIPIENTS);
+        assert_eq!(config.wait_heartbeat_seconds, 15);
     }
 
     #[test]
@@ -131,6 +148,7 @@ mod tests {
             wait_max_seconds: 9,
             wait_max_concurrent: 12,
             wait_max_recipients: 24,
+            wait_heartbeat_seconds: 6,
         };
         let json = serde_json::to_string(&config).expect("serialize");
         let back: MessagesConfig = serde_json::from_str(&json).expect("deserialize");
@@ -169,5 +187,27 @@ mod tests {
             ..MessagesConfig::default()
         };
         assert!(config.validate().is_err());
+
+        let config = MessagesConfig {
+            wait_heartbeat_seconds: 0,
+            ..MessagesConfig::default()
+        };
+        assert!(config.validate().is_err());
+
+        let config = MessagesConfig {
+            wait_heartbeat_seconds: 86_401,
+            ..MessagesConfig::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn heartbeat_may_equal_or_exceed_the_maximum_wait() {
+        let defaults = MessagesConfig::default();
+        let config = MessagesConfig {
+            wait_heartbeat_seconds: defaults.wait_max_seconds + 1,
+            ..defaults
+        };
+        assert!(config.validate().is_ok());
     }
 }

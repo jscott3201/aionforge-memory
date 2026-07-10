@@ -356,16 +356,18 @@ pub fn streamable_http_service_with_consolidation_and_message_wait<E: Embedder +
     wait_bounds: MessageWaitBounds,
 ) -> Result<AionforgeStreamableHttpService<E>, StreamableHttpConfigError> {
     let max_request_body_bytes = options.max_request_body_bytes;
+    let heartbeats_enabled = options.stateful_mode;
     let config = streamable_http_config(options)?;
     let notifier = Arc::new(MessageNotifier::default());
     let service = StreamableHttpService::new(
         move || {
-            Ok(AionforgeMcp::new_with_runtime(
+            Ok(AionforgeMcp::new_with_runtime_and_heartbeat_support(
                 Arc::clone(&memory),
                 auth.clone(),
                 background_managed,
                 Arc::clone(&notifier),
                 wait_bounds,
+                heartbeats_enabled,
             ))
         },
         Arc::new(LocalSessionManager::default()),
