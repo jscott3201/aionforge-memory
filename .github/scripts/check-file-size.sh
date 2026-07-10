@@ -18,7 +18,7 @@ while IFS= read -r f; do
 done < <(
   git ls-files \
     '*.rs' '*.js' '*.jsx' '*.ts' '*.tsx' '*.svelte' '*.css' 2>/dev/null \
-    | grep -v -E '^(target|generated|out|ui/console/(build|node_modules|\.svelte-kit))/'
+    | grep -v -E '^(target|generated|out)/'
 )
 
 if [ "$violations" -gt 0 ]; then

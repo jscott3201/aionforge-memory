@@ -66,7 +66,7 @@ Tools:
 
 Local discipline:
 - Keep the built-in HTTP server on loopback when auth is disabled; auth-disabled HTTP does not implement transport authentication. For shared networks, enable `[auth].enabled=true` or use an OAuth-aware perimeter.
-- Read-like tool calls preserve their compact text content and also attach MCP `structuredContent`; schema names are listed in aionforge://manifest/tools.json for console/UI clients.
+- Read-like tool calls preserve their compact text content and also attach MCP `structuredContent`; schema names are listed in aionforge://manifest/tools.json for typed MCP clients.
 - Identity tools accept principal={agent_id,teams}; legacy agent_id/viewer works when auth is disabled. If principal is present, principal.teams is authoritative and any legacy teams must match.
 - No default principal or target is derived from connection, session, or content. With auth enabled, the validated bearer-token identity is authoritative and body identity fields may only restate it.
 - Private agent namespaces are not cross-readable by receipt id; use team target_namespace or session_manifest for cross-agent bootstraps.

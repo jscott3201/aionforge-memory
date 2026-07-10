@@ -6,7 +6,6 @@
 .direnv/
 .claude/
 node_modules/
-.pnpm-store/
 .env
 .env.*
 

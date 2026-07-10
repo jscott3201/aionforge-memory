@@ -45,7 +45,7 @@ pub struct Principal {
     /// The team ids this agent is a member of (no empty entries; see [`Principal::new`]).
     #[serde(deserialize_with = "deserialize_non_empty_teams")]
     pub teams: Vec<String>,
-    /// Whether this principal holds the in-process operator capability (system-level console
+    /// Whether this principal holds the in-process operator capability (system-level
     /// visibility). **Server-set-only and deserialize-forced to `false`** — see the type docs:
     /// no JSON body can set it, and it never survives a wire round-trip. Set to `true` only by
     /// [`Principal::with_operator`], minted by the claims mapper from a validated operator token.
@@ -111,7 +111,7 @@ impl Principal {
     }
 
     /// **Server-only.** Mint an operator principal — a principal that additionally holds the
-    /// in-process operator capability (system-level console visibility). Empty team ids are
+    /// in-process operator capability (system-level visibility). Empty team ids are
     /// dropped exactly as in [`Principal::new`].
     ///
     /// This is the *sole* route to `operator == true`. It exists for the resource-server claims

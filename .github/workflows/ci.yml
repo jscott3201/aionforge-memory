@@ -8,7 +8,6 @@
 # the GQL parameter-binding gate, the no-log-leakage gate, the store-only-selene gate,
 # the audit-keygen confinement gate, and the principal mint-site gate. A cached
 # rustdoc (-D warnings) job also runs.
-# Console changes additionally run Svelte format/lint/type/build plus Playwright e2e checks.
 # When dependency manifests change, cargo-deny + THIRDPARTY.md currency run too.
 #
 # The heavyweight ubuntu build/clippy/test suite deliberately does NOT run on dev
@@ -48,7 +47,6 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       deps: ${{ steps.filter.outputs.deps }}
-      console: ${{ steps.filter.outputs.console }}
     steps:
       - uses: actions/checkout@v4
       - id: filter
@@ -62,9 +60,6 @@ jobs:
               - 'deny.toml'
               - 'about.hbs'
               - 'about.toml'
-            console:
-              - 'ui/console/**'
-              - '.github/workflows/ci.yml'
 
   fmt:
     name: fmt
@@ -162,46 +157,6 @@ jobs:
         env:
           RUSTDOCFLAGS: "-D warnings"
         run: cargo doc --no-deps --workspace --bins --document-private-items
-
-  console:
-    name: console
-    needs: changes
-    if: |
-      (github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch')
-      && needs.changes.outputs.console == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 11.1.2
-          run_install: false
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: pnpm
-          cache-dependency-path: ui/console/pnpm-lock.yaml
-      - name: install
-        working-directory: ui/console
-        run: pnpm install --frozen-lockfile
-      - name: format
-        working-directory: ui/console
-        run: pnpm format:check
-      - name: lint
-        working-directory: ui/console
-        run: pnpm lint
-      - name: typecheck
-        working-directory: ui/console
-        run: pnpm check
-      - name: build
-        working-directory: ui/console
-        run: pnpm build
-      - name: install playwright browsers
-        working-directory: ui/console
-        run: pnpm exec playwright install --with-deps chromium
-      - name: e2e
-        working-directory: ui/console
-        run: pnpm e2e
 
   deny:
     name: cargo-deny

@@ -186,7 +186,7 @@ pub fn server_status_tool(
     server_status_tool_output(resource_count, counts, work_counts, params, auth).text
 }
 
-/// Render compact status text and the console-facing structured status DTO.
+/// Render compact status text and the client-facing structured status DTO.
 #[must_use]
 pub(crate) fn server_status_tool_output(
     resource_count: usize,

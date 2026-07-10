@@ -72,7 +72,7 @@ pub struct IssuerConfig {
     /// this set is **dropped**, not granted (enforced in PR3). An empty set therefore
     /// grants no teams from this issuer.
     pub teams_allowlist: BTreeSet<String>,
-    /// The Auth0 RBAC permission string that marks a console operator, if any. Consumed
+    /// The Auth0 RBAC permission string that marks an operator, if any. Consumed
     /// in PR3 to set the operator bit; `None` means this issuer mints no operators.
     pub operator_permission: Option<String>,
     /// Clock-skew leeway in seconds applied to `exp`/`nbf`/`iat` during validation.
