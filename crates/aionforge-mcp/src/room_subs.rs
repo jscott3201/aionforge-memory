@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
 use aionforge_config::MessagesConfig;
+use futures_util::future::join_all;
 use rmcp::RoleServer;
 use rmcp::model::ResourceUpdatedNotificationParam;
 use rmcp::service::Peer;
@@ -174,20 +175,30 @@ impl RoomSubscriptions {
         };
         self.decrement_total(removed);
 
-        let mut dead = Vec::new();
-        for target in targets {
-            let result = tokio::time::timeout(
-                SEND_TIMEOUT,
-                target
-                    .peer
-                    .notify_resource_updated(ResourceUpdatedNotificationParam::new(&target.uri)),
-            )
-            .await;
-            if !matches!(result, Ok(Ok(()))) {
-                tracing::debug!("room resource update delivery failed; pruning subscription");
-                dead.push((target.marker, target.uri, target.generation));
-            }
-        }
+        let dead = join_all(targets.into_iter().map(
+            |Target {
+                 marker,
+                 peer,
+                 uri,
+                 generation,
+             }| async move {
+                let result = tokio::time::timeout(
+                    SEND_TIMEOUT,
+                    peer.notify_resource_updated(ResourceUpdatedNotificationParam::new(&uri)),
+                )
+                .await;
+                if matches!(result, Ok(Ok(()))) {
+                    None
+                } else {
+                    tracing::debug!("room resource update delivery failed; pruning subscription");
+                    Some((marker, uri, generation))
+                }
+            },
+        ))
+        .await
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
 
         if dead.is_empty() {
             return;
