@@ -3,7 +3,7 @@
 Aionforge emits spans/events through the [`tracing`](https://docs.rs/tracing) facade and metrics
 through the `metrics` facade. The **`aionforge` binary installs a tracing subscriber** (see
 [Logging](#logging) below), so events reach stderr out of the box; the **metrics** facade stays a
-no-op until a host installs a recorder (a deliberate follow-up wired with the operator console).
+no-op until a host installs a recorder (a deliberate follow-up).
 Metric labels and span fields are deliberately low-cardinality: no query text, memory content,
 namespace ids, agent ids, file paths, request ids, or model names are used. Use audit reads and
 `aionforge doctor --json` for high-detail inspection.
@@ -71,10 +71,11 @@ INFO aionforge::traffic: memory traffic phase=heartbeat
 ```
 
 - **IN** = `content` bytes clients push via `capture`/`batch_capture` (memory text being stored).
-  **OUT** = rendered recall responses of `search`/`read_memory`/`session_manifest`/the `work_*`
-  readers (the dominant outbound payload). Small control traffic (query params, receipts) is not
-  counted — this is a memory-throughput signal, not a wire-level byte meter. Counts are
-  process-cumulative and reset on restart; only HTTP/stdio tool traffic is counted.
+  **OUT** = rendered recall responses of `search`/`read_memory`/`session_manifest`/
+  `message_poll`/`message_wait`/the `work_*` readers (the dominant outbound payload).
+  Small control traffic (query params, receipts) is not counted — this is a memory-throughput
+  signal, not a wire-level byte meter. Counts are process-cumulative and reset on restart; only
+  HTTP/stdio tool traffic is counted.
 - **Bytes are authoritative; tokens are an estimate.** The server cannot run the calling client's
   tokenizer, so `est_tokens` is a deliberately coarse proxy — **bytes ÷ 4** (≈4 characters/token).
   Use it for order-of-magnitude capacity/cost intuition, never as an exact count or billing source.

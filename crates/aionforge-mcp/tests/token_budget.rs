@@ -3,15 +3,15 @@
 const MCP_LIB_RS: &str = include_str!("../src/lib.rs");
 const MAX_TOOL_DESCRIPTION_CHARS: usize = 160;
 const MAX_TOOL_DESCRIPTION_WORDS: usize = 24;
-const MAX_TOTAL_DESCRIPTION_CHARS: usize = 2_400;
-const MAX_TOTAL_DESCRIPTION_WORDS: usize = 320;
+const MAX_TOTAL_DESCRIPTION_CHARS: usize = 2_700;
+const MAX_TOTAL_DESCRIPTION_WORDS: usize = 360;
 
 #[test]
 fn mcp_tool_descriptions_stay_compact() {
     let descriptions = tool_descriptions(MCP_LIB_RS);
     assert_eq!(
         descriptions.len(),
-        18,
+        23,
         "parsed unexpected tool descriptions: {descriptions:?}"
     );
 
@@ -42,6 +42,15 @@ fn mcp_tool_descriptions_stay_compact() {
             "tool description too wordy ({words} words): {description}"
         );
     }
+}
+
+#[test]
+fn message_wait_description_discloses_recipient_cap_shedding() {
+    let descriptions = tool_descriptions(MCP_LIB_RS);
+    assert!(descriptions.iter().any(|description| {
+        description.contains("recipient over-cap polls once with timed_out=true")
+            && description.contains("never parks or errors")
+    }));
 }
 
 fn tool_descriptions(src: &str) -> Vec<String> {

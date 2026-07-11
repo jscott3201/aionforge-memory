@@ -12,7 +12,7 @@
 //! The [`through_the_real_transport`] module drives the **real** transport stack
 //! (`streamable_http_service` = `RequestBodyLimitService` wrapping rmcp's `StreamableHttpService`)
 //! end-to-end: it inserts a `ValidatedPrincipal` into the request `Parts.extensions` exactly as the
-//! `HttpMcpRouter` producer does, calls `.handle(..)`, and asserts a `read_memory` tool call reads
+//! CLI Axum `/mcp` producer does, calls `.handle(..)`, and asserts a `read_memory` tool call reads
 //! the principal back through PR4's two-level lookup AND that the INSTALLED `OperatorAwareAuthorizer`
 //! surfaces `system` content for an operator but not for a non-operator. This converts the rmcp
 //! "carry the whole Parts" assumption into a live regression guard and proves the composed operator
@@ -152,7 +152,7 @@ fn read_only_issuer(iss: &str) -> IssuerConfig {
 /// insertion site (`request.extensions_mut().insert(validated)`), so reading it back through PR4's
 /// two-level helper proves the end-to-end through-line.
 fn rmcp_bag_after_router_inserts(validated: aionforge_mcp::ValidatedPrincipal) -> Extensions {
-    // What the Tower validator mutates: the HTTP request Parts' http::Extensions (level 1).
+    // What the Axum `/mcp` handler mutates: the HTTP request Parts' http::Extensions (level 1).
     let (mut parts, ()) = http::Request::builder()
         .body(())
         .expect("a trivial request builds")
@@ -362,7 +362,7 @@ async fn the_well_known_route_serves_the_resource_and_authorization_servers() {
 
 #[tokio::test]
 async fn the_default_off_build_yields_no_producer() {
-    // DEFAULT-OFF: a disabled AuthConfig builds no producer at all, so the router below runs no
+    // DEFAULT-OFF: a disabled AuthConfig builds no producer at all, so the router runs no
     // validation and serves no well-known route — byte-for-byte today's behavior.
     let disabled = AuthConfig::default();
     assert!(!disabled.enabled);

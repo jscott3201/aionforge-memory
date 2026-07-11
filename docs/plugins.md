@@ -61,8 +61,9 @@ aionforge serve http --listen 127.0.0.1:3918
 
 If a client cannot read `AIONFORGE_AGENT_ID`, put the UUID in that client's
 standing instructions and have the skills use `agent:<uuid>` for recall and the
-raw UUID for capture. Keep the local HTTP endpoint on loopback; use an external
-OAuth resource-server verifier before exposing it remotely.
+raw UUID for capture. Keep auth-disabled HTTP on loopback; before exposing it
+remotely, enable built-in HTTP OAuth validation or use an OAuth-aware
+verifier/equivalent perimeter.
 
 ## Client Notes
 
@@ -111,10 +112,11 @@ The plugin follows the MCP service posture:
 - User direction still wins: a user can ask the agent to remember, update,
   forget, audit, consolidate, or avoid memory for a task.
 - Read-like tools are `server_status`, `search`, `read_memory`,
-  `session_manifest`, `consolidation_status`, `audit_history`, `work_tree`, and
-  `work_query`.
+  `session_manifest`, `memory_census`, `consolidation_status`, `audit_history`,
+  `work_tree`, `work_query`, `message_poll`, and `message_wait`.
 - Mutating tools are `capture`, `batch_capture`, `consolidate`, `forget`,
-  `unforget`, `pin`, `unpin`, `work_create`, `work_advance`, and `work_link`; keep
+  `unforget`, `pin`, `unpin`, `work_create`, `work_advance`, `work_link`,
+  `message_send`, and `message_ack`; keep
   them behind user approval unless your deployment has a stricter local rule.
 
 The server also publishes the compact resource

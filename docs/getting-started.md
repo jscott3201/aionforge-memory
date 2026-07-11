@@ -86,8 +86,9 @@ aionforge --config /path/to/config.toml \
 
 Then configure your client with the MCP endpoint
 `http://127.0.0.1:3918/mcp`. Do not expose the built-in HTTP server to a shared
-network without an OAuth resource-server verifier or equivalent perimeter. The
-setup snippets for Codex CLI, Claude Code, OpenCode, and Cursor are in
+network unless built-in HTTP OAuth validation is enabled or an OAuth-aware
+verifier/equivalent perimeter protects the endpoint. The setup snippets for
+Codex CLI, Claude Code, OpenCode, and Cursor are in
 [MCP client support](mcp-clients.md) and are also published by the server as
 compact `aionforge://client/...` resources.
 
@@ -97,7 +98,7 @@ Published runtime images are available from GitHub Container Registry for
 `linux/amd64` and `linux/arm64`:
 
 ```bash
-docker pull ghcr.io/jscott3201/aionforge-memory:0.3.0
+docker pull ghcr.io/jscott3201/aionforge-memory:0.4.0
 ```
 
 The repository Dockerfile builds the binary with the pinned Rust toolchain and

@@ -2,11 +2,11 @@
 //! `metrics` 0.24 facade.
 //!
 //! This is pure observation at the recall-serve boundary: the realized byte size of every
-//! memory-bearing response (`search`, `read_memory`, `session_manifest`) is folded into one
-//! labeled counter and echoed on a `tracing` line, so an operator can measure how many bytes
-//! the store actually hands back per tool and per session. It changes no behavior and reads
-//! nothing back — the [`Authorizer`](aionforge_engine), the visible set, and ranking are
-//! untouched.
+//! memory-bearing response (`search`, `read_memory`, `session_manifest`, `message_poll`,
+//! `message_wait`, and the work readers) is folded into one labeled counter and echoed on a
+//! `tracing` line, so an operator can measure how many bytes the store actually hands back per
+//! tool and per session. It changes no behavior and reads nothing back — the
+//! [`Authorizer`](aionforge_engine), the visible set, and ranking are untouched.
 //!
 //! Bytes, not tokens, are the metric. The server cannot run the calling client's tokenizer,
 //! so an exact token count is not free; bytes are the authoritative, stable measure (the same
@@ -17,11 +17,6 @@
 //!
 //! Cost is ~nothing until an operator installs a recorder: the `metrics` facade is a no-op
 //! against the default `NoopRecorder`, so these instruments add no always-on overhead.
-
-/// Coarse, documented chars-per-token divisor used **only** for the labeled `est_tokens`
-/// estimate on the tracing line. A faithful token count needs the client's own tokenizer;
-/// this 4-bytes-per-token rule is the cheapest possible proxy and is never reported as exact.
-const CHARS_PER_TOKEN: u64 = 4;
 
 /// Record the realized served size of a recall-like response: fold the response's byte length
 /// into the per-tool bytes-served counter (the authoritative measure) and emit a per-request
@@ -39,7 +34,7 @@ pub(crate) fn record_recall_served(tool: &'static str, response: &str) {
         target: "aionforge_mcp::telemetry",
         tool,
         response_bytes = bytes,
-        est_tokens = bytes / CHARS_PER_TOKEN,
+        est_tokens = bytes / crate::traffic::TOKEN_ESTIMATE_BYTES_PER_TOKEN,
         "recall served"
     );
 }

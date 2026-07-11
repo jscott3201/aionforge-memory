@@ -9,9 +9,10 @@ use aionforge_domain::embedding::{EmbedderModel, Embedding};
 use aionforge_domain::time::Timestamp;
 use aionforge_engine::{Memory, MemoryConfig};
 use aionforge_mcp::{
-    AuthPosture, DEFAULT_MAX_REQUEST_BODY_BYTES, OAuthProtectedResourceMetadata,
-    STREAMABLE_HTTP_ENDPOINT, StreamableHttpConfigError, StreamableHttpOptions,
-    oauth_protected_resource_well_known_path, streamable_http_service,
+    AuthPosture, DEFAULT_MAX_REQUEST_BODY_BYTES, MessageWaitBounds, OAuthProtectedResourceMetadata,
+    RoomSubscribeBounds, STREAMABLE_HTTP_ENDPOINT, StreamableHttpConfigError,
+    StreamableHttpOptions, oauth_protected_resource_well_known_path, streamable_http_service,
+    streamable_http_service_with_consolidation_and_message_wait,
 };
 use bytes::Bytes;
 use http::header::{ACCEPT, CONTENT_LENGTH, CONTENT_TYPE, HOST, ORIGIN};
@@ -146,6 +147,47 @@ fn tool_call_request(host: &str, name: &str, arguments: serde_json::Value) -> Re
         .expect("valid tool call request")
 }
 
+fn tool_call_request_with_progress_token(
+    host: &str,
+    name: &str,
+    arguments: serde_json::Value,
+    progress_token: i64,
+) -> Request<Full<Bytes>> {
+    let body = json!({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/call",
+        "params": {
+            "name": name,
+            "arguments": arguments,
+            "_meta": { "progressToken": progress_token },
+        }
+    });
+    Request::builder()
+        .method(Method::POST)
+        .header(ACCEPT, "application/json, text/event-stream")
+        .header(CONTENT_TYPE, "application/json")
+        .header(HOST, host)
+        .header("MCP-Protocol-Version", "2025-03-26")
+        .body(Full::new(Bytes::from(body.to_string())))
+        .expect("valid tool call request")
+}
+
+fn stateful_tool_call_request_with_progress_token(
+    host: &str,
+    session_id: &str,
+    name: &str,
+    arguments: serde_json::Value,
+    progress_token: i64,
+) -> Request<Full<Bytes>> {
+    let mut request = tool_call_request_with_progress_token(host, name, arguments, progress_token);
+    request.headers_mut().insert(
+        "Mcp-Session-Id",
+        session_id.parse().expect("valid session id"),
+    );
+    request
+}
+
 #[tokio::test]
 async fn streamable_http_advertises_mcp_capabilities() -> TestResult {
     let service = streamable_http_service(memory(), json_options(), AuthPosture::disabled())?;
@@ -160,6 +202,10 @@ async fn streamable_http_advertises_mcp_capabilities() -> TestResult {
     assert!(result["capabilities"]["tools"].is_object());
     assert!(result["capabilities"]["prompts"].is_object());
     assert!(result["capabilities"]["resources"].is_object());
+    assert!(
+        result["capabilities"]["resources"]["subscribe"].is_null(),
+        "stateless HTTP must not advertise resource subscriptions: {parsed}",
+    );
     assert!(
         result["instructions"]
             .as_str()
@@ -231,6 +277,10 @@ async fn stateful_initialize_does_not_hang_with_stderr_subscriber() -> TestResul
         parsed["result"]["capabilities"]["tools"].is_object(),
         "{parsed}"
     );
+    assert_eq!(
+        parsed["result"]["capabilities"]["resources"]["subscribe"], true,
+        "stateful HTTP advertises room-resource subscriptions: {parsed}",
+    );
     Ok(())
 }
 
@@ -241,10 +291,15 @@ async fn stateful_initialize_does_not_hang_with_stderr_subscriber() -> TestResul
 /// `data: {json}` line. Scan every `data:` line and return the first whose value parses as
 /// JSON, skipping the empty priming line.
 fn parse_sse_json_rpc(body: &str) -> Option<serde_json::Value> {
+    sse_json_rpc_messages(body).into_iter().next()
+}
+
+fn sse_json_rpc_messages(body: &str) -> Vec<serde_json::Value> {
     body.lines()
         .filter_map(|line| line.strip_prefix("data:"))
         .map(str::trim)
-        .find_map(|json| serde_json::from_str(json).ok())
+        .filter_map(|json| serde_json::from_str(json).ok())
+        .collect()
 }
 
 #[tokio::test]
@@ -333,6 +388,177 @@ async fn http_tool_calls_do_not_require_authorization_header() -> TestResult {
         .as_str()
         .expect("tool text");
     assert!(text.starts_with("[capture] "), "tool response: {parsed}");
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn message_wait_wakes_across_stateless_http_handler_instances() -> TestResult {
+    let alice = "018f0cc0-40f3-7cc4-b8b4-9ca41f88d012";
+    let bob = "018f0cc0-40f3-7cc4-b8b4-9ca41f88d013";
+    let body = "cross-session notifier sentinel";
+    let service = streamable_http_service_with_consolidation_and_message_wait(
+        memory(),
+        json_options(),
+        AuthPosture::disabled(),
+        false,
+        MessageWaitBounds::default(),
+        RoomSubscribeBounds::default(),
+    )?;
+    let wait = service.handle(tool_call_request(
+        "localhost:3918",
+        "message_wait",
+        json!({
+            "viewer": format!("agent:{bob}"),
+            "timeout_seconds": 5,
+        }),
+    ));
+    let send = async {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        service
+            .handle(tool_call_request(
+                "localhost:3918",
+                "message_send",
+                json!({
+                    "viewer": format!("agent:{alice}"),
+                    "to": format!("agent:{bob}"),
+                    "body": body,
+                }),
+            ))
+            .await
+    };
+
+    let (wait_response, send_response) =
+        tokio::time::timeout(Duration::from_secs(1), async { tokio::join!(wait, send) })
+            .await
+            .expect("post-commit signal must wake a different HTTP handler in under one second");
+    assert_eq!(send_response.status(), StatusCode::OK);
+    assert_eq!(wait_response.status(), StatusCode::OK);
+    let wait_body = wait_response.into_body().collect().await?.to_bytes();
+    let parsed: serde_json::Value = serde_json::from_slice(&wait_body)?;
+    assert_eq!(parsed["result"]["structuredContent"]["timed_out"], false);
+    assert_eq!(parsed["result"]["structuredContent"]["count"], 1);
+    assert!(
+        parsed["result"]["content"][0]["text"]
+            .as_str()
+            .is_some_and(|text| text.contains(body)),
+        "{parsed}",
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn message_wait_suppresses_progress_for_stateless_http() -> TestResult {
+    let reader = "018f0cc0-40f3-7cc4-b8b4-9ca41f88d013";
+    let service = streamable_http_service_with_consolidation_and_message_wait(
+        memory(),
+        json_options(),
+        AuthPosture::disabled(),
+        false,
+        MessageWaitBounds {
+            default_seconds: 2,
+            max_seconds: 2,
+            max_concurrent: 4,
+            max_recipients: 256,
+            heartbeat_seconds: 1,
+        },
+        RoomSubscribeBounds::default(),
+    )?;
+    let response = tokio::time::timeout(
+        Duration::from_secs(4),
+        service.handle(tool_call_request_with_progress_token(
+            "localhost:3918",
+            "message_wait",
+            json!({
+                "viewer": format!("agent:{reader}"),
+                "timeout_seconds": 2,
+            }),
+            7,
+        )),
+    )
+    .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await?.to_bytes();
+    let parsed: serde_json::Value = serde_json::from_slice(&body)?;
+    assert_eq!(
+        parsed["result"]["structuredContent"]["timed_out"], true,
+        "{parsed}"
+    );
+    assert_eq!(
+        parsed["result"]["structuredContent"]["messages"],
+        json!([]),
+        "{parsed}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn message_wait_heartbeats_over_stateful_sse() -> TestResult {
+    let reader = "018f0cc0-40f3-7cc4-b8b4-9ca41f88d013";
+    let service = streamable_http_service_with_consolidation_and_message_wait(
+        memory(),
+        stateful_options(),
+        AuthPosture::disabled(),
+        false,
+        MessageWaitBounds {
+            default_seconds: 3,
+            max_seconds: 3,
+            max_concurrent: 4,
+            max_recipients: 256,
+            heartbeat_seconds: 1,
+        },
+        RoomSubscribeBounds::default(),
+    )?;
+    let initialized = service
+        .handle(initialize_request("localhost:3918", None))
+        .await;
+    assert_eq!(initialized.status(), StatusCode::OK);
+    let session_id = initialized
+        .headers()
+        .get("Mcp-Session-Id")
+        .expect("stateful initialize returns a session id")
+        .to_str()?
+        .to_owned();
+    let _ = initialized.into_body().collect().await?;
+
+    let response = service
+        .handle(stateful_tool_call_request_with_progress_token(
+            "localhost:3918",
+            &session_id,
+            "message_wait",
+            json!({
+                "viewer": format!("agent:{reader}"),
+                "timeout_seconds": 3,
+            }),
+            11,
+        ))
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = tokio::time::timeout(Duration::from_secs(5), response.into_body().collect())
+        .await??
+        .to_bytes();
+    let frames = sse_json_rpc_messages(std::str::from_utf8(&body)?);
+    let progress = frames
+        .iter()
+        .position(|frame| frame["method"] == "notifications/progress")
+        .expect("stateful wait must emit progress before its final result");
+    let result = frames
+        .iter()
+        .position(|frame| frame["id"] == 2 && frame["result"].is_object())
+        .expect("stateful wait must return a final result");
+    assert!(
+        progress < result,
+        "progress must precede the final result: {frames:?}"
+    );
+    assert_eq!(frames[progress]["params"]["progressToken"], 11);
+    assert_eq!(frames[progress]["params"]["total"], 3.0);
+    assert_eq!(
+        frames[progress]["params"]["message"],
+        "still waiting; 0 new"
+    );
+    assert_eq!(
+        frames[result]["result"]["structuredContent"]["timed_out"],
+        true
+    );
     Ok(())
 }
 

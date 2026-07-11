@@ -22,3 +22,4 @@ deny.toml
 scripts
 target
 _*
+node_modules

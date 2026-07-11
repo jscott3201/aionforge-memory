@@ -38,6 +38,10 @@ fn req(name: &'static str, kind: K) -> Prop {
 fn opt(name: &'static str, kind: K) -> Prop {
     prop(name, kind, false, false, false)
 }
+/// Nullable `IMMUTABLE`.
+fn opt_imm(name: &'static str, kind: K) -> Prop {
+    prop(name, kind, false, true, false)
+}
 /// `NOT NULL IMMUTABLE`.
 fn req_imm(name: &'static str, kind: K) -> Prop {
     prop(name, kind, true, true, false)
@@ -309,6 +313,25 @@ fn expected_nodes() -> Vec<(&'static str, Vec<Prop>)> {
             "Tag",
             reduced(vec![req("slug", K::String), opt("display", K::String)]),
         ),
+        // Durable recipient-inbox message: Identity-only (no Stats), no embedding/text
+        // columns, and `read_state` deliberately separate from fact `status`. The delivery
+        // envelope is immutable after its audited send; only read_state/expired_at move.
+        ("Message", {
+            let mut properties = identity();
+            properties[2].immutable = true;
+            properties.extend([
+                req_imm("sender_id", K::Uuid),
+                req_imm("recipient", K::String),
+                opt_imm("room_id", K::Uuid),
+                opt_imm("thread_id", K::Uuid),
+                opt_imm("reply_to_id", K::Uuid),
+                req_imm("body", K::String),
+                req_imm("msg_kind", K::String),
+                req("read_state", K::String),
+                req_imm("sent_at", K::ZonedDateTime),
+            ]);
+            properties
+        }),
     ]
 }
 

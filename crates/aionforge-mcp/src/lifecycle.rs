@@ -5,8 +5,6 @@
 //! to sit in a namespace writable by the supplied principal before calling the engine's maintenance
 //! primitive.
 
-use std::time::Duration;
-
 use aionforge_domain::contracts::Embedder;
 use aionforge_domain::ids::Id;
 use aionforge_domain::namespace::Namespace;
@@ -17,9 +15,8 @@ use aionforge_domain::nodes::procedural::{BadPattern, Skill};
 use aionforge_domain::nodes::semantic::{Entity, Fact};
 use aionforge_domain::time::Timestamp;
 use aionforge_engine::{
-    AuditCursor, AuditPage, AuditRecord, AuditVerification, ConsolidationProfile, Memory,
-    PointForget, PointPin, PointUnforget, PointUnpin, RuleExtractor, RuleInducer, RuleSummarizer,
-    StageProfile, TickReport,
+    AuditCursor, ConsolidationProfile, Memory, PointForget, PointPin, PointUnforget, PointUnpin,
+    RuleExtractor, RuleInducer, RuleSummarizer, StageProfile, TickReport,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -27,13 +24,13 @@ use serde::Deserialize;
 use crate::principal::{
     AuthEnabled, HostPrincipalToolParam, refuse_read_only_write, resolve_reader,
 };
+use crate::structured::StructuredToolOutput;
 use crate::validated::ValidatedPrincipal;
 
 const DEFAULT_CONSOLIDATION_MAX_TICKS: usize = 1;
 const MAX_CONSOLIDATION_MAX_TICKS: usize = 5;
 const DEFAULT_AUDIT_LIMIT: usize = 20;
 const MAX_AUDIT_LIMIT: usize = 50;
-const PAYLOAD_PREVIEW_CHARS: usize = 240;
 
 /// The lifecycle kinds the MCP surface resolves by id for the **forgettable/pointable**
 /// path — `forget`/`unforget`/`pin`/`unpin` (here) and the base of `read_memory`'s read set
@@ -157,28 +154,22 @@ pub fn consolidation_status_tool<E: Embedder>(
     params: ConsolidationStatusToolParams,
     now: &Timestamp,
 ) -> Result<String, String> {
+    Ok(consolidation_status_tool_output(memory, params, now)?.text)
+}
+
+/// Render the consolidation backlog as stable text plus structured status.
+pub(crate) fn consolidation_status_tool_output<E: Embedder>(
+    memory: &Memory<E>,
+    params: ConsolidationStatusToolParams,
+    now: &Timestamp,
+) -> Result<StructuredToolOutput, String> {
     let lag = memory
         .consolidation_lag(now)
         .map_err(|error| format!("ERR_CONSOLIDATION_STATUS: {error}"))?;
-    let mut out = format!(
-        "[consolidation] pending={} failed={} oldest_pending_age_s={} generation={}",
-        lag.episodes_pending,
-        lag.episodes_failed,
-        duration_seconds(lag.oldest_pending_lag),
-        lag.generation
-    );
-    if params.verbose.unwrap_or(false) {
-        let state = if lag.episodes_pending == 0 && lag.episodes_failed == 0 {
-            "idle"
-        } else if lag.episodes_failed > 0 {
-            "attention_required"
-        } else {
-            "backlog_pending"
-        };
-        out.push_str(" state=");
-        out.push_str(state);
-    }
-    Ok(out)
+    Ok(crate::lifecycle_output::consolidation_status(
+        &lag,
+        params.verbose.unwrap_or(false),
+    ))
 }
 
 /// Run a bounded foreground consolidation pass using server-owned deterministic rules.
@@ -426,6 +417,16 @@ pub fn audit_history_tool<E: Embedder>(
     extension: Option<ValidatedPrincipal>,
     auth_enabled: AuthEnabled,
 ) -> Result<String, String> {
+    Ok(audit_history_tool_output(memory, params, extension, auth_enabled)?.text)
+}
+
+/// Render an audit page as stable text plus structured records.
+pub(crate) fn audit_history_tool_output<E: Embedder>(
+    memory: &Memory<E>,
+    params: AuditHistoryToolParams,
+    extension: Option<ValidatedPrincipal>,
+    auth_enabled: AuthEnabled,
+) -> Result<StructuredToolOutput, String> {
     let subject = params
         .subject_id
         .as_deref()
@@ -451,28 +452,24 @@ pub fn audit_history_tool<E: Embedder>(
         .filter(|kind| !kind.is_empty());
     let kind = kind_filter.map(parse_audit_kind).transpose()?;
 
-    let (scope, kind_label, page) = match (subject.as_ref(), kind) {
+    let (subject_label, include_subject, kind_label, page) = match (subject.as_ref(), kind) {
         (Some(subject), Some(kind)) => {
             let page = memory
                 .audit_by_subject_kind(&principal, subject, kind, after.as_ref(), limit)
                 .map_err(|error| format!("ERR_AUDIT_HISTORY: {error}"))?;
-            (
-                AuditRenderScope::Subject(subject),
-                audit_kind_name(kind),
-                page,
-            )
+            (subject.to_string(), false, audit_kind_name(kind), page)
         }
         (Some(subject), None) => {
             let page = memory
                 .audit_history(&principal, subject, after.as_ref(), limit)
                 .map_err(|error| format!("ERR_AUDIT_HISTORY: {error}"))?;
-            (AuditRenderScope::Subject(subject), "all".to_string(), page)
+            (subject.to_string(), false, "all".to_string(), page)
         }
         (None, Some(kind)) => {
             let page = memory
                 .audit_by_kind(&principal, kind, after.as_ref(), limit)
                 .map_err(|error| format!("ERR_AUDIT_HISTORY: {error}"))?;
-            (AuditRenderScope::AllVisible, audit_kind_name(kind), page)
+            ("*".to_string(), true, audit_kind_name(kind), page)
         }
         (None, None) => {
             return Err(
@@ -482,11 +479,13 @@ pub fn audit_history_tool<E: Embedder>(
         }
     };
 
-    Ok(render_audit_page(scope, &kind_label, &page, verbose))
-}
-
-fn duration_seconds(duration: Duration) -> u64 {
-    duration.as_secs()
+    Ok(crate::lifecycle_output::audit_history(
+        subject_label,
+        kind_label,
+        include_subject,
+        &page,
+        verbose,
+    ))
 }
 
 fn writable_memory<E: Embedder>(
@@ -547,73 +546,6 @@ fn parse_audit_kind(raw: &str) -> Result<AuditKind, String> {
     })
 }
 
-enum AuditRenderScope<'a> {
-    Subject(&'a Id),
-    AllVisible,
-}
-
-impl AuditRenderScope<'_> {
-    fn subject_label(&self) -> String {
-        match self {
-            Self::Subject(subject) => subject.to_string(),
-            Self::AllVisible => "*".to_string(),
-        }
-    }
-
-    fn include_subject_per_record(&self) -> bool {
-        matches!(self, Self::AllVisible)
-    }
-}
-
-fn render_audit_page(
-    scope: AuditRenderScope<'_>,
-    kind_label: &str,
-    page: &AuditPage,
-    verbose: bool,
-) -> String {
-    let mut out = format!(
-        "[audit] subject={} kind={} count={} next={}",
-        scope.subject_label(),
-        kind_label,
-        page.records.len(),
-        render_audit_cursor(page.next.as_ref())
-    );
-    let include_subject = scope.include_subject_per_record();
-    for record in &page.records {
-        out.push('\n');
-        out.push_str(&render_audit_record(record, verbose, include_subject));
-    }
-    out
-}
-
-fn render_audit_record(record: &AuditRecord, verbose: bool, include_subject: bool) -> String {
-    let event = &record.event;
-    let mut out = format!(
-        "- id={} kind={} at={} actor={} ns={} verification={}",
-        event.identity.id,
-        audit_kind_name(event.kind),
-        event.occurred_at,
-        event.actor_id,
-        event.identity.namespace,
-        verification_name(&record.verification)
-    );
-    if include_subject {
-        out.push_str(" subject=");
-        out.push_str(&event.subject_id.to_string());
-    }
-    if verbose {
-        out.push_str(" payload=");
-        out.push_str(&preview_json(&event.payload));
-    }
-    out
-}
-
-fn render_audit_cursor(cursor: Option<&AuditCursor>) -> String {
-    cursor
-        .map(|cursor| serde_json::to_string(cursor).expect("audit cursor serializes"))
-        .unwrap_or_else(|| "none".to_string())
-}
-
 fn point_forget_outcome(outcome: PointForget) -> String {
     match outcome {
         PointForget::Forgotten => "forgotten".to_string(),
@@ -655,31 +587,4 @@ fn audit_kind_name(kind: AuditKind) -> String {
         serde_json::Value::String(kind) => kind,
         _ => "unknown".to_string(),
     }
-}
-
-fn verification_name(verification: &AuditVerification) -> &'static str {
-    match verification {
-        AuditVerification::NotEnabled => "not_enabled",
-        AuditVerification::Checked(status) => match status {
-            aionforge_engine::AuditStatus::Valid => "valid",
-            aionforge_engine::AuditStatus::Unsigned => "unsigned",
-            aionforge_engine::AuditStatus::Downgraded => "downgraded",
-            aionforge_engine::AuditStatus::Invalid => "invalid",
-            aionforge_engine::AuditStatus::Untrusted => "untrusted",
-        },
-    }
-}
-
-fn preview_json(value: &serde_json::Value) -> String {
-    let raw = serde_json::to_string(value).expect("JSON value serializes");
-    truncate_chars(&raw, PAYLOAD_PREVIEW_CHARS)
-}
-
-fn truncate_chars(value: &str, max_chars: usize) -> String {
-    if value.chars().count() <= max_chars {
-        return value.to_string();
-    }
-    let mut out: String = value.chars().take(max_chars).collect();
-    out.push_str("...");
-    out
 }

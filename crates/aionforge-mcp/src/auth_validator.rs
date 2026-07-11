@@ -13,8 +13,8 @@
 //!   It holds one [`JwtValidator`] per trusted issuer (keyed by the
 //!   exact `iss` string), the RFC 9728 well-known path, the resource identifier, and the issuer
 //!   origins for posture reporting. It carries **no secret** — no token, no JWKS, no key.
-//! * [`AuthValidators::authenticate`] — the per-request gate a Tower validator (the cli's
-//!   `HttpMcpRouter`) calls for each `/mcp` request. It extracts the Bearer token, selects the
+//! * [`AuthValidators::authenticate`] — the per-request gate the CLI's Axum `/mcp` handler calls
+//!   for each `/mcp` request. It extracts the Bearer token, selects the
 //!   issuer by the token's `iss`, validates it, maps the claims to a `Principal`, and on success
 //!   returns the [`ValidatedPrincipal`] to insert into the request's
 //!   `http::request::Parts.extensions` (the two-level nesting PR4 reads). Every failure is a
@@ -48,7 +48,7 @@ use crate::validated::ValidatedPrincipal;
 ///
 /// Built **once** at startup with [`AuthValidators::build`] (each [`JwtValidator`] resolves and
 /// caches its issuer's JWKS), then shared (cheaply [`Clone`], everything is behind an [`Arc`])
-/// across every request the Tower validator handles. Constructed **only** when `auth.enabled`;
+/// across every request the Axum `/mcp` handler handles. Constructed **only** when `auth.enabled`;
 /// the default-off path never builds one, so no validator runs and no well-known route is served.
 #[derive(Clone)]
 pub struct AuthValidators {

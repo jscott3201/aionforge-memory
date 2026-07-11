@@ -17,8 +17,8 @@ fn now() -> Zoned {
         .expect("valid zoned datetime")
 }
 
-/// The 19 node labels the schema must declare (data-model §4; work-tracking facet adds
-/// `WorkItem` + `Tag`).
+/// The 20 node labels the schema must declare (data-model §4 plus work tracking and
+/// durable messaging).
 ///
 /// Hand-transcribed from the spec, deliberately independent of `catalog.rs` — that
 /// independence is the point. Deriving this list from the catalog would only prove the
@@ -44,6 +44,7 @@ const NODE_KINDS: &[&str] = &[
     "ValidityAnchor",
     "WorkItem",
     "Tag",
+    "Message",
 ];
 
 /// The 19 edge labels the schema must declare (data-model §5; work-tracking facet adds

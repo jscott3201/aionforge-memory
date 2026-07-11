@@ -15,6 +15,7 @@ mod audit_read;
 mod bad_pattern;
 mod capture_write;
 mod catalog;
+mod census;
 mod compact;
 mod config;
 mod consolidation;
@@ -37,6 +38,7 @@ mod graph_signal;
 mod indexes;
 mod lineage;
 mod materialize;
+mod message;
 mod migrate;
 mod note;
 mod pin_write;
@@ -61,14 +63,12 @@ pub use attestation::{AttestWriteIds, AttesterRecord};
 pub use audit_read::{AuditCursor, AuditHistory, MAX_AUDIT_PAGE};
 pub use capture_write::CaptureWriteIds;
 pub use catalog::SCHEMA_VERSION;
+pub use census::{MEMORY_LABELS, MemoryCounts, MessageCounts, WorkCounts};
 pub use compact::{CompactReport, CompactionPressure};
 pub use config::{
     DEFAULT_EMBEDDING_DIMENSION, StoreConfig, default_data_dir, default_data_dir_checked,
 };
-pub use consolidation::{
-    ConsolidationCursor, ConsolidationWorkItem, LagSnapshot, MEMORY_LABELS, MemoryCounts,
-    WorkCounts,
-};
+pub use consolidation::{ConsolidationCursor, ConsolidationWorkItem, LagSnapshot};
 pub use cooling::{CoolWrite, CoolingCandidate, CoolingCursor};
 pub use core_block_write::{CoreAttestation, CoreBlockReplacement, CoreEditWrite};
 pub use doctor::{
@@ -88,6 +88,7 @@ pub use lineage::{ConsolidatingModel, NoteLineage, WriterFamilySet};
 pub use materialize::{
     ConsolidationArtifacts, Contradiction, FactKey, MaterializedFact, Supersession,
 };
+pub use message::{MAX_MESSAGE_PAGE, MessageCursor, MessagePage, MessageRetentionReport};
 pub use migrate::{MigrationPlan, MigrationReport, PendingChange};
 pub use note::MaterializedNote;
 pub use pin_write::PinWrite;

@@ -6,14 +6,14 @@
   Long-term memory for AI agents, built on selene-db.
 </p>
 
-> **Status: 0.3.0 public release.** Aionforge Memory is public and usable,
-> but still pre-1.0. Expect schema and API changes before 1.0. The 0.3.0
+> **Status: 0.4.0 public release.** Aionforge Memory is public and usable,
+> but still pre-1.0. Expect schema and API changes before 1.0. The 0.4.0
 > release is a fresh-store release from 0.2.x because the selene-db 1.2 to 1.3
 > upgrade changes the WAL/schema format.
 
 Aionforge Memory gives agents a durable memory store they can recall across
 sessions. It stores captured episodes, derived facts and notes, procedural
-memory, work items, provenance, and audit events in
+memory, work items, addressed agent messages, provenance, and audit events in
 [`selene-db`](https://github.com/jscott3201/selene-db), then recalls relevant
 context with lexical search, vector search, graph signals, recency, importance,
 and trust-aware ranking.
@@ -60,6 +60,7 @@ them disabled. Start with the [embedding guide](docs/embedding-guide.md).
 - Hybrid recall across lexical matches, vectors, graph expansion, recency,
   importance, and trust signals.
 - Explicit agent-private, team, global, and system namespaces.
+- Durable, addressed agent/team messages with polling, acknowledgements, and TTL retention.
 - Provenance and audit records for writes.
 - A single `aionforge` binary with `doctor`, `recover`, and `serve`.
 - MCP over stdio or Streamable HTTP.
@@ -70,6 +71,15 @@ Aionforge Memory is retrieval memory, not model training. It does not fine-tune
 models or execute recalled content as instructions. See
 [honest scope](docs/honest-scope.md) for the current boundaries and deferred
 work.
+
+## Memory Model
+
+A capture becomes one immutable episode. Consolidation adds derived facts,
+entities, and notes beside that episode instead of rewriting it. Recall returns
+a bounded, explicitly untrusted context bundle; lifecycle operations such as
+forgetting, erasure, promotion, and demotion are explicit controls.
+
+For the full model, see [Data model and mental model](docs/data-model.md).
 
 ## Configure A Client
 
@@ -107,7 +117,7 @@ See [Agent plugin](docs/plugins.md) for install and identity setup.
 Published images are available for `linux/amd64` and `linux/arm64`:
 
 ```bash
-docker pull ghcr.io/jscott3201/aionforge-memory:0.3.0
+docker pull ghcr.io/jscott3201/aionforge-memory:0.4.0
 ```
 
 Run a local smoke-test server with embeddings disabled:
@@ -117,7 +127,7 @@ docker run --rm \
   -p 127.0.0.1:3918:3918 \
   -v aionforge-data:/data \
   -e AIONFORGE_EMBEDDER__ENABLED=false \
-  ghcr.io/jscott3201/aionforge-memory:0.3.0
+  ghcr.io/jscott3201/aionforge-memory:0.4.0
 ```
 
 For bind mounts, use an owner-only data directory. The container runs as
@@ -154,8 +164,10 @@ Start here:
 - [Data model and mental model](docs/data-model.md) - what gets stored and recalled.
 - [Embedding guide](docs/embedding-guide.md) - providers, dimensions, and secrets.
 - [MCP client support](docs/mcp-clients.md) - Codex, Claude Code, OpenCode, Cursor.
+- [Agent messages](docs/messages.md) - addressed delivery, bounded waiting, acknowledgements, and retention.
 - [Agent plugin](docs/plugins.md) - skills, identity, and client notes.
 - [Security model](docs/security-model.md) - namespaces, untrusted recall, signing.
+- [Observability](docs/observability.md) - logging, metrics, traffic, and tracing.
 - [Operations and recovery](docs/operations-recovery.md) - production setup and WAL recovery.
 - [Honest scope](docs/honest-scope.md) - what is shipped, experimental, or deferred.
 

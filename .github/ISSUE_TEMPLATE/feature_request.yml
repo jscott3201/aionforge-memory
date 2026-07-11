@@ -41,7 +41,7 @@ body:
         - CLI (aionforge-cli)
         - Capture / retrieval / consolidation / forgetting pipeline
         - Trust, security, or namespace policy
-        - Auth / server / operator console
+        - Auth / server
         - Embedding or chat provider integration
         - Config, packaging, or deployment
         - Docs

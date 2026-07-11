@@ -14,27 +14,25 @@ name = "aionforge"
 path = "src/main.rs"
 
 [dependencies]
-aionforge = { path = "../aionforge", version = "0.3.0" }
-aionforge-config = { path = "../aionforge-config", version = "0.3.0" }
-aionforge-embed = { path = "../aionforge-embed", version = "0.3.0" }
-aionforge-mcp = { path = "../aionforge-mcp", version = "0.3.0" }
-aionforge-store = { path = "../aionforge-store", version = "0.3.0" }
-aionforge-tui = { path = "../aionforge-tui", version = "0.3.0" }
+aionforge = { path = "../aionforge", version = "0.4.0" }
+aionforge-config = { path = "../aionforge-config", version = "0.4.0" }
+aionforge-embed = { path = "../aionforge-embed", version = "0.4.0" }
+aionforge-mcp = { path = "../aionforge-mcp", version = "0.4.0" }
+aionforge-store = { path = "../aionforge-store", version = "0.4.0" }
+axum = { version = "0.8.9", default-features = false, features = ["tokio", "http1", "http2"] }
 bytes = "1"
 clap = { workspace = true }
 http-body-util = "0.1"
-hyper = { version = "1.10", features = ["server", "http1", "http2"] }
-hyper-util = { version = "0.1.20", features = ["server-auto", "tokio"] }
 secrecy = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true, features = ["net", "signal"] }
-tower-service = "0.3"
+tokio = { workspace = true, features = ["net", "signal", "sync", "time"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 url = "2"
 
 [dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
 wiremock = { workspace = true }
 
 [lints]

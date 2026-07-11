@@ -25,13 +25,12 @@ members = [
     "crates/aionforge-engine",       # L3 — façade: composes subsystems, lifecycle, cross-cutting policy
     "crates/aionforge",              # L4 — public Rust library API
     "crates/aionforge-mcp",          # L4 — optional MCP server surface
-    "crates/aionforge-tui",          # L4 — optional read-only ratatui operator TUI
     "crates/aionforge-cli",          # bin — the `aionforge` single binary
 ]
 exclude = ["_spec", "_goalslogs"]
 
 [workspace.package]
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 rust-version = "1.95.0"
 authors = ["Justin Scott"]
@@ -48,9 +47,9 @@ unused_must_use = "deny"
 all = { level = "warn", priority = -1 }
 todo = "deny"
 dbg_macro = "deny"
-# print_stdout/print_stderr stay at WARN (not deny): the MCP stdio transport and
-# the TUI legitimately write to stdout/terminal. Route output through the
-# transport writer / ratatui backend, never raw println!, to keep warnings at zero.
+# print_stdout/print_stderr stay at WARN (not deny): the MCP stdio transport
+# legitimately writes to stdout. Route output through the transport writer,
+# never raw println!, to keep warnings at zero.
 print_stderr = "warn"
 print_stdout = "warn"
 
@@ -158,7 +157,7 @@ selene-algorithms = { package = "selene-db-algorithms", version = "1.3.0" }
 # selene-db-gql = { path = "../selene-db/crates/selene-gql" }
 # selene-db-algorithms = { path = "../selene-db/crates/selene-algorithms" }
 
-# Heavier frameworks (tokio, reqwest, rustls, rmcp, axum, ed25519-dalek, ratatui,
+# Heavier frameworks (tokio, reqwest, rustls, rmcp, axum, ed25519-dalek,
 # clap, tracing-subscriber, dev-deps) are added to this floor at the task that first
 # introduces them (M0.T08 and M1+), per the M0 plan, to keep the skeleton dep tree
 # minimal.

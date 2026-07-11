@@ -15,6 +15,7 @@ use crate::drift::DriftConfig;
 use crate::error::ConfigError;
 use crate::forgetting::ForgettingConfig;
 use crate::guard::ConsolidationGuardConfig;
+use crate::messages::MessagesConfig;
 use crate::server::ServerHttpConfig;
 
 /// The largest sane per-request embedder timeout (ten minutes). A larger value is almost
@@ -84,6 +85,10 @@ pub struct Config {
     /// conservative summarization floors, the 5s/32-episode scheduler). The host maps these
     /// primitives into the engine's `aionforge_consolidate::{ConsolidationConfig, PassConfig}`.
     pub consolidation: ConsolidationConfig,
+    /// Durable-message runtime posture: a default-on, ack-aware reaper plus bounded duration and
+    /// count/breadth admission control for `message_wait`. Messages are not memories, so retention
+    /// feeds the dedicated message-maintenance path rather than decay or forgetting.
+    pub messages: MessagesConfig,
     /// OAuth resource-server posture: the master switch and trusted token issuers.
     /// **Default-off** — when [`AuthConfig::enabled`] is `false` (the default) the
     /// server derives no identity from a connection. Config only in this PR; JWT
@@ -726,6 +731,7 @@ impl Config {
                 }
             }
         }
+        self.messages.validate()?;
         self.forgetting.validate()?;
         self.core_block.validate()?;
         self.drift.validate()?;

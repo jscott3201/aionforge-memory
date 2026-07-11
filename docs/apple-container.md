@@ -57,8 +57,9 @@ The runtime image keeps the same default command as Docker:
 aionforge serve http --listen 0.0.0.0:3918 --data-dir /data
 ```
 
-Publish the container port to host loopback unless an external verifier is
-protecting the endpoint.
+Publish the container port to host loopback unless built-in HTTP OAuth
+validation is enabled or an OAuth-aware verifier/equivalent perimeter protects
+the endpoint.
 
 ## Operate the local container
 

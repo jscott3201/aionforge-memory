@@ -55,6 +55,34 @@ enabled = false
     assert_eq!(server_info["name"], "aionforge-memory");
     assert_eq!(server_info["version"], env!("CARGO_PKG_VERSION"));
 
+    assert_http_get(listen_addr, "/livez", "200", "ok");
+    let version = http_get(listen_addr, "/version").expect("GET /version");
+    assert!(
+        version.status_line.contains("200"),
+        "GET /version returned {}; body: {}",
+        version.status_line,
+        version.body
+    );
+    assert!(
+        version
+            .headers
+            .to_ascii_lowercase()
+            .contains("content-type: application/json"),
+        "GET /version must be JSON: {}",
+        version.headers
+    );
+    let version_json: Value = serde_json::from_str(&version.body).expect("/version JSON");
+    assert_eq!(version_json["version"], env!("CARGO_PKG_VERSION"));
+    assert!(
+        version_json["build_sha"]
+            .as_str()
+            .is_some_and(|sha| !sha.is_empty()),
+        "/version carries a non-empty build_sha: {version_json}"
+    );
+    assert_eq!(version_json["embedder_dimension"], 1536);
+
+    assert_http_get(listen_addr, "/nonexistent", "404", "Not Found");
+
     let _ = server.terminate();
 }
 
@@ -246,6 +274,88 @@ fn parse_initialize_response(response: &[u8]) -> Result<Value, String> {
         .ok_or_else(|| {
             format!("initialize response body was neither SSE JSON-RPC nor JSON: {body}")
         })
+}
+
+fn assert_http_get(
+    listen_addr: SocketAddr,
+    path: &str,
+    expected_status: &str,
+    expected_body: &str,
+) {
+    let response =
+        http_get(listen_addr, path).unwrap_or_else(|error| panic!("GET {path} failed: {error}"));
+    assert!(
+        response.status_line.contains(expected_status),
+        "GET {path} returned {}; body: {}",
+        response.status_line,
+        response.body
+    );
+    assert!(
+        response.body.contains(expected_body),
+        "GET {path} body did not include {expected_body:?}: {}",
+        response.body
+    );
+}
+
+struct HttpGetResponse {
+    headers: String,
+    status_line: String,
+    body: String,
+}
+
+fn http_get(listen_addr: SocketAddr, path: &str) -> Result<HttpGetResponse, String> {
+    let mut stream = TcpStream::connect_timeout(&listen_addr, TCP_ATTEMPT_TIMEOUT)
+        .map_err(|error| format!("connect failed: {error}"))?;
+    stream
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .map_err(|error| format!("set read timeout failed: {error}"))?;
+    stream
+        .set_write_timeout(Some(Duration::from_secs(2)))
+        .map_err(|error| format!("set write timeout failed: {error}"))?;
+
+    let request = format!(
+        "GET {path} HTTP/1.1\r\n\
+         Host: {listen_addr}\r\n\
+         Connection: close\r\n\
+         \r\n"
+    );
+    stream
+        .write_all(request.as_bytes())
+        .map_err(|error| format!("write GET request failed: {error}"))?;
+
+    let mut response = Vec::new();
+    stream
+        .read_to_end(&mut response)
+        .map_err(|error| format!("read GET response failed: {error}"))?;
+    parse_http_get_response(&response)
+}
+
+fn parse_http_get_response(response: &[u8]) -> Result<HttpGetResponse, String> {
+    let header_end = response
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .ok_or_else(|| "HTTP response did not include a header/body split".to_owned())?;
+    let headers = String::from_utf8_lossy(&response[..header_end]);
+    let status_line = headers
+        .lines()
+        .next()
+        .ok_or_else(|| "HTTP response did not include a status line".to_owned())?
+        .to_owned();
+    let body = &response[header_end + 4..];
+    let body = if headers
+        .lines()
+        .any(|line| line.eq_ignore_ascii_case("transfer-encoding: chunked"))
+    {
+        decode_chunked_body(body)?
+    } else {
+        String::from_utf8(body.to_vec())
+            .map_err(|error| format!("GET response body was not utf-8: {error}"))?
+    };
+    Ok(HttpGetResponse {
+        headers: headers.to_string(),
+        status_line,
+        body,
+    })
 }
 
 fn parse_sse_json_rpc(body: &str) -> Option<Value> {

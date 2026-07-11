@@ -1,12 +1,11 @@
 //! The validated-principal request extension (PR4 of the OAuth workstream) and its lookup.
 //!
-//! PR5 will wire a Tower validator layer that maps a verified token to a [`Principal`]
-//! (via [`map_verified_claims_to_principal`](crate::map_verified_claims_to_principal)) and
-//! inserts the resolved identity into the request extensions as a [`ValidatedPrincipal`].
-//! PR4 is the **consumption** side: it defines that extension type, the helper that reads it
-//! back out of an rmcp request context, and the precedence rules the identity resolvers apply
-//! to it ([`crate::principal`]). PR4 is **dark** — no producer exists yet, so the lookup always
-//! returns `None` at runtime and every new path is exercised only by tests.
+//! The HTTP auth producer maps a verified token to a [`Principal`] (via
+//! [`map_verified_claims_to_principal`](crate::map_verified_claims_to_principal)) and inserts the
+//! resolved identity into request extensions as a [`ValidatedPrincipal`]. This module defines that
+//! extension type and the helper that reads it back out of an rmcp request context. When HTTP auth
+//! is disabled no producer inserts the extension, so the lookup returns `None` and the identity
+//! resolvers use the legacy explicit body fields.
 //!
 //! # Why a newtype, and why it carries the posture
 //!
@@ -24,7 +23,7 @@ use aionforge_engine::Principal;
 
 use crate::{TokenClass, WritePosture};
 
-/// The validated principal extracted from a request extension (PR4 reads it; PR5 inserts it).
+/// The validated principal extracted from a request extension.
 ///
 /// Carries the full resolved [`Principal`] (including the server-only operator bit) and the
 /// [`WritePosture`], so the write path can fail closed on a [`ReadOnly`](WritePosture::ReadOnly)
@@ -64,13 +63,13 @@ impl ValidatedPrincipal {
 /// # The extension is nested two levels deep (rmcp 1.6 shape)
 ///
 /// rmcp's [`Extensions`] is a **bespoke, vendored type-map** ([`rmcp::model::Extensions`]) — it is
-/// *not* `http::Extensions` re-exported. A PR5 Tower validator wraps a
-/// `tower::Service<http::Request<Body>>`; the only bag it can write is the HTTP request's
-/// `http::request::Parts.extensions` (an [`http::Extensions`]). The rmcp streamable-http transport
-/// then carries that whole `Parts` value into the rmcp [`Extensions`] bag as a *single*
-/// `http::request::Parts` entry (rmcp 1.6.0 `transport/streamable_http_server/tower.rs`), rather
-/// than merging the two maps. So a [`ValidatedPrincipal`] a validator inserts lives one level below
-/// the rmcp bag, exactly mirrored by rmcp's own documented two-level read pattern
+/// *not* `http::Extensions` re-exported. A PR5 HTTP producer can only write into the HTTP
+/// request's `http::request::Parts.extensions` (an [`http::Extensions`]) before forwarding to
+/// rmcp. The rmcp streamable-http transport then carries that whole `Parts` value into the rmcp
+/// [`Extensions`] bag as a *single* `http::request::Parts` entry (rmcp 1.6.0
+/// `transport/streamable_http_server/tower.rs`), rather than merging the two maps. So a
+/// [`ValidatedPrincipal`] a producer inserts lives one level below the rmcp bag, exactly mirrored
+/// by rmcp's own documented two-level read pattern
 /// (`parts = ctx.extensions.get::<http::request::Parts>()`, then
 /// `parts.extensions.get::<State>()`).
 ///
@@ -96,12 +95,12 @@ mod tests {
     use aionforge_engine::Principal;
 
     /// Build the rmcp [`Extensions`] bag exactly as the streamable-http transport does once a PR5
-    /// Tower validator has run: the validator inserts a [`ValidatedPrincipal`] into the HTTP
-    /// request's `http::request::Parts.extensions`, then the transport carries that whole `Parts`
-    /// value into the rmcp bag as a single entry (rmcp 1.6.0). This is the *only* faithful way to
-    /// exercise the two-level lookup — a bare single-level insert would pass even a broken helper.
+    /// HTTP producer has run: the producer inserts a [`ValidatedPrincipal`] into the HTTP request's
+    /// `http::request::Parts.extensions`, then the transport carries that whole `Parts` value into
+    /// the rmcp bag as a single entry (rmcp 1.6.0). This is the *only* faithful way to exercise the
+    /// two-level lookup — a bare single-level insert would pass even a broken helper.
     fn rmcp_extensions_with_validated_principal(validated: ValidatedPrincipal) -> Extensions {
-        // The HTTP request `Parts` a Tower layer mutates (`http::Extensions`, level 1).
+        // The HTTP request `Parts` the producer mutates (`http::Extensions`, level 1).
         let (mut parts, ()) = http::Request::builder()
             .body(())
             .expect("a trivial request builds")

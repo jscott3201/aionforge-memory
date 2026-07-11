@@ -2,9 +2,14 @@
 
 use aionforge_engine::{MemoryCounts, WorkCounts};
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
+use crate::resources::{
+    MCP_SURFACE_GUIDE_RESOURCE_URI, TOOL_APPROVAL_POLICY_RESOURCE_URI, TOOL_MANIFEST_RESOURCE_URI,
+};
+use crate::structured::StructuredToolOutput;
 use crate::surface::{self, ToolClass};
+use crate::traffic::{TOKEN_ESTIMATE_BYTES_PER_TOKEN, TrafficSnapshot};
 
 /// The short source SHA baked in at build time (release-integrity Layer 1, see `build.rs`).
 /// `option_env!` degrades to `unknown` for a build without git rather than failing to
@@ -20,6 +25,29 @@ const BUILD_STATUS: &str = match option_env!("AIONFORGE_BUILD_STATUS") {
     Some(status) => status,
     None => "unknown",
 };
+/// RFC3339 build timestamp baked in by CI, git, or the local compile fallback.
+const BUILD_TIMESTAMP: &str = match option_env!("AIONFORGE_BUILD_TIMESTAMP") {
+    Some(timestamp) => timestamp,
+    None => "unknown",
+};
+
+/// The short source SHA baked into this binary.
+#[must_use]
+pub fn build_sha() -> &'static str {
+    BUILD_SHA
+}
+
+/// The build cleanliness status baked into this binary.
+#[must_use]
+pub fn build_status() -> &'static str {
+    BUILD_STATUS
+}
+
+/// The RFC3339 build timestamp baked into this binary.
+#[must_use]
+pub fn build_timestamp() -> &'static str {
+    BUILD_TIMESTAMP
+}
 
 /// Parameters for the `server_status` tool.
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -27,6 +55,85 @@ pub struct ServerStatusToolParams {
     /// Include tool class lists and operational hints.
     #[schemars(description = "Include tool class lists and operational hints.")]
     pub verbose: Option<bool>,
+}
+
+#[derive(Serialize)]
+struct ServerStatusStructured {
+    schema: &'static str,
+    version: &'static str,
+    build: ServerStatusBuild,
+    surface: ServerStatusSurface,
+    transports: Vec<&'static str>,
+    sampling: bool,
+    recall_wrapper: &'static str,
+    counts: ServerStatusCounts,
+    auth: ServerStatusAuth,
+    telemetry: ServerStatusTelemetry,
+    resources: Vec<&'static str>,
+}
+
+#[derive(Serialize)]
+struct ServerStatusBuild {
+    sha: &'static str,
+    build_status: &'static str,
+    built_at: &'static str,
+}
+
+#[derive(Serialize)]
+struct ServerStatusSurface {
+    tools: usize,
+    resources: usize,
+    prompts: usize,
+    read_like_tools: Vec<&'static str>,
+    mutating_tools: Vec<&'static str>,
+}
+
+#[derive(Serialize)]
+struct ServerStatusCounts {
+    memories: u64,
+    work_items: u64,
+    kinds: ServerStatusKindCounts,
+    work_statuses: ServerStatusWorkCounts,
+}
+
+#[derive(Serialize)]
+struct ServerStatusKindCounts {
+    episodes: u64,
+    facts: u64,
+    entities: u64,
+    notes: u64,
+    skills: u64,
+    bad_patterns: u64,
+}
+
+#[derive(Serialize)]
+struct ServerStatusWorkCounts {
+    todo: u64,
+    in_progress: u64,
+    blocked: u64,
+    done: u64,
+    dropped: u64,
+}
+
+#[derive(Serialize)]
+struct ServerStatusAuth {
+    enabled: bool,
+    issuers: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct ServerStatusTelemetry {
+    memory_traffic: ServerStatusMemoryTraffic,
+}
+
+#[derive(Serialize)]
+struct ServerStatusMemoryTraffic {
+    bytes_in_total: u64,
+    bytes_out_total: u64,
+    estimated_tokens_in_total: u64,
+    estimated_tokens_out_total: u64,
+    token_estimate_divisor: u64,
+    token_estimate_kind: &'static str,
 }
 
 /// The OAuth resource-server posture `server_status` reports — **posture only, never a secret**.
@@ -76,11 +183,42 @@ pub fn server_status_tool(
     params: ServerStatusToolParams,
     auth: &AuthPosture,
 ) -> String {
+    server_status_tool_output(resource_count, counts, work_counts, params, auth).text
+}
+
+/// Render compact status text and the client-facing structured status DTO.
+#[must_use]
+pub(crate) fn server_status_tool_output(
+    resource_count: usize,
+    counts: MemoryCounts,
+    work_counts: WorkCounts,
+    params: ServerStatusToolParams,
+    auth: &AuthPosture,
+) -> StructuredToolOutput {
+    server_status_tool_output_with_traffic(
+        resource_count,
+        counts,
+        work_counts,
+        params,
+        auth,
+        crate::traffic::snapshot(),
+    )
+}
+
+fn server_status_tool_output_with_traffic(
+    resource_count: usize,
+    counts: MemoryCounts,
+    work_counts: WorkCounts,
+    params: ServerStatusToolParams,
+    auth: &AuthPosture,
+    traffic: TrafficSnapshot,
+) -> StructuredToolOutput {
     let mut out = format!(
-        "[server] version={} build_sha={} build={} tools={} resources={} prompts={} transports={} sampling=false recall_wrapper=recalled-memory-context mutating_tools={} memories={} work_items={} auth_enabled={} auth_issuers={}",
+        "[server] version={} build_sha={} build={} built_at={} tools={} resources={} prompts={} transports={} sampling=false recall_wrapper=recalled-memory-context mutating_tools={} memories={} work_items={} auth_enabled={} auth_issuers={}",
         env!("CARGO_PKG_VERSION"),
         BUILD_SHA,
         BUILD_STATUS,
+        BUILD_TIMESTAMP,
         surface::tool_count(),
         resource_count,
         surface::PROMPT_COUNT,
@@ -117,6 +255,15 @@ pub fn server_status_tool(
             work_counts.done,
             work_counts.dropped,
         ));
+        out.push('\n');
+        out.push_str(&format!(
+            "memory_traffic=bytes_in_total={} bytes_out_total={} estimated_tokens_in_total={} estimated_tokens_out_total={} token_estimate=coarse_bytes_divisor/{}",
+            traffic.bytes_in_total,
+            traffic.bytes_out_total,
+            traffic.estimated_tokens_in_total(),
+            traffic.estimated_tokens_out_total(),
+            TOKEN_ESTIMATE_BYTES_PER_TOKEN,
+        ));
         // The trusted issuer ORIGINS (never JWKS, keys, the resource audience, or any token/claim)
         // are listed only when auth is enabled and at least one issuer is configured. This is the
         // posture an operator needs to confirm WHICH issuers are trusted, with nothing secret.
@@ -130,7 +277,64 @@ pub fn server_status_tool(
             "policy=allow_read_like_ask_mutations resources=aionforge://manifest/tools.json,aionforge://guide/mcp-surface,aionforge://policy/tool-approval",
         );
     }
-    out
+    let structured = ServerStatusStructured {
+        schema: "aionforge.server_status.v1",
+        version: env!("CARGO_PKG_VERSION"),
+        build: ServerStatusBuild {
+            sha: BUILD_SHA,
+            build_status: BUILD_STATUS,
+            built_at: BUILD_TIMESTAMP,
+        },
+        surface: ServerStatusSurface {
+            tools: surface::tool_count(),
+            resources: resource_count,
+            prompts: surface::PROMPT_COUNT,
+            read_like_tools: surface::tool_names_by_class(ToolClass::ReadLike),
+            mutating_tools: surface::tool_names_by_class(ToolClass::Mutating),
+        },
+        transports: surface::TRANSPORTS.to_vec(),
+        sampling: false,
+        recall_wrapper: "recalled-memory-context",
+        counts: ServerStatusCounts {
+            memories: counts.total(),
+            work_items: work_counts.total(),
+            kinds: ServerStatusKindCounts {
+                episodes: counts.episodes,
+                facts: counts.facts,
+                entities: counts.entities,
+                notes: counts.notes,
+                skills: counts.skills,
+                bad_patterns: counts.bad_patterns,
+            },
+            work_statuses: ServerStatusWorkCounts {
+                todo: work_counts.todo,
+                in_progress: work_counts.in_progress,
+                blocked: work_counts.blocked,
+                done: work_counts.done,
+                dropped: work_counts.dropped,
+            },
+        },
+        auth: ServerStatusAuth {
+            enabled: auth.enabled,
+            issuers: auth.issuer_origins.clone(),
+        },
+        telemetry: ServerStatusTelemetry {
+            memory_traffic: ServerStatusMemoryTraffic {
+                bytes_in_total: traffic.bytes_in_total,
+                bytes_out_total: traffic.bytes_out_total,
+                estimated_tokens_in_total: traffic.estimated_tokens_in_total(),
+                estimated_tokens_out_total: traffic.estimated_tokens_out_total(),
+                token_estimate_divisor: TOKEN_ESTIMATE_BYTES_PER_TOKEN,
+                token_estimate_kind: "coarse_bytes_divisor",
+            },
+        },
+        resources: vec![
+            TOOL_MANIFEST_RESOURCE_URI,
+            MCP_SURFACE_GUIDE_RESOURCE_URI,
+            TOOL_APPROVAL_POLICY_RESOURCE_URI,
+        ],
+    };
+    StructuredToolOutput::new(out, structured)
 }
 
 #[cfg(test)]
@@ -158,6 +362,13 @@ mod tests {
         }
     }
 
+    fn sample_traffic() -> TrafficSnapshot {
+        TrafficSnapshot {
+            bytes_in_total: 120,
+            bytes_out_total: 44,
+        }
+    }
+
     #[test]
     fn compact_status_reports_counts_and_posture() {
         let out = server_status_tool(
@@ -168,16 +379,18 @@ mod tests {
             &AuthPosture::disabled(),
         );
         assert!(out.starts_with("[server] "), "{out}");
-        assert!(out.contains("tools=18"), "{out}");
+        assert!(out.contains("tools=23"), "{out}");
         assert!(out.contains("resources=8"), "{out}");
         assert!(out.contains("sampling=false"), "{out}");
         assert!(out.contains("memories=6"), "{out}");
         // The work-item census rides its own field, never merged into memories=.
         assert!(out.contains("work_items=4"), "{out}");
         // Build provenance rides the base line: the SHA field and a clean/dirty/unknown
-        // verdict are always present (the value is whatever the build baked in).
+        // verdict are always present (the value is whatever the build baked in), as is the
+        // RFC3339 build timestamp or the honest unknown fallback.
         assert!(out.contains("build_sha="), "{out}");
         assert!(out.contains("build="), "{out}");
+        assert!(out.contains("built_at="), "{out}");
         assert!(
             ["build=clean", "build=dirty", "build=unknown"]
                 .iter()
@@ -189,6 +402,36 @@ mod tests {
         assert!(out.contains("auth_issuers=0"), "{out}");
         // ...and never lists origins (there are none, and the verbose origins line is absent).
         assert!(!out.contains("auth_issuer_origins="), "{out}");
+    }
+
+    #[test]
+    fn structured_status_reports_build_provenance() {
+        let output = server_status_tool_output_with_traffic(
+            8,
+            sample_counts(),
+            sample_work_counts(),
+            ServerStatusToolParams { verbose: None },
+            &AuthPosture::disabled(),
+            sample_traffic(),
+        );
+        let build = output.structured.get("build").expect("structured build");
+        assert_eq!(
+            build.get("sha").and_then(serde_json::Value::as_str),
+            Some(BUILD_SHA),
+            "{build}"
+        );
+        assert_eq!(
+            build
+                .get("build_status")
+                .and_then(serde_json::Value::as_str),
+            Some(BUILD_STATUS),
+            "{build}"
+        );
+        assert_eq!(
+            build.get("built_at").and_then(serde_json::Value::as_str),
+            Some(BUILD_TIMESTAMP),
+            "{build}"
+        );
     }
 
     #[test]
@@ -225,7 +468,7 @@ mod tests {
 
     #[test]
     fn verbose_status_lists_tool_classes() {
-        let out = server_status_tool(
+        let out = server_status_tool_output_with_traffic(
             8,
             sample_counts(),
             sample_work_counts(),
@@ -233,17 +476,19 @@ mod tests {
                 verbose: Some(true),
             },
             &AuthPosture::disabled(),
-        );
+            sample_traffic(),
+        )
+        .text;
         // The full rosters, in TOOLS order — the work tools append after the existing ones.
         assert!(
             out.contains(
-                "read_like_tools=server_status,search,read_memory,session_manifest,consolidation_status,audit_history,work_tree,work_query"
+                "read_like_tools=server_status,search,read_memory,session_manifest,message_poll,message_wait,memory_census,consolidation_status,audit_history,work_tree,work_query"
             ),
             "{out}"
         );
         assert!(
             out.contains(
-                "mutating_tools=capture,batch_capture,consolidate,forget,unforget,pin,unpin,work_create,work_advance,work_link"
+                "mutating_tools=capture,batch_capture,message_send,message_ack,consolidate,forget,unforget,pin,unpin,work_create,work_advance,work_link"
             ),
             "{out}"
         );
@@ -254,10 +499,14 @@ mod tests {
         // The per-status work breakdown line is exact, and sits just after kinds.
         let work_line = "work_statuses=todo=2 in_progress=1 blocked=0 done=1 dropped=0";
         assert!(out.contains(work_line), "{out}");
+        let traffic_line = "memory_traffic=bytes_in_total=120 bytes_out_total=44 \
+                            estimated_tokens_in_total=30 estimated_tokens_out_total=11 \
+                            token_estimate=coarse_bytes_divisor/4";
+        assert!(out.contains(traffic_line), "{out}");
         // Ordering: mutating roster < kinds < work_statuses < policy. Anchor to the verbose
         // roster specifically — the base [server] line also contains "mutating_tools=".
         let mutating_at = out
-            .find("mutating_tools=capture,batch_capture,consolidate,forget,unforget,pin,unpin,work_create,work_advance,work_link")
+            .find("mutating_tools=capture,batch_capture,message_send,message_ack,consolidate,forget,unforget,pin,unpin,work_create,work_advance,work_link")
             .expect("verbose output has a mutating_tools roster line");
         let kinds_at = out
             .find(kinds_line)
@@ -265,12 +514,80 @@ mod tests {
         let work_at = out
             .find(work_line)
             .expect("verbose output has a work_statuses line");
+        let traffic_at = out
+            .find(traffic_line)
+            .expect("verbose output has a memory_traffic line");
         let policy_at = out
             .find("policy=allow_read_like_ask_mutations")
             .expect("verbose output has a policy line");
         assert!(
-            mutating_at < kinds_at && kinds_at < work_at && work_at < policy_at,
-            "work_statuses line must fall between kinds and policy: {out}"
+            mutating_at < kinds_at
+                && kinds_at < work_at
+                && work_at < traffic_at
+                && traffic_at < policy_at,
+            "memory_traffic line must fall between work_statuses and policy: {out}"
+        );
+    }
+
+    #[test]
+    fn structured_status_reports_memory_traffic_rollup() {
+        let output = server_status_tool_output_with_traffic(
+            8,
+            sample_counts(),
+            sample_work_counts(),
+            ServerStatusToolParams {
+                verbose: Some(true),
+            },
+            &AuthPosture::disabled(),
+            sample_traffic(),
+        );
+        let traffic = output
+            .structured
+            .get("telemetry")
+            .and_then(|telemetry| telemetry.get("memory_traffic"))
+            .expect("structured telemetry has memory_traffic");
+
+        assert_eq!(
+            traffic
+                .get("bytes_in_total")
+                .and_then(serde_json::Value::as_u64),
+            Some(120),
+            "{traffic}"
+        );
+        assert_eq!(
+            traffic
+                .get("bytes_out_total")
+                .and_then(serde_json::Value::as_u64),
+            Some(44),
+            "{traffic}"
+        );
+        assert_eq!(
+            traffic
+                .get("estimated_tokens_in_total")
+                .and_then(serde_json::Value::as_u64),
+            Some(30),
+            "{traffic}"
+        );
+        assert_eq!(
+            traffic
+                .get("estimated_tokens_out_total")
+                .and_then(serde_json::Value::as_u64),
+            Some(11),
+            "{traffic}"
+        );
+        assert_eq!(
+            traffic
+                .get("token_estimate_kind")
+                .and_then(serde_json::Value::as_str),
+            Some("coarse_bytes_divisor"),
+            "{traffic}"
+        );
+        assert_eq!(
+            traffic
+                .get("token_estimate_divisor")
+                .and_then(serde_json::Value::as_u64),
+            Some(4),
+            "{traffic}"
         );
     }
 }

@@ -12,6 +12,7 @@ use aionforge_domain::nodes::agent::AgentStatus;
 use aionforge_domain::nodes::core::BlockKind;
 use aionforge_domain::nodes::episodic::{ConsolidationState, Role};
 use aionforge_domain::nodes::forensic::{AuditKind, PromotionStatus};
+use aionforge_domain::nodes::message::{MessageKind, MessageReadState};
 use aionforge_domain::nodes::semantic::FactStatus;
 use aionforge_domain::nodes::work::WorkStatus;
 use aionforge_domain::value::{ObjectKind, ObjectValue};
@@ -71,6 +72,39 @@ fn work_status_vocabulary() {
     ] {
         assert!(tag(status).len() <= 32, "work_status fits STRING(32)");
     }
+}
+
+#[test]
+fn message_kind_vocabulary_matches_the_stable_labels() {
+    let expected = [
+        (MessageKind::Brief, MessageKind::BRIEF_LABEL),
+        (MessageKind::Status, MessageKind::STATUS_LABEL),
+        (MessageKind::Review, MessageKind::REVIEW_LABEL),
+        (MessageKind::Ack, MessageKind::ACK_LABEL),
+        (MessageKind::Note, MessageKind::NOTE_LABEL),
+    ];
+    for (kind, label) in expected {
+        assert_eq!(tag(kind), label);
+        assert!(label.len() <= 32, "message kind fits STRING(32)");
+    }
+    assert_eq!(tag(MessageKind::default()), MessageKind::NOTE_LABEL);
+}
+
+#[test]
+fn message_read_state_vocabulary_matches_the_stable_labels() {
+    let expected = [
+        (MessageReadState::Unread, MessageReadState::UNREAD_LABEL),
+        (MessageReadState::Read, MessageReadState::READ_LABEL),
+        (MessageReadState::Acked, MessageReadState::ACKED_LABEL),
+    ];
+    for (state, label) in expected {
+        assert_eq!(tag(state), label);
+        assert!(label.len() <= 32, "message read state fits STRING(32)");
+    }
+    assert_eq!(
+        tag(MessageReadState::default()),
+        MessageReadState::UNREAD_LABEL
+    );
 }
 
 #[test]
@@ -153,8 +187,13 @@ fn audit_kind_vocabulary() {
         (AuditKind::KeyRotation, "key_rotation"),
         (AuditKind::AgentRetired, "agent_retired"),
         (AuditKind::WorkStatusChange, "work_status_change"),
+        (AuditKind::MessageSend, "message_send"),
+        (
+            AuditKind::MessageReadStateChange,
+            "message_read_state_change",
+        ),
     ];
-    assert_eq!(expected.len(), 24);
+    assert_eq!(expected.len(), 26);
     for (variant, want) in expected {
         assert_eq!(tag(variant), want);
     }

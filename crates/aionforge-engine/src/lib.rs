@@ -64,7 +64,10 @@ pub use aionforge_retrieval::{
     RecallOptions, RecallQuery, RetrieverConfig, Signal, SignalWeights, StructuredEntry,
     TemporalMode,
 };
-pub use aionforge_store::{CoolingCursor, ForgetCursor, ResolvedMemory, Store, StoreConfig};
+pub use aionforge_store::{
+    CoolingCursor, ForgetCursor, MessageCursor, MessagePage, MessageRetentionReport,
+    ResolvedMemory, Store, StoreConfig, StoreError,
+};
 pub use aionforge_trust::{
     AttestReceipt, AttestRequest, AuditStatus, CategoryRule, CoreAttesterVote, CoreEditError,
     CoreEditOutcome, CoreEditPolicy, CoreEditReceipt, CoreEditRejection, CoreEditRequest,
@@ -73,6 +76,7 @@ pub use aionforge_trust::{
 };
 
 mod audit;
+mod census;
 mod core_block;
 mod doctor;
 mod drift_sweep;
@@ -85,9 +89,10 @@ mod reliability_sweep;
 mod telemetry;
 pub use aionforge_store::{AuditCursor, MAX_AUDIT_PAGE};
 pub use aionforge_store::{
-    ConsolidatingModel, MemoryCounts, NoteLineage, WorkCounts, WriterFamilySet,
+    ConsolidatingModel, MemoryCounts, MessageCounts, NoteLineage, WorkCounts, WriterFamilySet,
 };
 pub use audit::{AuditPage, AuditRecord, AuditVerification};
+pub use census::{MemoryCensusReport, NamespaceCensus};
 pub use core_block::{CoreBlockCreate, CoreBlockDraft};
 pub use doctor::{EmbedderDoctorReport, MemoryDoctorReport};
 pub use drift_sweep::BaselineComputation;
@@ -643,6 +648,27 @@ impl<E: Embedder> Memory<E> {
     pub fn consolidation_lag(&self, now: &Timestamp) -> Result<ConsolidationLag, EngineError> {
         let snapshot = self.store.consolidation_lag()?;
         Ok(ConsolidationLag::from_snapshot(&snapshot, now))
+    }
+
+    /// Soft-expire durable messages older than their acknowledgement-aware retention windows.
+    ///
+    /// This is a dedicated message lifecycle operation rather than part of the generic forgetting
+    /// sweeps: acknowledged messages use `retention_acked_days`, while unread and read messages
+    /// use `retention_unacked_days`. The serving host owns scheduling and supplies `now`, keeping
+    /// the facade deterministic and runtime-independent.
+    ///
+    /// # Errors
+    /// Returns [`EngineError::Store`] if a stored message cannot be decoded or the expiry commit
+    /// fails.
+    pub fn reap_messages(
+        &self,
+        now: &Timestamp,
+        retention_acked_days: u64,
+        retention_unacked_days: u64,
+    ) -> Result<MessageRetentionReport, EngineError> {
+        Ok(self
+            .store
+            .reap_messages(now, retention_acked_days, retention_unacked_days)?)
     }
 }
 

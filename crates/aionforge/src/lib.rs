@@ -67,6 +67,7 @@ pub use aionforge_domain::nodes::episodic::{ConsolidationState, Episode, Origin,
 pub use aionforge_domain::nodes::forensic::{
     AuditEvent, AuditKind, KeyRotationPayload, Promotion, PromotionStatus, ProvenanceRecord,
 };
+pub use aionforge_domain::nodes::message::{Message, MessageKind, MessageReadState};
 pub use aionforge_domain::nodes::procedural::{BadPattern, RankedBadPattern, RankedSkill, Skill};
 pub use aionforge_domain::nodes::semantic::{Entity, Extraction, Fact, FactStatus, SourceSpan};
 pub use aionforge_domain::time::{BiTemporal, Timestamp, instant_after, instant_before, to_utc};

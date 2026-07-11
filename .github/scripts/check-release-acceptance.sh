@@ -104,6 +104,8 @@ require_grep ".github/workflows/release-publish.yml" "pattern: aionforge-*" \
   "release asset download filters out non-release artifacts"
 require_grep ".github/workflows/release-publish.yml" "Dockerfile.release" \
   "release runtime image Dockerfile"
+require_grep ".github/workflows/release-publish.yml" 'tar -C "dist/${{ matrix.target }}" -czf "dist/aionforge-${{ matrix.target }}.tar.gz" aionforge' \
+  "release binary archives include the aionforge binary"
 require_grep ".github/workflows/release-publish.yml" "crates.io publishing is intentionally deferred" \
   "crates.io deferral note"
 require_grep ".github/workflows/release-publish.yml" "gh release create" \

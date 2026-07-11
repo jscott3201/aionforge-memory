@@ -6,7 +6,8 @@
 #
 # Near-instant gates always run: rustfmt, file-size cap (700 LOC), no-secret scan,
 # the GQL parameter-binding gate, the no-log-leakage gate, the store-only-selene gate,
-# and the audit-keygen confinement gate. A cached rustdoc (-D warnings) job also runs.
+# the audit-keygen confinement gate, and the principal mint-site gate. A cached
+# rustdoc (-D warnings) job also runs.
 # When dependency manifests change, cargo-deny + THIRDPARTY.md currency run too.
 #
 # The heavyweight ubuntu build/clippy/test suite deliberately does NOT run on dev

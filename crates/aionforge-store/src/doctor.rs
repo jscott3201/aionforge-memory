@@ -17,6 +17,7 @@ const EXPECTED_COMPOSITE_INDEXES: &[(&str, &[&str])] = &[
     ("AuditEvent", &["subject_id", "occurred_at"]),
     ("AuditEvent", &["kind", "occurred_at"]),
     ("WorkItem", &["parent_id", "ordinal"]),
+    ("Message", &["recipient", "ingested_at"]),
 ];
 
 /// Presence check for a catalog-backed inventory.

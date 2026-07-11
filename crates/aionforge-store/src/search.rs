@@ -42,6 +42,9 @@ pub struct SearchHit {
 }
 
 /// A vector-searchable node kind and its indexed properties (data-model §7–§8).
+///
+/// `Message` is deliberately absent: message bodies are untrusted inbox data and carry no
+/// vector or text index, so neither native search nor the hybrid retriever can recall them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SearchKind {
     /// Raw captured turns.

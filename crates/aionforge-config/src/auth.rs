@@ -1,17 +1,17 @@
 //! OAuth resource-server authentication configuration (DEFAULT-OFF).
 //!
 //! Its own module because the resource-server posture is a coherent unit: the master
-//! switch, the set of trusted token issuers, and per-issuer claim mapping. This is the
-//! PR1 surface — **config only**. No JWT validation, JWKS discovery, or principal
-//! mapping runs here; those are PR2/PR3 and read these fields. When the master switch
-//! [`AuthConfig::enabled`] is `false` (the default) the server derives **no identity**
-//! from a connection, exactly today's behavior.
+//! switch, the set of trusted token issuers, and per-issuer claim mapping. Runtime JWT
+//! validation and JWKS discovery live in `aionforge-auth`; verified-claims-to-principal
+//! mapping lives in `aionforge-mcp`. When the master switch [`AuthConfig::enabled`] is
+//! `false` (the default) the server derives **no identity** from a connection, exactly
+//! today's behavior.
 //!
 //! [`AuthConfig::validate`] is **fail-closed but scoped**: a disabled block imposes
 //! nothing (returns `Ok` immediately), while an *enabled* block must name at least one
 //! sound issuer with an `https`/loopback origin, a non-empty audience, and only the
 //! permitted RSA algorithms. [`AuthConfig::startup_warnings`] carries soft advisories the
-//! host logs at startup in PR5 — they never fail [`AuthConfig::validate`].
+//! host logs at startup — they never fail [`AuthConfig::validate`].
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -72,7 +72,7 @@ pub struct IssuerConfig {
     /// this set is **dropped**, not granted (enforced in PR3). An empty set therefore
     /// grants no teams from this issuer.
     pub teams_allowlist: BTreeSet<String>,
-    /// The Auth0 RBAC permission string that marks a console operator, if any. Consumed
+    /// The Auth0 RBAC permission string that marks an operator, if any. Consumed
     /// in PR3 to set the operator bit; `None` means this issuer mints no operators.
     pub operator_permission: Option<String>,
     /// Clock-skew leeway in seconds applied to `exp`/`nbf`/`iat` during validation.

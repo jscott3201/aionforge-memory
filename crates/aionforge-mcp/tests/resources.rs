@@ -21,18 +21,18 @@ use rmcp::model::ReadResourceRequestParams;
 type TestError = Box<dyn std::error::Error + Send + Sync>;
 type TestResult<T = ()> = Result<T, TestError>;
 
-const TOTAL_STATIC_RESOURCE_BUDGET_BYTES: usize = 22_216;
+const TOTAL_STATIC_RESOURCE_BUDGET_BYTES: usize = 26_500;
 
 const RESOURCE_BODY_BUDGETS: &[(&str, usize)] = &[
-    (TOOL_MANIFEST_RESOURCE_URI, 9_500),
+    (TOOL_MANIFEST_RESOURCE_URI, 12_000),
     (RECALL_UNTRUSTED_DATA_PROMPT_RESOURCE_URI, 1_200),
-    (MCP_SURFACE_GUIDE_RESOURCE_URI, 3_400),
-    (TOOL_APPROVAL_POLICY_RESOURCE_URI, 1_800),
+    (MCP_SURFACE_GUIDE_RESOURCE_URI, 3_900),
+    (TOOL_APPROVAL_POLICY_RESOURCE_URI, 2_100),
     (CLIENT_OAUTH_GUIDE_RESOURCE_URI, 2_000),
     (PLUGIN_PACKAGE_GUIDE_RESOURCE_URI, 2_700),
-    (CODEX_CONFIG_RESOURCE_URI, 3_800),
+    (CODEX_CONFIG_RESOURCE_URI, 4_200),
     (CLAUDE_CODE_CONFIG_RESOURCE_URI, 512),
-    (OPENCODE_CONFIG_RESOURCE_URI, 1_024),
+    (OPENCODE_CONFIG_RESOURCE_URI, 1_300),
     (CURSOR_CONFIG_RESOURCE_URI, 512),
 ];
 
@@ -224,6 +224,8 @@ async fn mcp_transport_lists_client_policy_resources() -> TestResult {
         .map(|tool| tool.name.to_string())
         .collect();
     assert!(read_only_tool_names.contains("search"));
+    assert!(read_only_tool_names.contains("message_poll"));
+    assert!(read_only_tool_names.contains("message_wait"));
     assert!(!read_only_tool_names.contains("capture"));
     assert!(
         manifest["tools"]
@@ -235,6 +237,40 @@ async fn mcp_transport_lists_client_policy_resources() -> TestResult {
                 && tool["approval"] == "allow_without_prompt"
                 && tool["read_only_hint"] == true
                 && tool["open_world_hint"] == false)
+    );
+    assert!(
+        manifest["tools"]
+            .as_array()
+            .expect("tools")
+            .iter()
+            .any(|tool| tool["name"] == "message_send"
+                && tool["class"] == "mutating"
+                && tool["schema"] == "aionforge.message_send.v1"
+                && tool["idempotent_hint"] == false)
+    );
+    assert!(
+        manifest["tools"]
+            .as_array()
+            .expect("tools")
+            .iter()
+            .any(|tool| tool["name"] == "message_poll"
+                && tool["class"] == "read_like"
+                && tool["schema"] == "aionforge.message_poll.v1"
+                && tool["read_only_hint"] == true)
+    );
+    assert!(
+        manifest["tools"]
+            .as_array()
+            .expect("tools")
+            .iter()
+            .any(|tool| tool["name"] == "message_wait"
+                && tool["class"] == "read_like"
+                && tool["schema"] == "aionforge.message_wait.v1"
+                && tool["default_output"]
+                    .as_str()
+                    .is_some_and(|output| output.contains("over-recipient-cap polls once"))
+                && tool["read_only_hint"] == true
+                && tool["idempotent_hint"] == false)
     );
     assert!(
         manifest["tools"]
@@ -257,6 +293,10 @@ async fn mcp_transport_lists_client_policy_resources() -> TestResult {
     assert!(codex.contains("[mcp_servers.aionforge_memory]"));
     assert!(!codex.contains("aionforge_memory_plugin"));
     assert!(codex.contains("\"server_status\""));
+    assert!(codex.contains("\"message_poll\""));
+    assert!(codex.contains("\"message_wait\""));
+    assert!(codex.contains("[mcp_servers.aionforge_memory.tools.message_wait]"));
+    assert!(codex.contains("[mcp_servers.aionforge_memory.tools.message_send]"));
     assert!(!codex.contains("bearer_token_env_var"));
     assert!(codex.contains("approval_mode = \"prompt\""));
 
@@ -269,7 +309,7 @@ async fn mcp_transport_lists_client_policy_resources() -> TestResult {
     let oauth = read_text_resource(&client, CLIENT_OAUTH_GUIDE_RESOURCE_URI).await?;
     assert!(oauth.contains("resource_metadata"));
     assert!(oauth.contains("codex mcp login aionforge_memory"));
-    assert!(oauth.contains("does not validate OAuth tokens"));
+    assert!(oauth.contains("Local loopback"));
     assert!(oauth.contains("omit Authorization headers"));
 
     let plugin = read_text_resource(&client, PLUGIN_PACKAGE_GUIDE_RESOURCE_URI).await?;

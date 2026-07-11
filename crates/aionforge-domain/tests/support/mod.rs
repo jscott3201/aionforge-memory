@@ -341,6 +341,8 @@ pub fn arb_audit_kind() -> impl Strategy<Value = AuditKind> {
         AuditKind::KeyRotation,
         AuditKind::AgentRetired,
         AuditKind::WorkStatusChange,
+        AuditKind::MessageSend,
+        AuditKind::MessageReadStateChange,
     ])
 }
 

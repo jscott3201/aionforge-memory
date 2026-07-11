@@ -6,7 +6,7 @@
 //! (`read_memory.rs` — episode/contract tests; `read_memory_multikind.rs` — the all-kinds
 //! tests), so each binary uses a subset and unused items here are expected per binary.
 
-#![allow(dead_code)]
+#![allow(dead_code, unused_imports)]
 
 use std::future::Future;
 use std::sync::Arc;
@@ -197,18 +197,45 @@ fn ident(id: Id, namespace: Namespace, expired: bool) -> Identity {
 
 /// Seed one episode straight into the store, bypassing the Capturer. Returns its id.
 pub fn seed(memory: &Memory<FakeEmbedder>, content: &str, namespace: Namespace, role: Role) -> Id {
-    let id = Id::generate();
+    seed_with_id_at(memory, Id::generate(), content, namespace, role, now())
+}
+
+/// Seed one episode with a caller-provided id and `ingested_at`.
+///
+/// Tests that compare snapshots or keyset ordering need deterministic ids or
+/// non-default timestamps; ordinary tests should keep using [`seed`].
+pub fn seed_with_id_at(
+    memory: &Memory<FakeEmbedder>,
+    id: Id,
+    content: &str,
+    namespace: Namespace,
+    role: Role,
+    ingested_at: Timestamp,
+) -> Id {
+    seed_with_id_at_expired(memory, id, content, namespace, role, ingested_at, None)
+}
+
+/// Seed one episode with a caller-provided id, `ingested_at`, and optional expiry stamp.
+pub fn seed_with_id_at_expired(
+    memory: &Memory<FakeEmbedder>,
+    id: Id,
+    content: &str,
+    namespace: Namespace,
+    role: Role,
+    ingested_at: Timestamp,
+    expired_at: Option<Timestamp>,
+) -> Id {
     let episode = Episode {
         identity: Identity {
             id,
-            ingested_at: now(),
+            ingested_at: ingested_at.clone(),
             namespace,
-            expired_at: None,
+            expired_at,
         },
         stats: stats(),
         content: content.to_string(),
         role,
-        captured_at: now(),
+        captured_at: ingested_at,
         agent_id: Id::generate(),
         session_id: None,
         content_hash: ContentHash::of(content.as_bytes()),
