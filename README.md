@@ -6,8 +6,8 @@
   Long-term memory for AI agents, built on selene-db.
 </p>
 
-> **Status: 0.3.0 public release.** Aionforge Memory is public and usable,
-> but still pre-1.0. Expect schema and API changes before 1.0. The 0.3.0
+> **Status: 0.4.0 public release.** Aionforge Memory is public and usable,
+> but still pre-1.0. Expect schema and API changes before 1.0. The 0.4.0
 > release is a fresh-store release from 0.2.x because the selene-db 1.2 to 1.3
 > upgrade changes the WAL/schema format.
 
@@ -117,7 +117,7 @@ See [Agent plugin](docs/plugins.md) for install and identity setup.
 Published images are available for `linux/amd64` and `linux/arm64`:
 
 ```bash
-docker pull ghcr.io/jscott3201/aionforge-memory:0.3.0
+docker pull ghcr.io/jscott3201/aionforge-memory:0.4.0
 ```
 
 Run a local smoke-test server with embeddings disabled:
@@ -127,7 +127,7 @@ docker run --rm \
   -p 127.0.0.1:3918:3918 \
   -v aionforge-data:/data \
   -e AIONFORGE_EMBEDDER__ENABLED=false \
-  ghcr.io/jscott3201/aionforge-memory:0.3.0
+  ghcr.io/jscott3201/aionforge-memory:0.4.0
 ```
 
 For bind mounts, use an owner-only data directory. The container runs as

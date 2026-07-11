@@ -24,7 +24,7 @@ dependencies = [
 
 [[package]]
 name = "aionforge"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "aionforge-domain",
  "aionforge-engine",
@@ -35,7 +35,7 @@ dependencies = [
 
 [[package]]
 name = "aionforge-auth"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "aionforge-config",
  "base64",
@@ -52,7 +52,7 @@ dependencies = [
 
 [[package]]
 name = "aionforge-capture"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "aionforge-domain",
  "aionforge-security",
@@ -67,7 +67,7 @@ dependencies = [
 
 [[package]]
 name = "aionforge-cli"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "aionforge",
  "aionforge-config",
@@ -91,7 +91,7 @@ dependencies = [
 
 [[package]]
 name = "aionforge-config"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "aionforge-domain",
  "aionforge-store",
@@ -105,7 +105,7 @@ dependencies = [
 
 [[package]]
 name = "aionforge-consolidate"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "aionforge-domain",
  "aionforge-security",
@@ -121,7 +121,7 @@ dependencies = [
 
 [[package]]
 name = "aionforge-domain"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "blake3",
  "jiff",
@@ -134,7 +134,7 @@ dependencies = [
 
 [[package]]
 name = "aionforge-embed"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "aionforge-config",
  "aionforge-domain",
@@ -151,7 +151,7 @@ dependencies = [
 
 [[package]]
 name = "aionforge-engine"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "aionforge-capture",
  "aionforge-consolidate",
@@ -175,7 +175,7 @@ dependencies = [
 
 [[package]]
 name = "aionforge-eval"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "aionforge-consolidate",
  "aionforge-domain",
@@ -193,7 +193,7 @@ dependencies = [
 
 [[package]]
 name = "aionforge-forget"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "aionforge-domain",
  "aionforge-embed",
@@ -205,7 +205,7 @@ dependencies = [
 
 [[package]]
 name = "aionforge-mcp"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "aionforge-auth",
  "aionforge-config",
@@ -235,7 +235,7 @@ dependencies = [
 
 [[package]]
 name = "aionforge-procedural"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "aionforge-domain",
  "aionforge-store",
@@ -246,7 +246,7 @@ dependencies = [
 
 [[package]]
 name = "aionforge-redteam"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "aionforge-domain",
  "aionforge-engine",
@@ -261,7 +261,7 @@ dependencies = [
 
 [[package]]
 name = "aionforge-retrieval"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "aionforge-domain",
  "aionforge-store",
@@ -275,7 +275,7 @@ dependencies = [
 
 [[package]]
 name = "aionforge-security"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "aionforge-domain",
  "aionforge-store",
@@ -287,7 +287,7 @@ dependencies = [
 
 [[package]]
 name = "aionforge-store"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "aionforge-domain",
  "aionforge-store",
@@ -307,7 +307,7 @@ dependencies = [
 
 [[package]]
 name = "aionforge-trust"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "aionforge-domain",
  "aionforge-store",
