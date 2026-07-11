@@ -14,11 +14,11 @@ name = "aionforge"
 path = "src/main.rs"
 
 [dependencies]
-aionforge = { path = "../aionforge", version = "0.3.0" }
-aionforge-config = { path = "../aionforge-config", version = "0.3.0" }
-aionforge-embed = { path = "../aionforge-embed", version = "0.3.0" }
-aionforge-mcp = { path = "../aionforge-mcp", version = "0.3.0" }
-aionforge-store = { path = "../aionforge-store", version = "0.3.0" }
+aionforge = { path = "../aionforge", version = "0.4.0" }
+aionforge-config = { path = "../aionforge-config", version = "0.4.0" }
+aionforge-embed = { path = "../aionforge-embed", version = "0.4.0" }
+aionforge-mcp = { path = "../aionforge-mcp", version = "0.4.0" }
+aionforge-store = { path = "../aionforge-store", version = "0.4.0" }
 axum = { version = "0.8.9", default-features = false, features = ["tokio", "http1", "http2"] }
 bytes = "1"
 clap = { workspace = true }
