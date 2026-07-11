@@ -664,13 +664,15 @@ pub(crate) fn message_ack_tool_output<E: Embedder>(
         .iter()
         .filter(|item| item.outcome == "not_found")
         .count();
-    let failed = outcomes.len() - updated - unchanged - not_found;
+    let conflict = outcomes.iter().filter(|i| i.outcome == "conflict").count();
+    let failed = outcomes.len() - updated - unchanged - not_found - conflict;
     let mut text = format!(
-        "[message_ack] requested={} updated={} unchanged={} not_found={} failed={}",
+        "[message_ack] requested={} updated={} unchanged={} not_found={} conflict={} failed={}",
         outcomes.len(),
         updated,
         unchanged,
         not_found,
+        conflict,
         failed,
     );
     for outcome in &outcomes {

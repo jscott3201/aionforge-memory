@@ -286,11 +286,8 @@ impl WaitTicket<'_> {
                             if let Some(heartbeat) = heartbeat.as_ref() {
                                 heartbeat.emit(deadline).await;
                             }
-                            // A bounded send can consume the remaining deadline budget; do not
-                            // make an expired post-tick poll change a timed-out result.
-                            if deadline <= tokio::time::Instant::now() {
-                                return Ok(None);
-                            }
+                            // The loop top performs one final poll after the bounded emit; its
+                            // zero-remaining guard then returns the timeout without spinning.
                         }
                     }
                 }

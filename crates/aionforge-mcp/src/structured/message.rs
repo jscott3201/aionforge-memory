@@ -160,6 +160,7 @@ pub(crate) struct MessageAckStructured {
     updated: usize,
     unchanged: usize,
     not_found: usize,
+    conflict: usize,
     failed: usize,
     outcomes: Vec<MessageAckOutcomeStructured>,
 }
@@ -170,13 +171,15 @@ impl MessageAckStructured {
         let updated = count(&outcomes, "updated");
         let unchanged = count(&outcomes, "unchanged");
         let not_found = count(&outcomes, "not_found");
-        let failed = requested - updated - unchanged - not_found;
+        let conflict = count(&outcomes, "conflict");
+        let failed = requested - updated - unchanged - not_found - conflict;
         Self {
             schema: "aionforge.message_ack.v1",
             requested,
             updated,
             unchanged,
             not_found,
+            conflict,
             failed,
             outcomes,
         }
@@ -188,4 +191,36 @@ fn count(outcomes: &[MessageAckOutcomeStructured], outcome: &str) -> usize {
         .iter()
         .filter(|item| item.outcome == outcome)
         .count()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{MessageAckOutcomeStructured, MessageAckStructured};
+
+    #[test]
+    fn ack_rollup_keeps_conflicts_separate_from_failures() {
+        let receipt = MessageAckStructured::new(vec![
+            outcome("updated"),
+            outcome("not_found"),
+            outcome("conflict"),
+            outcome("failed"),
+        ]);
+        let receipt = serde_json::to_value(receipt).expect("ack receipt serializes");
+
+        assert_eq!(receipt["requested"].as_u64(), Some(4));
+        assert_eq!(receipt["updated"].as_u64(), Some(1));
+        assert_eq!(receipt["not_found"].as_u64(), Some(1));
+        assert_eq!(receipt["conflict"].as_u64(), Some(1));
+        assert_eq!(receipt["failed"].as_u64(), Some(1));
+    }
+
+    fn outcome(outcome: &'static str) -> MessageAckOutcomeStructured {
+        MessageAckOutcomeStructured {
+            id: "00000000-0000-0000-0000-000000000000".to_string(),
+            outcome,
+            from: None,
+            to: None,
+            error: None,
+        }
+    }
 }

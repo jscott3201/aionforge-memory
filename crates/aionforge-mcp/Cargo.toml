@@ -16,6 +16,7 @@ aionforge-config = { path = "../aionforge-config", version = "0.3.0" }
 aionforge-auth = { path = "../aionforge-auth", version = "0.3.0" }
 base64 = { workspace = true }
 bytes = "1"
+futures-util = "0.3"
 http = "1"
 http-body = "1"
 http-body-util = "0.1"

@@ -163,7 +163,7 @@ async fn read_like_transport_results_include_structured_content() -> TestResult 
         (
             "message_ack",
             serde_json::json!({
-                "message_ids": [message_id],
+                "message_ids": [message_id.clone()],
                 "to": "acked",
                 "principal": principal.clone(),
             }),
@@ -228,6 +228,30 @@ async fn read_like_transport_results_include_structured_content() -> TestResult 
             "{tool} schema-bearing structuredContent: {structured}"
         );
     }
+
+    let mixed_ack = client
+        .call_tool(
+            CallToolRequestParams::new("message_ack").with_arguments(object_args(
+                serde_json::json!({
+                    "message_ids": [message_id, Id::generate().to_string()],
+                    "to": "read",
+                    "principal": principal,
+                }),
+            )),
+        )
+        .await?;
+    let structured = mixed_ack
+        .structured_content
+        .as_ref()
+        .expect("mixed message_ack has structuredContent");
+    assert_eq!(
+        structured.get("schema").and_then(serde_json::Value::as_str),
+        Some("aionforge.message_ack.v1")
+    );
+    assert_eq!(structured["requested"].as_u64(), Some(2));
+    assert_eq!(structured["not_found"].as_u64(), Some(1));
+    assert_eq!(structured["conflict"].as_u64(), Some(1));
+    assert_eq!(structured["failed"].as_u64(), Some(0));
 
     client.cancel().await?;
     server_handle.await??;

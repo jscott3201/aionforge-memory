@@ -414,3 +414,74 @@ async fn wedged_subscriber_never_delays_room_message_send() -> TestResult {
     drop(wedged_events);
     Ok(())
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn concurrent_wedged_subscribers_are_pruned_in_one_timeout_window() -> TestResult {
+    let service = stateful_auth_service(memory(), RoomSubscribeBounds { max_concurrent: 2 });
+    let room = Id::generate();
+    let uri = room_uri(room);
+    let first = open_session(&service, writer(Id::generate(), &[TEAM])).await?;
+    let second = open_session(&service, writer(Id::generate(), &[TEAM])).await?;
+    let sender = open_session(&service, writer(Id::generate(), &[TEAM])).await?;
+
+    assert!(subscribe(&service, &first, 2, &uri).await?["result"].is_object());
+    assert!(subscribe(&service, &second, 2, &uri).await?["result"].is_object());
+    // Keep both common SSE receivers open but undrained. Each becomes a timeout-bound peer
+    // after rmcp's bounded channel fills, so the registry must prune both in one window.
+    let wedged_first = open_events(&service, &first).await?;
+    let wedged_second = open_events(&service, &second).await?;
+
+    for id in 0..20 {
+        let sent = send_room_message(
+            &service,
+            &sender,
+            id + 2,
+            &format!("team:{TEAM}"),
+            room,
+            "concurrent prune timeout sentinel",
+        )
+        .await?;
+        assert!(sent["result"].is_object(), "{sent}");
+        tokio::task::yield_now().await;
+    }
+    let sent = send_room_message(
+        &service,
+        &sender,
+        22,
+        &format!("team:{TEAM}"),
+        room,
+        "concurrent prune trigger",
+    )
+    .await?;
+    assert!(sent["result"].is_object(), "{sent}");
+
+    let replacement_first = open_session(&service, writer(Id::generate(), &[TEAM])).await?;
+    let replacement_second = open_session(&service, writer(Id::generate(), &[TEAM])).await?;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+    let mut first_admitted = false;
+    let mut second_admitted = false;
+    let mut request_id = 100;
+    while !(first_admitted && second_admitted) {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "both dead subscriptions must release the global admission cap in one timeout window"
+        );
+        if !first_admitted {
+            let attempt = subscribe(&service, &replacement_first, request_id, &uri).await?;
+            first_admitted = attempt["result"].is_object();
+            request_id += 1;
+        }
+        if !second_admitted {
+            let attempt = subscribe(&service, &replacement_second, request_id, &uri).await?;
+            second_admitted = attempt["result"].is_object();
+            request_id += 1;
+        }
+        if !(first_admitted && second_admitted) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+
+    drop(wedged_first);
+    drop(wedged_second);
+    Ok(())
+}

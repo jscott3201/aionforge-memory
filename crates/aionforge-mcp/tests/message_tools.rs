@@ -340,6 +340,8 @@ fn ack_is_recipient_scoped_monotonic_idempotent_and_audited() {
     let regression = message_ack_tool(&memory, ack_params(bob, id, "read"), &now(), None, OFF)
         .expect("monotonic conflict is a per-id outcome");
     assert!(regression.contains("outcome=conflict"), "{regression}");
+    assert!(regression.contains("conflict=1"), "{regression}");
+    assert!(regression.contains("failed=0"), "{regression}");
     assert_eq!(
         memory
             .store()

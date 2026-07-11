@@ -48,10 +48,13 @@ impl MessageKind {
     pub const NOTE_LABEL: &str = "note";
 }
 
-/// The recipient's read lifecycle for a [`Message`].
+/// The shared, per-node `read_state` scalar for a [`Message`].
 ///
 /// Stored under the dedicated `read_state` property, never the generic `status`
-/// property used by fact lifecycle code. New messages start [`MessageReadState::Unread`].
+/// property used by fact lifecycle code. A team broadcast has one team-wide state, not
+/// per-member state: the first member to read or acknowledge it advances the state for the whole
+/// team. Independent per-member unread tracking would require separate per-recipient read-receipt
+/// nodes and is intentionally deferred pre-1.0. New messages start [`MessageReadState::Unread`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MessageReadState {
@@ -99,7 +102,7 @@ pub struct Message {
     pub body: String,
     /// Application-level message purpose.
     pub msg_kind: MessageKind,
-    /// Recipient read lifecycle.
+    /// Shared per-node recipient read lifecycle; team broadcasts are team-wide, not per-member.
     pub read_state: MessageReadState,
     /// Immutable event time at which the sender sent the message.
     pub sent_at: Timestamp,

@@ -214,6 +214,7 @@ dependencies = [
  "aionforge-store",
  "base64",
  "bytes",
+ "futures-util",
  "http",
  "http-body",
  "http-body-util",
