@@ -98,16 +98,7 @@ impl<E: Embedder + 'static> ServerHandler for AionforgeMcp<E> {
             Ok(Some(text)) => Ok(ReadResourceResult::new(vec![
                 ResourceContents::text(text, uri).with_mime_type("text/plain"),
             ])),
-            Ok(None) => {
-                if self.auth_enabled().is_enabled() {
-                    self.room_subs.unsubscribe(
-                        &room.room_id.to_string(),
-                        &uri,
-                        &self.session_marker,
-                    );
-                }
-                Err(resource_not_found(&uri))
-            }
+            Ok(None) => Err(resource_not_found(&uri)),
             Err(_) => Err(resource_not_found(&uri)),
         }
     }

@@ -99,6 +99,41 @@ async fn stateful_cross_session_send_pushes_a_reader_visible_room_resource() -> 
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn empty_room_read_does_not_revoke_a_live_subscription() -> TestResult {
+    let service = stateful_auth_service(memory(), RoomSubscribeBounds::default());
+    let room = Id::generate();
+    let uri = room_uri(room);
+    let member = open_session(&service, writer(Id::generate(), &[TEAM])).await?;
+    let sender = open_session(&service, writer(Id::generate(), &[TEAM])).await?;
+    assert_ne!(member.id, sender.id, "separate HTTP sessions are required");
+
+    let subscribed = subscribe(&service, &member, 2, &uri).await?;
+    assert!(subscribed["result"].is_object(), "{subscribed}");
+    let mut events = open_events(&service, &member).await?;
+
+    let empty = read_resource(&service, &member, 3, &uri).await?;
+    assert_resource_not_found(&empty);
+
+    let sent = send_room_message(
+        &service,
+        &sender,
+        2,
+        &format!("team:{TEAM}"),
+        room,
+        "first room message after empty read",
+    )
+    .await?;
+    assert!(sent["result"].is_object(), "{sent}");
+
+    let update = resource_update_for(&mut events, &uri, Duration::from_secs(1))
+        .await?
+        .expect("an empty room read must not remove a live subscription");
+    assert_eq!(update["method"], "notifications/resources/updated");
+    assert_eq!(update["params"], json!({ "uri": uri }));
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn non_member_cannot_receive_or_read_a_team_room() -> TestResult {
     let service = stateful_auth_service(memory(), RoomSubscribeBounds::default());
     let room = Id::generate();
