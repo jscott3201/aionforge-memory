@@ -15,8 +15,6 @@ use aionforge_domain::namespace::Namespace;
 use aionforge_domain::nodes::message::{Message, MessageKind, MessageReadState};
 use aionforge_domain::time::Timestamp;
 use aionforge_engine::{Memory, MessageCursor, Principal, ResolvedMemory, StoreError};
-use rmcp::RoleServer;
-use rmcp::service::RequestContext;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
@@ -33,8 +31,8 @@ use crate::structured::message::{
 };
 use crate::validated::ValidatedPrincipal;
 
-const DEFAULT_POLL_LIMIT: usize = 50;
-const MAX_POLL_LIMIT: usize = 200;
+pub(crate) const DEFAULT_POLL_LIMIT: usize = 50;
+pub(crate) const MAX_POLL_LIMIT: usize = 200;
 const MAX_ACK_IDS: usize = 64;
 
 /// Parameters for `message_send`.
@@ -193,7 +191,9 @@ pub fn message_send_tool<E: Embedder>(
     auth_enabled: AuthEnabled,
 ) -> Result<String, String> {
     let notifier = MessageNotifier::default();
-    Ok(message_send_tool_output(memory, &notifier, params, now, extension, auth_enabled)?.text)
+    let (output, _) =
+        message_send_tool_output(memory, &notifier, params, now, extension, auth_enabled)?;
+    Ok(output.text)
 }
 
 /// Send one addressed message as stable text plus a structured receipt.
@@ -204,7 +204,7 @@ pub(crate) fn message_send_tool_output<E: Embedder>(
     now: &Timestamp,
     extension: Option<ValidatedPrincipal>,
     auth_enabled: AuthEnabled,
-) -> Result<StructuredToolOutput, String> {
+) -> Result<(StructuredToolOutput, Option<RoomEmit>), String> {
     refuse_read_only_write(extension.as_ref(), auth_enabled)?;
     let principal = resolve_reader(
         params.viewer.as_deref(),
@@ -249,14 +249,26 @@ pub(crate) fn message_send_tool_output<E: Embedder>(
         .map_err(|error| format!("ERR_MESSAGE_SEND: {error}"))?;
     // The durable commit completed before `save_message` returned. Wake only this inbox after it.
     notifier.signal(&message.recipient);
+    let emit = message.room_id.map(|room_id| RoomEmit {
+        room_id,
+        recipient: message.recipient.clone(),
+    });
     let text = format!(
         "[message_send] {} recipient={} sent_at={}",
         message.identity.id, message.recipient, message.sent_at,
     );
-    Ok(StructuredToolOutput::new(
-        text,
-        MessageSendStructured::new(&message),
+    Ok((
+        StructuredToolOutput::new(text, MessageSendStructured::new(&message)),
+        emit,
     ))
+}
+
+/// A committed room-message delivery that should trigger best-effort resource notifications.
+pub(crate) struct RoomEmit {
+    /// The grouped room receiving a new visible message.
+    pub(crate) room_id: Id,
+    /// The exact inbox recipient used by the authoritative emission gate.
+    pub(crate) recipient: String,
 }
 
 /// Poll the caller's private and asserted-team inboxes without mutating message state.
@@ -278,21 +290,6 @@ pub(crate) fn message_poll_tool_output<E: Embedder>(
 ) -> Result<StructuredToolOutput, String> {
     let request = resolve_page_request(params, extension, auth_enabled)?;
     render_poll_output(read_page(memory, &request, "ERR_MESSAGE_POLL")?)
-}
-
-/// Build a progress sink only when this transport can deliver opt-in heartbeats.
-pub(crate) fn message_wait_heartbeat_sink(
-    context: &RequestContext<RoleServer>,
-    bounds: MessageWaitBounds,
-    heartbeats_enabled: bool,
-) -> Option<HeartbeatSink> {
-    if !heartbeats_enabled {
-        return None;
-    }
-    context
-        .meta
-        .get_progress_token()
-        .map(|token| HeartbeatSink::new(context.peer.clone(), token, bounds.heartbeat_period()))
 }
 
 /// Long-poll the caller's visible inboxes without mutating message state.
@@ -389,19 +386,19 @@ pub(crate) async fn message_wait_tool_output<E: Embedder>(
     }
 }
 
-struct MessagePageRequest {
-    recipients: Vec<String>,
-    room_id: Option<Id>,
-    after: Option<MessageCursor>,
-    limit: usize,
-    unread_only: bool,
+pub(crate) struct MessagePageRequest {
+    pub(crate) recipients: Vec<String>,
+    pub(crate) room_id: Option<Id>,
+    pub(crate) after: Option<MessageCursor>,
+    pub(crate) limit: usize,
+    pub(crate) unread_only: bool,
 }
 
-struct MessagePage {
-    messages: Vec<Message>,
-    limit: usize,
-    unread_only: bool,
-    next: Option<MessageCursor>,
+pub(crate) struct MessagePage {
+    pub(crate) messages: Vec<Message>,
+    pub(crate) limit: usize,
+    pub(crate) unread_only: bool,
+    pub(crate) next: Option<MessageCursor>,
 }
 
 impl MessagePage {
@@ -439,7 +436,7 @@ fn resolve_page_request(
     })
 }
 
-fn visible_recipients(principal: &Principal) -> Vec<String> {
+pub(crate) fn visible_recipients(principal: &Principal) -> Vec<String> {
     let mut recipients = Vec::with_capacity(principal.teams.len() + 1);
     recipients.push(format!("agent:{}", principal.agent_id));
     recipients.extend(principal.teams.iter().map(|team| format!("team:{team}")));
@@ -448,7 +445,7 @@ fn visible_recipients(principal: &Principal) -> Vec<String> {
     recipients
 }
 
-fn read_page<E: Embedder>(
+pub(crate) fn read_page<E: Embedder>(
     memory: &Memory<E>,
     request: &MessagePageRequest,
     error_code: &str,
@@ -487,6 +484,16 @@ fn read_page<E: Embedder>(
 
 fn render_poll_output(page: MessagePage) -> Result<StructuredToolOutput, String> {
     let rendered_next = page.next.as_ref().map(structured_cursor);
+    let text = render_page_text(&page);
+    crate::telemetry::record_recall_served("message_poll", &text);
+    Ok(StructuredToolOutput::new(
+        text,
+        MessagePollStructured::new(&page.messages, page.limit, page.unread_only, rendered_next),
+    ))
+}
+
+pub(crate) fn render_page_text(page: &MessagePage) -> String {
+    let rendered_next = page.next.as_ref().map(structured_cursor);
     let mut text = format!(
         "[message_poll] count={} limit={} unread_only={} next={}",
         page.messages.len(),
@@ -495,11 +502,7 @@ fn render_poll_output(page: MessagePage) -> Result<StructuredToolOutput, String>
         render_cursor(rendered_next.as_ref()),
     );
     append_message_wrapper(&mut text, &page.messages);
-    crate::telemetry::record_recall_served("message_poll", &text);
-    Ok(StructuredToolOutput::new(
-        text,
-        MessagePollStructured::new(&page.messages, page.limit, page.unread_only, rendered_next),
-    ))
+    text
 }
 
 fn render_wait_output(page: MessagePage, timed_out: bool) -> Result<StructuredToolOutput, String> {

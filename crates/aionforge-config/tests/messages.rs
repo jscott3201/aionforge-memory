@@ -1,4 +1,4 @@
-//! Acceptance tests for layered `[messages]` retention and long-poll configuration.
+//! Acceptance tests for layered `[messages]` retention, waiting, and room-subscription config.
 
 // figment::Jail's closure returns Result<(), figment::Error>, whose Err variant is
 // large; that is the harness's type, not ours, so allow it in this test file.
@@ -20,7 +20,7 @@ fn clear_inherited_env(jail: &mut Jail) {
 }
 
 #[test]
-fn defaults_enable_ack_aware_retention_and_bound_waits() {
+fn defaults_enable_ack_aware_retention_and_bound_message_runtime() {
     let config = Config::default();
     assert!(config.messages.retention_enabled);
     assert_eq!(config.messages.retention_acked_days, 30);
@@ -28,6 +28,7 @@ fn defaults_enable_ack_aware_retention_and_bound_waits() {
     assert_eq!(config.messages.wait_default_seconds, 25);
     assert_eq!(config.messages.wait_max_seconds, 55);
     assert_eq!(config.messages.wait_max_concurrent, 256);
+    assert_eq!(config.messages.room_subscribe_max_concurrent, 256);
     assert_eq!(config.messages.wait_max_recipients, 256);
     assert_eq!(config.messages.wait_heartbeat_seconds, 15);
     config.validate().expect("defaults validate");
@@ -37,20 +38,35 @@ fn defaults_enable_ack_aware_retention_and_bound_waits() {
 fn message_runtime_layers_apply_in_precedence_order() {
     Jail::expect_with(|jail| {
         clear_inherited_env(jail);
+        // A legacy `[messages]` block that omits a newly introduced key keeps its default.
+        jail.create_file("legacy.toml", "[messages]\nwait_max_concurrent = 64\n")?;
+        let legacy = Config::from_figment(Config::figment(Path::new("legacy.toml")))
+            .expect("load legacy message config");
+        assert_eq!(
+            legacy.messages.room_subscribe_max_concurrent, 256,
+            "absent field keeps the compiled default"
+        );
         // File values override the compiled defaults.
         jail.create_file(
             "config.toml",
             "[messages]\nretention_enabled = false\nretention_acked_days = 14\n\
              retention_unacked_days = 45\nwait_default_seconds = 12\n\
-             wait_max_seconds = 40\nwait_max_concurrent = 64\nwait_max_recipients = 80\n\
+             wait_max_seconds = 40\nwait_max_concurrent = 64\nroom_subscribe_max_concurrent = 72\nwait_max_recipients = 80\n\
              wait_heartbeat_seconds = 20\n",
         )?;
+        let from_file = Config::from_figment(Config::figment(Path::new("config.toml")))
+            .expect("load message config from file");
+        assert_eq!(
+            from_file.messages.room_subscribe_max_concurrent, 72,
+            "file overrides the compiled default"
+        );
         // Nested environment values override individual file fields.
         jail.set_env("AIONFORGE_MESSAGES__RETENTION_ENABLED", "true");
         jail.set_env("AIONFORGE_MESSAGES__RETENTION_ACKED_DAYS", "21");
         jail.set_env("AIONFORGE_MESSAGES__WAIT_DEFAULT_SECONDS", "18");
         jail.set_env("AIONFORGE_MESSAGES__WAIT_MAX_SECONDS", "50");
         jail.set_env("AIONFORGE_MESSAGES__WAIT_MAX_CONCURRENT", "96");
+        jail.set_env("AIONFORGE_MESSAGES__ROOM_SUBSCRIBE_MAX_CONCURRENT", "112");
         jail.set_env("AIONFORGE_MESSAGES__WAIT_MAX_RECIPIENTS", "128");
         jail.set_env("AIONFORGE_MESSAGES__WAIT_HEARTBEAT_SECONDS", "30");
 
@@ -65,6 +81,10 @@ fn message_runtime_layers_apply_in_precedence_order() {
         assert_eq!(from_env.messages.wait_default_seconds, 18, "env beats file");
         assert_eq!(from_env.messages.wait_max_seconds, 50, "env beats file");
         assert_eq!(from_env.messages.wait_max_concurrent, 96, "env beats file");
+        assert_eq!(
+            from_env.messages.room_subscribe_max_concurrent, 112,
+            "env beats file"
+        );
         assert_eq!(from_env.messages.wait_max_recipients, 128, "env beats file");
         assert_eq!(
             from_env.messages.wait_heartbeat_seconds, 30,
@@ -75,7 +95,7 @@ fn message_runtime_layers_apply_in_precedence_order() {
         let with_flags = base.merge(Toml::string(
             "[messages]\nretention_enabled = false\nretention_acked_days = 3\n\
              retention_unacked_days = 10\nwait_default_seconds = 4\n\
-             wait_max_seconds = 8\nwait_max_concurrent = 2\nwait_max_recipients = 3\n\
+             wait_max_seconds = 8\nwait_max_concurrent = 2\nroom_subscribe_max_concurrent = 4\nwait_max_recipients = 3\n\
              wait_heartbeat_seconds = 5\n",
         ));
         let from_flags = Config::from_figment(with_flags).expect("load with flags");
@@ -94,6 +114,10 @@ fn message_runtime_layers_apply_in_precedence_order() {
         );
         assert_eq!(from_flags.messages.wait_max_seconds, 8, "flags beat env");
         assert_eq!(from_flags.messages.wait_max_concurrent, 2, "flags beat env");
+        assert_eq!(
+            from_flags.messages.room_subscribe_max_concurrent, 4,
+            "flags beat env"
+        );
         assert_eq!(from_flags.messages.wait_max_recipients, 3, "flags beat env");
         assert_eq!(
             from_flags.messages.wait_heartbeat_seconds, 5,
@@ -104,7 +128,7 @@ fn message_runtime_layers_apply_in_precedence_order() {
 }
 
 #[test]
-fn invalid_message_wait_bounds_fail_config_validation_with_the_exact_key() {
+fn invalid_message_runtime_bounds_fail_config_validation_with_the_exact_key() {
     fn assert_invalid(key: &str, configure: impl FnOnce(&mut Config)) {
         let mut config = Config::default();
         configure(&mut config);
@@ -121,6 +145,9 @@ fn invalid_message_wait_bounds_fail_config_validation_with_the_exact_key() {
     });
     assert_invalid("messages.wait_max_concurrent", |config| {
         config.messages.wait_max_concurrent = 0;
+    });
+    assert_invalid("messages.room_subscribe_max_concurrent", |config| {
+        config.messages.room_subscribe_max_concurrent = 0;
     });
     assert_invalid("messages.wait_max_recipients", |config| {
         config.messages.wait_max_recipients = 0;

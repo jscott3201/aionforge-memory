@@ -92,12 +92,54 @@ page, and no heartbeat reads stored message bodies.
 
 The MCP `message_send` handler is currently the only production writer of
 `Message` nodes. It signals the recipient's waiters strictly after the store
-commit succeeds. Any future non-MCP writer—such as federation or replication
-ingest—must signal that recipient after its own commit; otherwise existing rows
-remain durable and visible to the next poll, but a parked waiter can sleep until
-its timeout.
+commit succeeds. A room-bearing message also schedules a best-effort,
+content-free room-resource update after that commit; a slow or failed subscriber
+never changes the send result. Any future non-MCP writer—such as federation or
+replication ingest—must provide the equivalent post-commit wake and room-update
+behavior; otherwise existing rows remain durable and visible to the next poll,
+but a parked waiter can sleep until its timeout and a resource subscriber receives
+no prompt to re-read.
 
-## Retention and wait bounds
+## Room resources (Tier 2 server push)
+
+Each room id has a template-addressed MCP resource at
+`aionforge://room/{room_id}`. Rooms are never enumerated by `resources/list`:
+clients subscribe to a concrete URI they already know from a message, then issue
+an initial `read_resource`. Its content is exactly `message_poll` filtered to
+that room over the reader's visible recipient namespaces, with the same untrusted
+`<recalled-memory-context>` wrapper and default page size. Treat every
+`notifications/resources/updated` notification as a content-free re-read hint:
+it carries only the URI, while a fresh resource read re-authorizes and returns
+message bodies.
+
+> **Security boundary:** room subscriptions are a multi-tenant security boundary
+> only when HTTP auth is enabled. In auth-disabled loopback mode, the room URI
+> supplies caller-asserted identity as
+> `?viewer=agent:<uuid>&teams=team-a,team-b`, with exactly the same trust model
+> as `message_poll`. A caller can therefore self-assert a team in that mode; do
+> not use auth-disabled room resources as a shared-tenant isolation boundary.
+
+Subscriptions require a stateful connection: stdio and stateful Streamable HTTP
+advertise `resources.subscribe`; stateless Streamable HTTP omits that capability
+and rejects `resources/subscribe`. The server snapshots the reader's visible
+recipient keys when it accepts a subscription. On each committed room message it
+emits an update only to snapshots containing that message's recipient, so a
+non-member cannot receive an update merely by guessing a room id. A room read
+returns `resource_not_found` uniformly for malformed, unknown, or zero-visible
+rooms rather than revealing whether a room exists.
+
+Membership changes are not a live subscription check. A member removed after
+subscribing can retain content-free activity-timing hints until it unsubscribes
+or its session ends, but its next resource read is re-authorized and cannot return
+messages delivered to the revoked team. On auth-enabled deployments, a reauthorized
+not-found read also removes that stale subscription. Subscribe, then immediately
+read, and unsubscribe when a client no longer needs the room.
+
+`room_subscribe_max_concurrent` defaults to 256 and bounds the total live room
+subscriptions across sessions in one serving process. It is a global admission
+ceiling, not a per-client or cluster-wide limit; unsubscribe frees a slot.
+
+## Retention, wait, and subscription bounds
 
 Message retention is default-on and independent of memory forgetting:
 
@@ -109,6 +151,7 @@ retention_unacked_days = 90
 wait_default_seconds = 25
 wait_max_seconds = 55
 wait_max_concurrent = 256
+room_subscribe_max_concurrent = 256
 wait_max_recipients = 256
 wait_heartbeat_seconds = 15
 ```
@@ -126,4 +169,5 @@ the server cap, the corresponding client timeout must also be raised.
 Environment overrides follow the normal nested config form, for example
 `AIONFORGE_MESSAGES__RETENTION_ENABLED=false` and
 `AIONFORGE_MESSAGES__WAIT_MAX_SECONDS=45`; recipient breadth uses
-`AIONFORGE_MESSAGES__WAIT_MAX_RECIPIENTS`.
+`AIONFORGE_MESSAGES__WAIT_MAX_RECIPIENTS`, while the global room subscription
+ceiling uses `AIONFORGE_MESSAGES__ROOM_SUBSCRIBE_MAX_CONCURRENT`.

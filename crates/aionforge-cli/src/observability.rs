@@ -16,6 +16,23 @@
 use crate::cli::LogFormat;
 use tracing_subscriber::EnvFilter;
 
+/// Environment variable overriding the traffic-heartbeat cadence in whole seconds.
+///
+/// `0` disables the heartbeat; an unset or invalid value leaves the compiled-in default intact.
+/// Keeping the parser with observability avoids making operational telemetry a serve-path concern.
+pub(crate) const TRAFFIC_HEARTBEAT_ENV: &str = "AIONFORGE_TRAFFIC_HEARTBEAT_SECS";
+
+/// Resolve the traffic-heartbeat cadence from an optional environment value.
+///
+/// A malformed value falls back to the compiled-in default so observability setup never prevents
+/// the server from starting.
+pub(crate) fn resolve_heartbeat_interval(env: Option<&str>) -> std::time::Duration {
+    match env.and_then(|value| value.trim().parse::<u64>().ok()) {
+        Some(seconds) => std::time::Duration::from_secs(seconds),
+        None => aionforge_mcp::DEFAULT_TRAFFIC_HEARTBEAT_INTERVAL,
+    }
+}
+
 /// Install the process-global tracing subscriber, rendering `format` to stderr.
 ///
 /// Level/target filtering comes from the `RUST_LOG` environment variable via
@@ -92,6 +109,7 @@ fn exact_rmcp_tower_directive(env: &str) -> Option<&str> {
 mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
+    use std::time::Duration;
     use tracing::Level;
     use tracing_subscriber::{
         layer::{Context, Layer},
@@ -173,6 +191,23 @@ mod tests {
                 RMCP_TOWER_TARGET,
             ),
             vec![Level::DEBUG, Level::INFO, Level::WARN, Level::ERROR]
+        );
+    }
+
+    #[test]
+    fn heartbeat_interval_resolves_env_override_default_and_disable() {
+        assert_eq!(
+            resolve_heartbeat_interval(None),
+            aionforge_mcp::DEFAULT_TRAFFIC_HEARTBEAT_INTERVAL
+        );
+        assert_eq!(
+            resolve_heartbeat_interval(Some(" 60 ")),
+            Duration::from_secs(60)
+        );
+        assert_eq!(resolve_heartbeat_interval(Some("0")), Duration::ZERO);
+        assert_eq!(
+            resolve_heartbeat_interval(Some("soon")),
+            aionforge_mcp::DEFAULT_TRAFFIC_HEARTBEAT_INTERVAL
         );
     }
 }

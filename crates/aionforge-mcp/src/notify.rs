@@ -9,7 +9,7 @@ use std::time::Duration;
 use aionforge_config::MessagesConfig;
 use rmcp::RoleServer;
 use rmcp::model::{ProgressNotificationParam, ProgressToken};
-use rmcp::service::Peer;
+use rmcp::service::{Peer, RequestContext};
 use tokio::sync::Notify;
 
 const MAX_RECIPIENT_KEY_BYTES_PER_WAIT: usize = 64 * 1024;
@@ -86,6 +86,20 @@ impl HeartbeatSink {
             started,
         }
     }
+}
+
+/// Build a progress sink only when this transport can deliver opted-in heartbeats.
+pub(crate) fn message_wait_heartbeat_sink(
+    context: &RequestContext<RoleServer>,
+    bounds: MessageWaitBounds,
+    heartbeats_enabled: bool,
+) -> Option<HeartbeatSink> {
+    heartbeats_enabled.then(|| {
+        context
+            .meta
+            .get_progress_token()
+            .map(|token| HeartbeatSink::new(context.peer.clone(), token, bounds.heartbeat_period()))
+    })?
 }
 
 /// Best-effort progress side channel for one parked wait.
