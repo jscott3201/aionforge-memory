@@ -1,6 +1,6 @@
 # Aionforge Memory Plugin
 
-This plugin packages six small Agent Skills for an existing Aionforge Memory
+This plugin packages seven small Agent Skills for an existing Aionforge Memory
 MCP server:
 
 - `memory-bootstrap`: one-time, idempotent cold-start setup that seeds a foundational substrate for a fresh project — identity, conventions, architecture decisions, and a work-item backlog skeleton — so the next session recalls real context instead of starting empty.
@@ -8,6 +8,7 @@ MCP server:
 - `memory-recall`: search durable memory before planning, coding, review, debugging, release, or support work.
 - `memory-capture`: write decisions, handoffs, project facts, validation outcomes, corrections, and failure patterns *as they happen*.
 - `work-tracking`: track tasks, blockers, TODOs, and plans as durable **work items** (`work_create` → `work_advance` → `work_link`), distinct from decaying memory episodes.
+- `agent-messaging`: send, poll, wait for, and acknowledge durable addressed **agent-to-agent messages** (`message_send` → `message_poll` / `message_wait` → `message_ack`) and subscribe to room resources — directed delivery, distinct from recall and work tracking.
 - `memory-maintenance`: inspect backlog, audit provenance, consolidate derived work, forget, or restore memory.
 
 The skills are plain Agent Skills under `skills/`, so clients that support the common `SKILL.md` format can use the same instructions. The plugin also includes compatibility manifests for Codex, Claude Code, and Cursor.
@@ -16,13 +17,13 @@ The skills are intentionally *nudge-forward*: they push agents to recall before
 substantial work, capture durable facts the moment they land (not batched to the
 end), and track the work itself as work items. [`NUDGE.md`](NUDGE.md) is the
 canonical, single-source statement of that cadence and the capture-vs-work-item
-vocabulary; every other surface (skills, the steward agent, the hook, the Codex
-default prompt) distills from it.
+vocabulary; every other surface (skills, the hook, the Codex default prompt, the
+Cursor rule) distills from it.
 
-For Claude Code, the plugin also ships:
+For Claude Code, the plugin also ships — with **no default agent**, so it never
+takes over your main thread. The skills are implicitly invoked when relevant, and:
 
-- `aionforge-memory-steward`: a default main-thread agent that keeps recall, capture, work-tracking, and handoff in the task loop.
-- A `SessionStart` hook (`hooks/hooks.json`) that re-seeds the cadence into a fresh context after a startup, resume, or context compaction. It fires on the `startup|resume|compact` sources and injects a short reminder via `additionalContext`. (`PreCompact` is deliberately not used: it is blocking-only and cannot inject context, so it cannot deliver a reminder.)
+- A `SessionStart` hook (`hooks/hooks.json`) that re-seeds the cadence into a fresh context after a startup, resume, or context compaction. It fires on the `startup|resume|compact` sources and injects a short reminder via `additionalContext`, so the memory loop carries across a context reset. (`PreCompact` is deliberately not used: it is blocking-only and cannot inject context, so it cannot deliver a reminder.)
 - `/aionforge-memory:memory-bootstrap`: one-time setup of a foundational memory substrate for a fresh project.
 - `/aionforge-memory:memory-session`: starts a memory-backed Claude Code task.
 - `/aionforge-memory:memory-handoff`: captures a durable end-of-session handoff.
@@ -67,7 +68,7 @@ claude --plugin-dir ./plugins/aionforge-memory
 
 The Claude manifest does not register an MCP server. Configure the Aionforge MCP server separately (for example with `claude mcp add`, or in your client MCP config) as `aionforge-memory`; the plugin skills assume that server already exists and only add memory workflow instructions. See `docs/mcp-clients.md` for client-specific config shapes.
 
-When the plugin is enabled in Claude Code, `settings.json` selects the `aionforge-memory-steward` agent by default. Run `/reload-plugins` after local edits, then check `/agents` and `/help` to confirm the agent and commands are loaded.
+When the plugin is enabled in Claude Code, its skills are available for implicit invocation and the `SessionStart` hook re-seeds the cadence — there is **no default agent**, so the plugin never takes over your main thread. Run `/reload-plugins` after local edits, then check `/help` to confirm the commands are loaded.
 
 Cursor can load it as a local plugin by symlinking or copying this directory into `~/.cursor/plugins/local/aionforge-memory`. Cursor reads `.cursor-plugin/plugin.json`, which declares both the `skills/` and the bundled always-apply rule at `rules/aionforge-memory.mdc` (`alwaysApply: true`). On Cursor builds that surface plugin-bundled rules, that rule registers as an always-apply rule, keeping the recall/capture/work-tracking nudge active; confirm or adjust it under Settings > Rules. If your build does not surface plugin-bundled rules, drop the same `.mdc` into your project's `.cursor/rules/`. Configure the Aionforge MCP server separately in Cursor's MCP settings.
 

@@ -161,15 +161,16 @@ const PLUGIN_PACKAGE_GUIDE: &str = r#"Aionforge Memory Plugin
 
 The repository ships a plugin at plugins/aionforge-memory.
 
-It bundles:
-- skills/memory-loop: use memory through a whole task: recall first, capture useful state during work, and finish with a handoff.
-- skills/memory-recall: search durable memory before planning, coding, review, debugging, release, or support work.
-- skills/memory-capture: capture decisions, project facts, validation results, corrections, and handoffs as they happen.
-- skills/work-tracking: track tasks, blockers, and TODOs as durable work items (work_create, work_advance, work_link), distinct from decaying memory episodes.
-- skills/memory-maintenance: inspect backlog, audit provenance, consolidate derived work, forget, or restore memory.
-- Claude Code agent aionforge-memory-steward: keeps recall, capture, work-tracking, and handoff in the main task loop.
-- Claude Code SessionStart hook: re-seeds the capture/work-tracking cadence into a fresh context after a startup, resume, or compaction.
-- Claude Code commands /aionforge-memory:memory-session and /aionforge-memory:memory-handoff.
+It bundles seven Agent Skills:
+- memory-bootstrap: one-time cold-start setup that seeds a fresh project's substrate.
+- memory-loop: use memory through a whole task: recall, capture, track work, hand off.
+- memory-recall: search durable memory before substantial work.
+- memory-capture: capture decisions, facts, validation, and handoffs as they happen.
+- work-tracking: track tasks and blockers as durable work items (work_create, work_advance, work_link).
+- agent-messaging: send, poll, wait for, and ack durable addressed messages (message_send, message_poll, message_wait, message_ack).
+- memory-maintenance: inspect, audit, consolidate, forget, or restore memory.
+
+Claude Code also ships a SessionStart hook that re-seeds the cadence into a fresh context (startup, resume, or compaction) so the memory loop carries across a context reset without a default agent, plus commands /aionforge-memory:memory-bootstrap, /aionforge-memory:memory-session, and /aionforge-memory:memory-handoff.
 
 No client manifest registers an MCP server. Configure the Aionforge MCP endpoint separately as `aionforge-memory` (see the client mcp.json templates) so the plugin does not collide with a user-managed server of the same name; the skills assume that server exists.
 

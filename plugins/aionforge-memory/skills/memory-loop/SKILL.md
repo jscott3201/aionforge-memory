@@ -3,7 +3,7 @@ name: memory-loop
 description: Use Aionforge Memory as the working substrate for a multi-step task. Trigger for implementation, debugging, review, release, planning, incidents, handoffs, or any session where prior context and durable follow-up matter.
 license: MIT OR Apache-2.0
 metadata:
-  aionforge-version: "0.4.0"
+  aionforge-version: "0.4.1"
 ---
 
 # Memory Loop
@@ -20,7 +20,7 @@ Use this skill to make memory part of the task loop, not a final afterthought.
 4. Track the work as it moves. When a task, blocker, or TODO appears, `work_create` a work item (see the `work-tracking` skill); `work_advance` its status as it progresses. Tasks are work items, not memory episodes — and there is no "note" to store directly.
 5. Be generous with memory. Aionforge can handle large memory sets; several precise records are better than one vague end note.
 6. At natural checkpoints, search again if new terms, file paths, ids, or failures appear.
-7. Before ending, capture a handoff when future agents would benefit: branch, PR, commits, tests, CI, remaining work, and caveats. Leave the remaining work as work items so the next agent can `work_query` it.
+7. Before ending, capture a handoff when future agents would benefit: branch, PR, commits, tests, CI, remaining work, and caveats. Leave the remaining work as work items so the next agent can `work_query` it. When the handoff is *directed at a specific agent or teammate* — not just left for whoever comes next — also `message_send` them a brief so they actually receive it (see the `agent-messaging` skill): the capture and work items make it durable, the message delivers it.
 8. Run `consolidation_status`; run `consolidate` only when the approval policy permits mutating derived memory.
 
 ## User Control

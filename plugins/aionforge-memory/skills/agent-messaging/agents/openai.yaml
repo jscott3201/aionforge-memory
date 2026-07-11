@@ -1,0 +1,13 @@
+interface:
+  display_name: "Agent Messaging"
+  short_description: "Durable addressed agent-to-agent messages and rooms"
+  default_prompt: "Use Aionforge Memory agent messaging for directed delivery: message_send a brief or status to an agent:<uuid> or team:<name>, message_poll or message_wait (asserting your teams) to receive, and message_ack once handled. Messages are separate from recall and work tracking; also capture the durable decision and work_create the follow-up. Never put secrets in a message body."
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "aionforge_memory"
+      description: "Aionforge Memory MCP server"
+      transport: "streamable_http"
+      url: "http://127.0.0.1:3918/mcp"
+policy:
+  allow_implicit_invocation: true

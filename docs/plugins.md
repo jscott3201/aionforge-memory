@@ -1,8 +1,8 @@
 # Agent Plugin
 
 Aionforge Memory ships a plugin package at
-[`plugins/aionforge-memory`](../plugins/aionforge-memory). It bundles six Agent
-Skills plus a Claude Code steward agent, commands, and a SessionStart nudge hook.
+[`plugins/aionforge-memory`](../plugins/aionforge-memory). It bundles seven Agent
+Skills plus Claude Code commands and a SessionStart nudge hook.
 
 The plugin is meant to make the existing MCP service easier to use. It does not
 add a second server and it does not execute stored skills from memory. The MCP
@@ -25,13 +25,16 @@ approval hints.
 - `work-tracking`: track tasks, blockers, TODOs, and plans as durable work items
   (`work_create` → `work_advance` → `work_link`), distinct from decaying memory
   episodes.
+- `agent-messaging`: send, poll, wait for, and acknowledge durable addressed
+  agent-to-agent messages (`message_send` → `message_poll` / `message_wait` →
+  `message_ack`) and subscribe to room resources — directed delivery, distinct
+  from recall and work tracking.
 - `memory-maintenance`: inspect backlog, audit provenance, consolidate derived
   work, forget, or restore memory.
-- Claude Code agent `aionforge-memory-steward`: keeps recall, capture,
-  work-tracking, and handoff in the main task loop when the plugin is enabled.
 - Claude Code SessionStart hook: re-seeds the capture/work-tracking cadence into a
-  fresh context after a startup, resume, or context compaction. (`PreCompact` is
-  not used: it is blocking-only and cannot inject context.)
+  fresh context after a startup, resume, or context compaction, so the memory loop
+  carries across a context reset without a default agent. (`PreCompact` is not
+  used: it is blocking-only and cannot inject context.)
 - Claude Code commands `/aionforge-memory:memory-bootstrap`,
   `/aionforge-memory:memory-session`, and `/aionforge-memory:memory-handoff`:
   explicit workflows for one-time project setup, starting a memory-backed task,
@@ -86,12 +89,11 @@ without the marketplace file:
 claude --plugin-dir ./plugins/aionforge-memory
 ```
 
-The Claude manifest loads `skills/`, `commands/`, and `agents/`. It does not
-register an MCP server; configure the Aionforge MCP endpoint separately as
-`aionforge-memory` so the plugin does not collide with a user-managed server of
-the same name. The plugin root `settings.json` selects
-`aionforge-memory-steward` as the default main-thread agent so ordinary Claude
-Code work starts with the memory loop available.
+The Claude manifest loads `skills/` and `commands/`. It does not register an MCP
+server; configure the Aionforge MCP endpoint separately as `aionforge-memory` so
+the plugin does not collide with a user-managed server of the same name. There is
+**no default agent** — the skills are implicitly invoked and the `SessionStart`
+hook re-seeds the memory loop, so the plugin never takes over the main thread.
 
 Cursor can load the package as a local plugin from
 `~/.cursor/plugins/local/aionforge-memory`; it reads `.cursor-plugin/plugin.json`,
