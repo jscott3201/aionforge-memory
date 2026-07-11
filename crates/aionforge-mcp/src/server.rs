@@ -31,6 +31,7 @@ impl<E> Clone for AionforgeMcp<E> {
             consolidation_lock: Arc::clone(&self.consolidation_lock),
             notifier: Arc::clone(&self.notifier),
             wait_bounds: self.wait_bounds,
+            heartbeats_enabled: self.heartbeats_enabled,
             tool_router: self.tool_router.clone(),
             prompt_router: self.prompt_router.clone(),
         }
@@ -180,6 +181,24 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
         notifier: Arc<MessageNotifier>,
         wait_bounds: MessageWaitBounds,
     ) -> Self {
+        Self::new_with_runtime_and_heartbeat_support(
+            memory,
+            auth,
+            background_managed,
+            notifier,
+            wait_bounds,
+            true,
+        )
+    }
+
+    pub(crate) fn new_with_runtime_and_heartbeat_support(
+        memory: Arc<Memory<E>>,
+        auth: AuthPosture,
+        background_managed: bool,
+        notifier: Arc<MessageNotifier>,
+        wait_bounds: MessageWaitBounds,
+        heartbeats_enabled: bool,
+    ) -> Self {
         Self {
             memory,
             auth,
@@ -187,6 +206,7 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
             consolidation_lock: Arc::new(tokio::sync::Mutex::new(())),
             notifier,
             wait_bounds,
+            heartbeats_enabled,
             tool_router: Self::tool_router(),
             prompt_router: Self::prompt_router(),
         }

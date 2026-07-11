@@ -29,6 +29,7 @@ fn defaults_enable_ack_aware_retention_and_bound_waits() {
     assert_eq!(config.messages.wait_max_seconds, 55);
     assert_eq!(config.messages.wait_max_concurrent, 256);
     assert_eq!(config.messages.wait_max_recipients, 256);
+    assert_eq!(config.messages.wait_heartbeat_seconds, 15);
     config.validate().expect("defaults validate");
 }
 
@@ -41,7 +42,8 @@ fn message_runtime_layers_apply_in_precedence_order() {
             "config.toml",
             "[messages]\nretention_enabled = false\nretention_acked_days = 14\n\
              retention_unacked_days = 45\nwait_default_seconds = 12\n\
-             wait_max_seconds = 40\nwait_max_concurrent = 64\nwait_max_recipients = 80\n",
+             wait_max_seconds = 40\nwait_max_concurrent = 64\nwait_max_recipients = 80\n\
+             wait_heartbeat_seconds = 20\n",
         )?;
         // Nested environment values override individual file fields.
         jail.set_env("AIONFORGE_MESSAGES__RETENTION_ENABLED", "true");
@@ -50,6 +52,7 @@ fn message_runtime_layers_apply_in_precedence_order() {
         jail.set_env("AIONFORGE_MESSAGES__WAIT_MAX_SECONDS", "50");
         jail.set_env("AIONFORGE_MESSAGES__WAIT_MAX_CONCURRENT", "96");
         jail.set_env("AIONFORGE_MESSAGES__WAIT_MAX_RECIPIENTS", "128");
+        jail.set_env("AIONFORGE_MESSAGES__WAIT_HEARTBEAT_SECONDS", "30");
 
         let base = Config::figment(Path::new("config.toml"));
         let from_env = Config::from_figment(base.clone()).expect("load file + env");
@@ -63,12 +66,17 @@ fn message_runtime_layers_apply_in_precedence_order() {
         assert_eq!(from_env.messages.wait_max_seconds, 50, "env beats file");
         assert_eq!(from_env.messages.wait_max_concurrent, 96, "env beats file");
         assert_eq!(from_env.messages.wait_max_recipients, 128, "env beats file");
+        assert_eq!(
+            from_env.messages.wait_heartbeat_seconds, 30,
+            "env beats file"
+        );
 
         // A caller-provided flags layer is merged last, exactly like the production host seam.
         let with_flags = base.merge(Toml::string(
             "[messages]\nretention_enabled = false\nretention_acked_days = 3\n\
              retention_unacked_days = 10\nwait_default_seconds = 4\n\
-             wait_max_seconds = 8\nwait_max_concurrent = 2\nwait_max_recipients = 3\n",
+             wait_max_seconds = 8\nwait_max_concurrent = 2\nwait_max_recipients = 3\n\
+             wait_heartbeat_seconds = 5\n",
         ));
         let from_flags = Config::from_figment(with_flags).expect("load with flags");
         assert!(!from_flags.messages.retention_enabled, "flags beat env");
@@ -87,6 +95,10 @@ fn message_runtime_layers_apply_in_precedence_order() {
         assert_eq!(from_flags.messages.wait_max_seconds, 8, "flags beat env");
         assert_eq!(from_flags.messages.wait_max_concurrent, 2, "flags beat env");
         assert_eq!(from_flags.messages.wait_max_recipients, 3, "flags beat env");
+        assert_eq!(
+            from_flags.messages.wait_heartbeat_seconds, 5,
+            "flags beat env"
+        );
         Ok(())
     });
 }
@@ -112,6 +124,12 @@ fn invalid_message_wait_bounds_fail_config_validation_with_the_exact_key() {
     });
     assert_invalid("messages.wait_max_recipients", |config| {
         config.messages.wait_max_recipients = 0;
+    });
+    assert_invalid("messages.wait_heartbeat_seconds", |config| {
+        config.messages.wait_heartbeat_seconds = 0;
+    });
+    assert_invalid("messages.wait_heartbeat_seconds", |config| {
+        config.messages.wait_heartbeat_seconds = 86_401;
     });
     assert_invalid("messages.wait_default_seconds", |config| {
         config.messages.wait_default_seconds = config.messages.wait_max_seconds + 1;

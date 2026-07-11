@@ -89,6 +89,7 @@ async fn dropping_a_pending_message_wait_releases_admission_and_delivery_still_w
         max_seconds: 5,
         max_concurrent: 1,
         max_recipients: 256,
+        heartbeat_seconds: 1,
     };
     let reader = Id::generate();
     let wait_memory = Arc::clone(&memory);
@@ -101,6 +102,7 @@ async fn dropping_a_pending_message_wait_releases_admission_and_delivery_still_w
             None,
             AuthEnabled(false),
             bounds,
+            None,
         )
         .await
     });
@@ -145,6 +147,7 @@ async fn dropping_a_pending_message_wait_releases_admission_and_delivery_still_w
             None,
             AuthEnabled(false),
             bounds,
+            None,
         ),
     )
     .await

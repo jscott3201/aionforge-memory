@@ -309,6 +309,7 @@ async fn admission_limit_sheds_a_second_wait_immediately() -> TestResult {
             max_seconds: 5,
             max_concurrent: 1,
             max_recipients: 256,
+            heartbeat_seconds: 1,
         },
     );
     let first_client = Harness::connect(template.clone()).await?;

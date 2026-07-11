@@ -15,11 +15,13 @@ use aionforge_domain::namespace::Namespace;
 use aionforge_domain::nodes::message::{Message, MessageKind, MessageReadState};
 use aionforge_domain::time::Timestamp;
 use aionforge_engine::{Memory, MessageCursor, Principal, ResolvedMemory, StoreError};
+use rmcp::RoleServer;
+use rmcp::service::RequestContext;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
 use crate::inspect::SNIPPET_CHARS;
-use crate::notify::{MessageNotifier, MessageWaitBounds, WaitRegistrationError};
+use crate::notify::{HeartbeatSink, MessageNotifier, MessageWaitBounds, WaitRegistrationError};
 use crate::principal::{
     AuthEnabled, HostPrincipalToolParam, refuse_read_only_write, resolve_reader,
 };
@@ -278,6 +280,21 @@ pub(crate) fn message_poll_tool_output<E: Embedder>(
     render_poll_output(read_page(memory, &request, "ERR_MESSAGE_POLL")?)
 }
 
+/// Build a progress sink only when this transport can deliver opt-in heartbeats.
+pub(crate) fn message_wait_heartbeat_sink(
+    context: &RequestContext<RoleServer>,
+    bounds: MessageWaitBounds,
+    heartbeats_enabled: bool,
+) -> Option<HeartbeatSink> {
+    if !heartbeats_enabled {
+        return None;
+    }
+    context
+        .meta
+        .get_progress_token()
+        .map(|token| HeartbeatSink::new(context.peer.clone(), token, bounds.heartbeat_period()))
+}
+
 /// Long-poll the caller's visible inboxes without mutating message state.
 pub async fn message_wait_tool<E: Embedder>(
     memory: &Memory<E>,
@@ -293,6 +310,7 @@ pub async fn message_wait_tool<E: Embedder>(
         extension,
         auth_enabled,
         MessageWaitBounds::default(),
+        None,
     )
     .await?
     .text)
@@ -306,6 +324,7 @@ pub(crate) async fn message_wait_tool_output<E: Embedder>(
     extension: Option<ValidatedPrincipal>,
     auth_enabled: AuthEnabled,
     bounds: MessageWaitBounds,
+    heartbeat: Option<HeartbeatSink>,
 ) -> Result<StructuredToolOutput, String> {
     let timeout_seconds = params.timeout_seconds;
     let request = resolve_page_request(
@@ -347,15 +366,22 @@ pub(crate) async fn message_wait_tool_output<E: Embedder>(
             };
         }
     };
-    let deadline = tokio::time::Instant::now()
-        .checked_add(Duration::from_secs(bounds.resolve_seconds(timeout_seconds)))
+    let resolved = bounds.resolve_seconds(timeout_seconds);
+    let started = tokio::time::Instant::now();
+    let deadline = started
+        .checked_add(Duration::from_secs(resolved))
         .ok_or_else(|| "ERR_MESSAGE_WAIT: configured wait bound is too large".to_string())?;
+    let heartbeat = heartbeat.map(|heartbeat| heartbeat.start(resolved as f64, started));
 
     let page = ticket
-        .wait_until(deadline, || -> Result<Option<MessagePage>, String> {
-            let page = read_page(memory, &request, "ERR_MESSAGE_WAIT")?;
-            Ok((!page.messages.is_empty()).then_some(page))
-        })
+        .wait_until(
+            deadline,
+            heartbeat,
+            || -> Result<Option<MessagePage>, String> {
+                let page = read_page(memory, &request, "ERR_MESSAGE_WAIT")?;
+                Ok((!page.messages.is_empty()).then_some(page))
+            },
+        )
         .await?;
     match page {
         Some(page) => render_wait_output(page, false),

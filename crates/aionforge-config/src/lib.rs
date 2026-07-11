@@ -56,6 +56,7 @@
 //! wait_max_seconds = 55
 //! wait_max_concurrent = 256
 //! wait_max_recipients = 256
+//! wait_heartbeat_seconds = 15
 //! ```
 
 mod auth;
