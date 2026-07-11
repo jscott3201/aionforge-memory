@@ -314,16 +314,20 @@ async fn mcp_transport_lists_client_policy_resources() -> TestResult {
 
     let plugin = read_text_resource(&client, PLUGIN_PACKAGE_GUIDE_RESOURCE_URI).await?;
     assert!(plugin.contains("plugins/aionforge-memory"));
+    assert!(plugin.contains("memory-bootstrap"));
     assert!(plugin.contains("memory-loop"));
     assert!(plugin.contains("memory-recall"));
     assert!(plugin.contains("memory-capture"));
     assert!(plugin.contains("work-tracking"));
+    assert!(plugin.contains("agent-messaging"));
     assert!(plugin.contains("memory-maintenance"));
-    assert!(plugin.contains("aionforge-memory-steward"));
     assert!(plugin.contains("SessionStart hook"));
     assert!(plugin.contains("memory-session"));
     assert!(plugin.contains("[mcp_servers.aionforge_memory]"));
     assert!(!plugin.contains("aionforge_memory_plugin"));
+    // The steward agent was removed (MCP-only, skills+hook carry the loop); the
+    // resource must not resurrect it.
+    assert!(!plugin.contains("aionforge-memory-steward"));
 
     client.cancel().await?;
     server_handle.await??;

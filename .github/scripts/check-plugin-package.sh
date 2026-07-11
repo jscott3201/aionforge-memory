@@ -88,29 +88,11 @@ validate_command() {
   require_grep "$file" "^argument-hint: .+" "command argument hint $name"
 }
 
-validate_agent() {
-  name="$1"
-  file="$plugin_dir/agents/$name.md"
-  require_file "$file"
-  [ -f "$file" ] || return
-
-  first_line="$(sed -n '1p' "$file")"
-  if [ "$first_line" != "---" ]; then
-    fail "$file must start with YAML frontmatter"
-  fi
-
-  require_grep "$file" "^name: $name$" "agent name $name"
-  require_grep "$file" "^description: .+" "agent description $name"
-  require_grep "$file" "^model: .+" "agent model $name"
-  require_grep "$file" "^color: .+" "agent color $name"
-}
-
 for file in \
   "$plugin_dir/.codex-plugin/plugin.json" \
   "$plugin_dir/.claude-plugin/plugin.json" \
   "$plugin_dir/.cursor-plugin/plugin.json" \
   "$plugin_dir/plugin.json" \
-  "$plugin_dir/settings.json" \
   "$plugin_dir/hooks/hooks.json" \
   ".agents/plugins/marketplace.json" \
   ".claude-plugin/marketplace.json" \
@@ -124,19 +106,20 @@ require_file "$plugin_dir/README.md"
 require_file "$plugin_dir/NUDGE.md"
 # Keep the published plugin reference doc from silently dropping a packaged skill.
 require_grep "docs/plugins.md" 'work-tracking' "docs/plugins.md work-tracking skill"
+require_grep "docs/plugins.md" 'agent-messaging' "docs/plugins.md agent-messaging skill"
 require_grep "docs/plugins.md" 'memory-bootstrap' "docs/plugins.md memory-bootstrap skill"
 validate_skill "memory-loop"
 validate_skill "memory-recall"
 validate_skill "memory-capture"
 validate_skill "work-tracking"
+validate_skill "agent-messaging"
 validate_skill "memory-maintenance"
 validate_skill "memory-bootstrap"
-validate_agent "aionforge-memory-steward"
 validate_command "memory-session"
 validate_command "memory-handoff"
 validate_command "memory-bootstrap"
 
-for skill in memory-loop memory-recall memory-capture work-tracking memory-maintenance memory-bootstrap; do
+for skill in memory-loop memory-recall memory-capture work-tracking agent-messaging memory-maintenance memory-bootstrap; do
   metadata="$plugin_dir/skills/$skill/agents/openai.yaml"
   require_file "$metadata"
   [ -f "$metadata" ] || continue
@@ -152,7 +135,16 @@ reject_grep "$plugin_dir/.cursor-plugin/plugin.json" '"mcpServers"' "Cursor MCP 
 reject_grep "$plugin_dir/plugin.json" '"mcpServers"' "root MCP path"
 reject_grep ".cursor-plugin/marketplace.json" '"mcpServers"' "Cursor marketplace MCP path"
 
-require_grep "$plugin_dir/settings.json" '"agent": "aionforge-memory-steward"' "Claude default agent setting"
+# The steward agent was removed (MCP-only; the SessionStart hook + implicitly
+# invoked skills carry the loop). Guard against it — or any plugin-default agent
+# that would seize the Claude Code main thread and take over the console bar —
+# coming back.
+if [ -e "$plugin_dir/agents/aionforge-memory-steward.md" ]; then
+  fail "removed steward agent reappeared at $plugin_dir/agents/aionforge-memory-steward.md"
+fi
+if [ -f "$plugin_dir/settings.json" ] && grep -Eq '"agent"[[:space:]]*:' "$plugin_dir/settings.json"; then
+  fail "plugin settings.json sets a default agent; the plugin must not seize the main thread"
+fi
 
 # SessionStart nudge hook. Wired in hooks/hooks.json to a bundled, executable script.
 # PreCompact is intentionally NOT used (it is blocking-only and cannot inject context).
@@ -186,13 +178,12 @@ require_file "docs/agent-nudges.md"
 require_grep "docs/agent-nudges.md" 'OpenCode' "agent-nudges OpenCode coverage"
 
 # Vocabulary lock: every surface that nudges must route tasks to work items, so
-# work_create has to appear in the canonical source, the skill, the steward agent,
-# the Codex default prompt, the Cursor rule, and the landscape guide. This catches a
+# work_create has to appear in the canonical source, the work-tracking skill, the
+# Codex default prompt, the Cursor rule, and the landscape guide. This catches a
 # surface drifting off the shared lock.
 for surface in \
   "$plugin_dir/NUDGE.md" \
   "$plugin_dir/skills/work-tracking/SKILL.md" \
-  "$plugin_dir/agents/aionforge-memory-steward.md" \
   "$plugin_dir/.codex-plugin/plugin.json" \
   "$cursor_rule" \
   "docs/agent-nudges.md"

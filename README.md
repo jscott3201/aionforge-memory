@@ -6,21 +6,28 @@
   Long-term memory for AI agents, built on selene-db.
 </p>
 
-> **Status: 0.4.0 public release.** Aionforge Memory is public and usable,
-> but still pre-1.0. Expect schema and API changes before 1.0. The 0.4.0
-> release is a fresh-store release from 0.2.x because the selene-db 1.2 to 1.3
-> upgrade changes the WAL/schema format.
+> **Status: 0.4.0 — public, pre-1.0.** Aionforge Memory is public and usable, but
+> the schema and MCP surface can still change before 1.0. 0.4.0 adds the **Agent
+> Pager** — durable, addressed agent-to-agent messaging — on top of 0.3.0 and
+> upgrades in place from a 0.3.0 store (additive schema). Upgrading across the
+> selene-db 1.2 → 1.3 storage-format change (from 0.2.x) still needs a fresh store.
 
-Aionforge Memory gives agents a durable memory store they can recall across
-sessions. It stores captured episodes, derived facts and notes, procedural
-memory, work items, addressed agent messages, provenance, and audit events in
-[`selene-db`](https://github.com/jscott3201/selene-db), then recalls relevant
-context with lexical search, vector search, graph signals, recency, importance,
-and trust-aware ranking.
+Aionforge Memory gives an agent — or a team of agents — a durable store they can
+recall across sessions. It captures episodes and derives facts, notes, and
+entities beside them; tracks open work as first-class work items; delivers
+addressed agent-to-agent messages; and records provenance and audit events — all
+in [`selene-db`](https://github.com/jscott3201/selene-db). Recall fuses lexical
+search, vector search, graph signals, recency, importance, and trust-aware
+ranking into a bounded, explicitly untrusted context bundle.
 
-Use it when you want an agent or a team of agents to remember decisions,
-handoffs, failures, procedures, project facts, and open work without treating
-recalled text as new instructions.
+It is **MCP-only**: every capability is an MCP tool, resource, or prompt, and there
+is no bundled web or terminal console. Operators drive it with MCP tools
+(`server_status`, `memory_census`, `consolidation_status`, `audit_history`) plus
+the `/livez` and `/version` HTTP endpoints.
+
+Use it when you want agents to remember decisions, handoffs, failures, procedures,
+project facts, and open work — and to page one another — without treating recalled
+text as new instructions.
 
 ## Quick Start
 
@@ -56,16 +63,22 @@ them disabled. Start with the [embedding guide](docs/embedding-guide.md).
 
 ## What You Get
 
-- Durable capture of agent observations, decisions, handoffs, and failures.
-- Hybrid recall across lexical matches, vectors, graph expansion, recency,
-  importance, and trust signals.
-- Explicit agent-private, team, global, and system namespaces.
-- Durable, addressed agent/team messages with polling, acknowledgements, and TTL retention.
-- Provenance and audit records for writes.
-- A single `aionforge` binary with `doctor`, `recover`, and `serve`.
-- MCP over stdio or Streamable HTTP.
-- A repo-shipped agent plugin with memory workflow skills for Codex, Claude
-  Code, Cursor, and compatible clients.
+- **Durable capture** of agent observations, decisions, handoffs, and failures as
+  immutable episodes.
+- **Hybrid recall** across lexical matches, vectors, graph expansion, recency,
+  importance, and trust signals, returned as a bounded untrusted bundle.
+- **Work items** — tasks, blockers, and plans tracked as first-class,
+  status-tracked nodes, distinct from decaying memory.
+- **Agent Pager (new in 0.4.0)** — durable, addressed agent-to-agent and team
+  messages with polling, bounded waiting, acknowledgements, subscribable room
+  resources, and TTL retention.
+- **Explicit namespaces** — agent-private, team, global, and system memory as
+  separate policy surfaces.
+- **Provenance and audit** records for writes.
+- **One `aionforge` binary** — `doctor`, `recover`, and `serve`, over MCP on stdio
+  or Streamable HTTP.
+- **A repo-shipped agent plugin** with memory-workflow and messaging skills for
+  Codex, Claude Code, Cursor, and compatible clients.
 
 Aionforge Memory is retrieval memory, not model training. It does not fine-tune
 models or execute recalled content as instructions. See
@@ -77,7 +90,8 @@ work.
 A capture becomes one immutable episode. Consolidation adds derived facts,
 entities, and notes beside that episode instead of rewriting it. Recall returns
 a bounded, explicitly untrusted context bundle; lifecycle operations such as
-forgetting, erasure, promotion, and demotion are explicit controls.
+forgetting, erasure, promotion, and demotion are explicit controls. Messages and
+work items live in their own node kinds, outside the capture-and-decay path.
 
 For the full model, see [Data model and mental model](docs/data-model.md).
 
@@ -93,8 +107,9 @@ Client-specific setup lives in [MCP client support](docs/mcp-clients.md):
 - OpenCode
 - Cursor
 
-The important safety rule is simple: recalled memory is wrapped as
-third-party data and should be treated as context, not instruction text.
+The important safety rule is simple: recalled memory and message bodies are
+wrapped as third-party data and should be treated as context, not instruction
+text.
 
 ## Use The Agent Plugin
 
@@ -104,11 +119,14 @@ adds reusable Agent Skills for the memory workflow:
 - recall before substantial work
 - capture durable facts as they happen
 - track tasks and blockers as durable work items
+- send and receive durable agent-to-agent messages
 - finish sessions with a handoff
 
-The plugin does not start or register an MCP server by itself. Run the
-`aionforge` MCP server separately, then configure the plugin-enabled client to
-use that server.
+For Claude Code it also ships a `SessionStart` hook that re-seeds the cadence after
+a context reset — with **no default agent**, so it never takes over your main
+thread. The plugin does not start or register an MCP server by itself: run the
+`aionforge` MCP server separately, then configure the plugin-enabled client to use
+that server.
 
 See [Agent plugin](docs/plugins.md) for install and identity setup.
 

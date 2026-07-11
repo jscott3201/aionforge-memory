@@ -2,9 +2,9 @@
 
 Canonical, single-source guidance for keeping Aionforge Memory *in the task loop*
 rather than treating it as a final afterthought. The plugin's per-vendor surfaces
-distill from this file: the shared `skills/`, the Claude Code steward agent and the
-SessionStart nudge hook, the Codex default prompt, and — in a later change — Cursor
-rules and OpenCode instructions. **Edit this file first; keep the other surfaces
+distill from this file: the shared `skills/`, the Claude Code SessionStart nudge
+hook, the Codex default prompt, the Cursor always-apply rule, and the per-editor
+blocks in `docs/agent-nudges.md`. **Edit this file first; keep the other surfaces
 consistent with it.**
 
 Requires an enabled Aionforge Memory MCP server.
