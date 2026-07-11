@@ -198,6 +198,12 @@ mod tests {
     fn json_recover_surfaces_corrupt_wal_without_losing_json() {
         let dir = unique_dir("bad-wal-json");
         std::fs::create_dir_all(&dir).expect("create data dir");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))
+                .expect("restrict test dir to 0700");
+        }
         std::fs::write(dir.join(Store::WAL_FILE_NAME), b"not a selene wal").expect("write bad WAL");
         let mut config = Config::default();
         config.persistence.data_dir = dir.clone();
@@ -221,8 +227,8 @@ mod tests {
         assert!(value["store"].is_null());
         let error = value["store_open"]["error"].as_str().expect("error string");
         assert!(
-            error.to_ascii_lowercase().contains("wal"),
-            "error should preserve the WAL failure: {error}"
+            error.to_ascii_lowercase().contains("magic mismatch"),
+            "error should preserve the corrupt-WAL failure: {error}"
         );
         let _ = std::fs::remove_dir_all(dir);
     }
