@@ -1,10 +1,10 @@
-//! Durable-message retention and long-poll configuration.
+//! Durable-message retention, waiting, and room-subscription configuration.
 //!
 //! Messages are identity-tier delivery records rather than memories, so their lifecycle is
 //! governed by a dedicated ack-aware retention reaper instead of decay or the generic forgetting
-//! sweeps. The same serving block bounds `message_wait` duration and concurrency. This block holds
-//! plain primitives only; the serving host maps them into the message-maintenance loop and MCP
-//! runtime.
+//! sweeps. The same serving block bounds `message_wait` duration and concurrency plus global
+//! room-resource subscription admission. This block holds plain primitives only; the serving host
+//! maps them into the message-maintenance loop and MCP runtime.
 //!
 //! # Example
 //!
@@ -18,6 +18,7 @@
 //! wait_default_seconds = 25
 //! wait_max_seconds = 55
 //! wait_max_concurrent = 256
+//! room_subscribe_max_concurrent = 256
 //! wait_max_recipients = 256
 //! wait_heartbeat_seconds = 15
 //! ```
@@ -29,13 +30,14 @@ use crate::error::ConfigError;
 /// Default maximum canonical recipient keys registered by one `message_wait` call.
 pub const DEFAULT_WAIT_MAX_RECIPIENTS: usize = 256;
 
-/// Ack-aware retention and bounded-wait posture for first-class durable messages.
+/// Ack-aware retention, bounded-wait, and room-subscription posture for durable messages.
 ///
 /// The default-on reaper retains acknowledged messages for 30 days and unread/read messages for
 /// 90 days. A serving host may disable the reaper without changing either configured window by
 /// setting [`retention_enabled`](Self::retention_enabled) to `false`. Long-polls default to 25
 /// seconds, are clamped to 55 seconds, and admit at most 256 concurrently parked calls with 256
-/// canonical recipient keys apiece. Opted-in progress heartbeats default to 15 seconds.
+/// canonical recipient keys apiece. Room-resource subscriptions admit at most 256 live entries
+/// across the serving process. Opted-in progress heartbeats default to 15 seconds.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct MessagesConfig {
@@ -51,6 +53,8 @@ pub struct MessagesConfig {
     pub wait_max_seconds: u64,
     /// Maximum concurrently parked waits; excess calls return an immediate timed-out empty page.
     pub wait_max_concurrent: usize,
+    /// Maximum live room-resource subscriptions across all sessions served by one process.
+    pub room_subscribe_max_concurrent: usize,
     /// Maximum canonical recipient keys one wait may register before it becomes a one-shot read.
     pub wait_max_recipients: usize,
     /// Cadence for opt-in progress heartbeats while a `message_wait` call is parked.
@@ -66,6 +70,7 @@ impl Default for MessagesConfig {
             wait_default_seconds: 25,
             wait_max_seconds: 55,
             wait_max_concurrent: 256,
+            room_subscribe_max_concurrent: 256,
             wait_max_recipients: DEFAULT_WAIT_MAX_RECIPIENTS,
             wait_heartbeat_seconds: 15,
         }
@@ -89,6 +94,12 @@ impl MessagesConfig {
         if self.wait_max_concurrent == 0 {
             return Err(ConfigError::invalid(
                 "messages.wait_max_concurrent",
+                "must be at least 1",
+            ));
+        }
+        if self.room_subscribe_max_concurrent == 0 {
+            return Err(ConfigError::invalid(
+                "messages.room_subscribe_max_concurrent",
                 "must be at least 1",
             ));
         }
@@ -119,7 +130,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn defaults_are_ack_aware_and_bound_message_waits() {
+    fn defaults_are_ack_aware_and_bound_message_runtime() {
         let config = MessagesConfig::default();
         assert!(config.retention_enabled);
         assert_eq!(config.retention_acked_days, 30);
@@ -127,6 +138,7 @@ mod tests {
         assert_eq!(config.wait_default_seconds, 25);
         assert_eq!(config.wait_max_seconds, 55);
         assert_eq!(config.wait_max_concurrent, 256);
+        assert_eq!(config.room_subscribe_max_concurrent, 256);
         assert_eq!(config.wait_max_recipients, DEFAULT_WAIT_MAX_RECIPIENTS);
         assert_eq!(config.wait_heartbeat_seconds, 15);
     }
@@ -147,6 +159,7 @@ mod tests {
             wait_default_seconds: 3,
             wait_max_seconds: 9,
             wait_max_concurrent: 12,
+            room_subscribe_max_concurrent: 18,
             wait_max_recipients: 24,
             wait_heartbeat_seconds: 6,
         };
@@ -156,7 +169,7 @@ mod tests {
     }
 
     #[test]
-    fn validation_rejects_invalid_wait_bounds() {
+    fn validation_rejects_invalid_message_runtime_bounds() {
         let config = MessagesConfig {
             wait_max_seconds: 0,
             ..MessagesConfig::default()
@@ -178,6 +191,12 @@ mod tests {
 
         let config = MessagesConfig {
             wait_max_concurrent: 0,
+            ..MessagesConfig::default()
+        };
+        assert!(config.validate().is_err());
+
+        let config = MessagesConfig {
+            room_subscribe_max_concurrent: 0,
             ..MessagesConfig::default()
         };
         assert!(config.validate().is_err());

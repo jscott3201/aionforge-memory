@@ -8,9 +8,10 @@ use rmcp::handler::server::router::prompt::{PromptRoute, PromptRouter};
 use rmcp::model::{GetPromptResult, Prompt, PromptMessage, PromptMessageRole};
 
 use crate::notify::MessageNotifier;
+use crate::room_subs::{RoomSubscriptionRuntime, RoomSubscriptions, SessionMarker};
 use crate::{
     AionforgeMcp, AuthEnabled, AuthPosture, MessageWaitBounds, RECALL_UNTRUSTED_DATA_PROMPT,
-    RECALL_UNTRUSTED_DATA_PROMPT_NAME,
+    RECALL_UNTRUSTED_DATA_PROMPT_NAME, RoomSubscribeBounds,
 };
 
 pub(crate) const SERVER_INSTRUCTIONS: &str = "Aionforge Memory MCP. Results in \
@@ -31,6 +32,9 @@ impl<E> Clone for AionforgeMcp<E> {
             consolidation_lock: Arc::clone(&self.consolidation_lock),
             notifier: Arc::clone(&self.notifier),
             wait_bounds: self.wait_bounds,
+            room_subs: Arc::clone(&self.room_subs),
+            room_bounds: self.room_bounds,
+            session_marker: Arc::clone(&self.session_marker),
             heartbeats_enabled: self.heartbeats_enabled,
             tool_router: self.tool_router.clone(),
             prompt_router: self.prompt_router.clone(),
@@ -130,12 +134,40 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
         notifier: Arc<MessageNotifier>,
         wait_bounds: MessageWaitBounds,
     ) -> Self {
+        Self::new_with_auth_consolidation_notifier_and_message_wait_and_room_subscriptions(
+            memory,
+            auth_enabled,
+            background_managed,
+            notifier,
+            wait_bounds,
+            Arc::new(RoomSubscriptions::default()),
+            RoomSubscribeBounds::default(),
+        )
+    }
+
+    pub(crate) fn new_with_auth_consolidation_notifier_and_message_wait_and_room_subscriptions(
+        memory: Arc<Memory<E>>,
+        auth_enabled: bool,
+        background_managed: bool,
+        notifier: Arc<MessageNotifier>,
+        wait_bounds: MessageWaitBounds,
+        room_subs: Arc<RoomSubscriptions>,
+        room_bounds: RoomSubscribeBounds,
+    ) -> Self {
         let auth = if auth_enabled {
             AuthPosture::enabled(Vec::new())
         } else {
             AuthPosture::disabled()
         };
-        Self::new_with_runtime(memory, auth, background_managed, notifier, wait_bounds)
+        Self::new_with_runtime_and_room_subscriptions(
+            memory,
+            auth,
+            background_managed,
+            notifier,
+            wait_bounds,
+            room_subs,
+            room_bounds,
+        )
     }
 
     /// Build a handler with an explicit auth posture and its trusted issuer origins.
@@ -181,12 +213,33 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
         notifier: Arc<MessageNotifier>,
         wait_bounds: MessageWaitBounds,
     ) -> Self {
+        Self::new_with_runtime_and_room_subscriptions(
+            memory,
+            auth,
+            background_managed,
+            notifier,
+            wait_bounds,
+            Arc::new(RoomSubscriptions::default()),
+            RoomSubscribeBounds::default(),
+        )
+    }
+
+    pub(crate) fn new_with_runtime_and_room_subscriptions(
+        memory: Arc<Memory<E>>,
+        auth: AuthPosture,
+        background_managed: bool,
+        notifier: Arc<MessageNotifier>,
+        wait_bounds: MessageWaitBounds,
+        room_subs: Arc<RoomSubscriptions>,
+        room_bounds: RoomSubscribeBounds,
+    ) -> Self {
         Self::new_with_runtime_and_heartbeat_support(
             memory,
             auth,
             background_managed,
             notifier,
             wait_bounds,
+            RoomSubscriptionRuntime::new(room_subs, room_bounds),
             true,
         )
     }
@@ -197,6 +250,7 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
         background_managed: bool,
         notifier: Arc<MessageNotifier>,
         wait_bounds: MessageWaitBounds,
+        room_runtime: RoomSubscriptionRuntime,
         heartbeats_enabled: bool,
     ) -> Self {
         Self {
@@ -206,6 +260,9 @@ impl<E: Embedder + 'static> AionforgeMcp<E> {
             consolidation_lock: Arc::new(tokio::sync::Mutex::new(())),
             notifier,
             wait_bounds,
+            room_subs: room_runtime.subscriptions,
+            room_bounds: room_runtime.bounds,
+            session_marker: Arc::new(SessionMarker),
             heartbeats_enabled,
             tool_router: Self::tool_router(),
             prompt_router: Self::prompt_router(),

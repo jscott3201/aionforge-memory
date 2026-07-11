@@ -10,7 +10,7 @@ use aionforge::{
 use aionforge_config::{AuthConfig, Config, ServerHttpConfig};
 use aionforge_mcp::{
     AionforgeStreamableHttpService, AuthPosture, AuthValidators, MessageWaitBounds,
-    STREAMABLE_HTTP_ENDPOINT, StreamableHttpOptions,
+    RoomSubscribeBounds, STREAMABLE_HTTP_ENDPOINT, StreamableHttpOptions,
     serve_stdio_with_consolidation_and_message_wait,
     streamable_http_service_with_consolidation_and_message_wait,
 };
@@ -31,6 +31,7 @@ use crate::host::{
     HostOptions, RuntimeEmbedder, StartupEmbedderStatus, check_startup_embedder, load_config,
     open_memory, render_startup_embedder_status,
 };
+use crate::observability::{TRAFFIC_HEARTBEAT_ENV, resolve_heartbeat_interval};
 
 type HttpResponse = Response<BoxBody<Bytes, Infallible>>;
 
@@ -66,6 +67,7 @@ pub(crate) async fn run(options: &HostOptions, args: ServeArgs) -> Result<(), Cl
                     config.auth.enabled,
                     config.consolidation.enabled,
                     MessageWaitBounds::from(&config.messages),
+                    RoomSubscribeBounds::from(&config.messages),
                 )
                 .await
                 .map_err(|error| CliError::Serve(error.to_string()))
@@ -118,22 +120,6 @@ fn start_background_consolidation<E: Embedder + 'static>(
         memory.consolidation_config(),
         memory.pass_config(),
     ))
-}
-
-/// Environment variable overriding the traffic-heartbeat cadence, in whole seconds. `0` disables
-/// the heartbeat; unset uses [`aionforge_mcp::DEFAULT_TRAFFIC_HEARTBEAT_INTERVAL`]. An env knob
-/// (not a config field) keeps it operationally tunable without a schema change, mirroring the
-/// `RUST_LOG` / `AIONFORGE_LOG_FORMAT` logging controls.
-const TRAFFIC_HEARTBEAT_ENV: &str = "AIONFORGE_TRAFFIC_HEARTBEAT_SECS";
-
-/// Resolve the heartbeat cadence from the env override, falling back to the compiled-in default.
-/// An unparseable value falls back too — observability setup must never fail the server. Pure, so
-/// the precedence is unit-testable.
-fn resolve_heartbeat_interval(env: Option<&str>) -> std::time::Duration {
-    match env.and_then(|value| value.trim().parse::<u64>().ok()) {
-        Some(seconds) => std::time::Duration::from_secs(seconds),
-        None => aionforge_mcp::DEFAULT_TRAFFIC_HEARTBEAT_INTERVAL,
-    }
 }
 
 /// The Streamable HTTP settings after merging the CLI `serve http` flags over the
@@ -235,6 +221,7 @@ async fn serve_http(
         auth_posture,
         config.consolidation.enabled,
         MessageWaitBounds::from(&config.messages),
+        RoomSubscribeBounds::from(&config.messages),
     )?;
     let state = HttpMcpState {
         inner: service,
@@ -835,28 +822,6 @@ mod tests {
         );
         // And the built options must convert into a valid rmcp config (Origin validation on).
         streamable_http_config(options).expect("default loopback options build a valid config");
-    }
-
-    #[test]
-    fn heartbeat_interval_resolves_env_override_default_and_disable() {
-        use std::time::Duration;
-        // Unset: the compiled-in default.
-        assert_eq!(
-            resolve_heartbeat_interval(None),
-            aionforge_mcp::DEFAULT_TRAFFIC_HEARTBEAT_INTERVAL
-        );
-        // A valid override (whitespace-tolerant) wins.
-        assert_eq!(
-            resolve_heartbeat_interval(Some(" 60 ")),
-            Duration::from_secs(60)
-        );
-        // Zero disables (the caller checks is_zero before spawning).
-        assert_eq!(resolve_heartbeat_interval(Some("0")), Duration::ZERO);
-        // Garbage falls back to the default rather than failing the server.
-        assert_eq!(
-            resolve_heartbeat_interval(Some("soon")),
-            aionforge_mcp::DEFAULT_TRAFFIC_HEARTBEAT_INTERVAL
-        );
     }
 
     /// A non-empty resolved allow-list replaces the loopback default wholesale.

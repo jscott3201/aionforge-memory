@@ -43,10 +43,10 @@ enabled = false
 [forgetting]
 enabled = false
 
-# Dedicated durable-message lifecycle and bounded long-poll posture. This is independent of generic
-# forgetting and consolidation: acknowledged messages use the shorter window, while unread/read
-# messages remain available longer. The serving process sweeps at startup and hourly. Keep
-# wait_max_seconds below client transport timeouts.
+# Dedicated durable-message lifecycle, bounded long-poll, and room-resource subscription posture.
+# This is independent of generic forgetting and consolidation: acknowledged messages use the
+# shorter window, while unread/read messages remain available longer. The serving process sweeps at
+# startup and hourly. Keep wait_max_seconds below client transport timeouts.
 [messages]
 retention_enabled = true
 retention_acked_days = 30
@@ -54,6 +54,8 @@ retention_unacked_days = 90
 wait_default_seconds = 25
 wait_max_seconds = 55
 wait_max_concurrent = 256
+# Global per-process ceiling across live room subscriptions from every MCP session.
+room_subscribe_max_concurrent = 256
 wait_max_recipients = 256
 wait_heartbeat_seconds = 15
 

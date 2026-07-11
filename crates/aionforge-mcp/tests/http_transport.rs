@@ -10,8 +10,8 @@ use aionforge_domain::time::Timestamp;
 use aionforge_engine::{Memory, MemoryConfig};
 use aionforge_mcp::{
     AuthPosture, DEFAULT_MAX_REQUEST_BODY_BYTES, MessageWaitBounds, OAuthProtectedResourceMetadata,
-    STREAMABLE_HTTP_ENDPOINT, StreamableHttpConfigError, StreamableHttpOptions,
-    oauth_protected_resource_well_known_path, streamable_http_service,
+    RoomSubscribeBounds, STREAMABLE_HTTP_ENDPOINT, StreamableHttpConfigError,
+    StreamableHttpOptions, oauth_protected_resource_well_known_path, streamable_http_service,
     streamable_http_service_with_consolidation_and_message_wait,
 };
 use bytes::Bytes;
@@ -203,6 +203,10 @@ async fn streamable_http_advertises_mcp_capabilities() -> TestResult {
     assert!(result["capabilities"]["prompts"].is_object());
     assert!(result["capabilities"]["resources"].is_object());
     assert!(
+        result["capabilities"]["resources"]["subscribe"].is_null(),
+        "stateless HTTP must not advertise resource subscriptions: {parsed}",
+    );
+    assert!(
         result["instructions"]
             .as_str()
             .expect("instructions")
@@ -272,6 +276,10 @@ async fn stateful_initialize_does_not_hang_with_stderr_subscriber() -> TestResul
     assert!(
         parsed["result"]["capabilities"]["tools"].is_object(),
         "{parsed}"
+    );
+    assert_eq!(
+        parsed["result"]["capabilities"]["resources"]["subscribe"], true,
+        "stateful HTTP advertises room-resource subscriptions: {parsed}",
     );
     Ok(())
 }
@@ -394,6 +402,7 @@ async fn message_wait_wakes_across_stateless_http_handler_instances() -> TestRes
         AuthPosture::disabled(),
         false,
         MessageWaitBounds::default(),
+        RoomSubscribeBounds::default(),
     )?;
     let wait = service.handle(tool_call_request(
         "localhost:3918",
@@ -452,6 +461,7 @@ async fn message_wait_suppresses_progress_for_stateless_http() -> TestResult {
             max_recipients: 256,
             heartbeat_seconds: 1,
         },
+        RoomSubscribeBounds::default(),
     )?;
     let response = tokio::time::timeout(
         Duration::from_secs(4),
@@ -496,6 +506,7 @@ async fn message_wait_heartbeats_over_stateful_sse() -> TestResult {
             max_recipients: 256,
             heartbeat_seconds: 1,
         },
+        RoomSubscribeBounds::default(),
     )?;
     let initialized = service
         .handle(initialize_request("localhost:3918", None))

@@ -40,6 +40,14 @@ async fn mcp_transport_advertises_and_serves_prompts_and_resources() -> TestResu
         "resources advertised"
     );
     assert_eq!(
+        info.capabilities
+            .resources
+            .as_ref()
+            .and_then(|resources| resources.subscribe),
+        Some(true),
+        "stateful stdio advertises room-resource subscriptions",
+    );
+    assert_eq!(
         info.server_info.name, "aionforge-memory",
         "handshake identifies the Aionforge server, not the rmcp build env"
     );
